@@ -29,6 +29,18 @@ cd provider-hub/mcp/team/pde/pde-jsm
 pip install -r requirements.txt
 ```
 
+### Required Packages
+
+From `requirements.txt`:
+- `requests` — HTTP client for API calls
+- `python-dotenv` — Environment variable loading
+- `mcp` — Model Context Protocol (for MCP server integration)
+
+Install all at once:
+```bash
+pip install -r provider-hub/mcp/team/pde/pde-jsm/requirements.txt
+```
+
 ## Configuration
 
 Set environment variables for API access:

@@ -15,15 +15,26 @@ This skill processes open JSM "More than one contact found..." alerts and automa
    - Provides: Alert listing, details, notes, closing, and email search
    - Setup: See `../../../mcp/team/pde/pde-jsm/README.md`
 
-2. **`salesforce-prod`** (built-in Copilot CLI)
+2. **`salesforce-prod`** (Copilot CLI extension)
    - Provides: SOQL queries against Salesforce prod
    - Prerequisite: `sf` CLI authenticated to the `prod` org alias
+   - Installation:
+     ```bash
+     # Check if installed
+     copilot config mcp list | grep salesforce-prod
+     
+     # If not found, install from the Copilot CLI extensions directory
+     # See: https://github.com/github/copilot-extensions for latest instructions
+     ```
 
-### Environment
+### Environment & Tools
 
 - `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
 - Optional: `EMAIL_USERNAME` / `EMAIL_PASSWORD` for email validation
-- `sf` CLI authenticated to `prod` org
+- **`sf` CLI** — Salesforce CLI (required)
+  - Install: `npm install -g @salesforce/cli`
+  - Authenticate: `sf org authenticate org_name:prod`
+  - Verify: `sf org list --all` should show `prod` as available
 
 ## Running
 

@@ -17,10 +17,20 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 
 ### Prerequisites
 
-- Python 3.9+
-- Atlassian API credentials (email + API token)
-- Optional: Email credentials (for email checks)
-- Optional: `sf` CLI authenticated to Salesforce prod
+- **Python 3.9+**
+  - Verify: `python --version`
+
+- **Atlassian API credentials**
+  - Email + API token
+  - Generate token at: https://id.atlassian.com/manage-profile/security/api-tokens
+
+- **Optional: Email credentials** (for `find_emails`)
+  - IMAP server credentials (usually your email + app password, not user password)
+
+- **Optional: Salesforce CLI** (for use with `resolve-duplicate-contact-alerts` skill)
+  - Install: `npm install -g @salesforce/cli`
+  - Authenticate: `sf org authenticate org_name:prod`
+  - Verify: `sf org list --all`
 
 ### Installation
 
