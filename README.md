@@ -64,8 +64,8 @@ Each content type has:
 
 **Option 1: Environment Variable** (simplest)
 ```bash
-export COPILOT_SKILLS_PATH="$HOME/dev/provider-hub/ai-skills/team"
-copilot-cli  # Will discover skills from that path
+export COPILOT_SKILLS_PATH="$HOME/dev/provider-hub/ai-skills/team:$HOME/dev/provider-hub/ai-skills/user"
+copilot-cli  # Will discover skills from those paths
 ```
 
 **Option 2: Git Submodule** (stronger version control)
@@ -79,7 +79,10 @@ In your working project's `.git/config`:
 Then in `.agents/mcp-config.json`:
 ```json
 {
-  "skills_paths": [".agents/provider-hub/ai-skills/team"]
+  "skills_paths": [
+    ".agents/provider-hub/ai-skills/team",
+    ".agents/provider-hub/ai-skills/user"
+  ]
 }
 ```
 
