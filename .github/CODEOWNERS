@@ -1,0 +1,42 @@
+# Ownership rules for provider-hub repository
+# GitHub's CODEOWNERS: more specific paths override broader ones
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default: all repo changes require review from team maintainers
+* @ncanen
+
+# Team-owned areas (customize as needed when new team members join)
+ai-skills/team/provider/ @ncanen
+ai-skills/team/pde/ @ncanen
+ai-skills/team/web/ @ncanen
+
+apis/team/provider/ @ncanen
+apis/team/pde/ @ncanen
+apis/team/web/ @ncanen
+
+mcp/team/provider/ @ncanen
+mcp/team/pde/ @ncanen
+mcp/team/web/ @ncanen
+
+scripts/team/provider/ @ncanen
+scripts/team/pde/ @ncanen
+scripts/team/web/ @ncanen
+
+services/team/provider/ @ncanen
+services/team/pde/ @ncanen
+services/team/web/ @ncanen
+
+tools/team/provider/ @ncanen
+tools/team/pde/ @ncanen
+tools/team/web/ @ncanen
+
+# User-owned areas (self-reviewed)
+ai-skills/user/*/
+apis/user/*/
+mcp/user/*/
+scripts/user/*/
+services/user/*/
+tools/user/*/
+
+# GitHub metadata
+.github/ @ncanen

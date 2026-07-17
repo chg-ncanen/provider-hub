@@ -1,0 +1,105 @@
+# OS-specific files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.code-workspace
+
+# IDE and editor files
+*.sublime-project
+*.sublime-workspace
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+venv/
+ENV/
+env/
+.venv
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+dist/
+build/
+
+# Go
+*.o
+*.a
+*.so
+.DS_Store
+bin/
+obj/
+*.exe
+
+# Secrets and credentials (NEVER commit these)
+.env
+.env.local
+.env.*.local
+.secrets/
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+.aws/
+.gcloud/
+.kube/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# OS temporary files
+tmp/
+temp/
+
+# Vendor directories (usually committed, but include if ignored in your projects)
+# vendor/
+
+# Session files
+.session/
+*.session
