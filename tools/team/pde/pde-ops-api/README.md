@@ -12,10 +12,6 @@ Shared Python library for JSM Ops and Email operations. Used by the `pde-jsm` MC
 - **`email/`** — Email utilities
   - `EmailTool` — IMAP-based email search and operations
   - Search email archives by subject, sender, date
-  
-- **`jsmreport/`** — Alert reporting and metrics
-  - Stats generation and alert summaries
-  - CSV export utilities
 
 ## Installation
 

@@ -12,7 +12,6 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 - `add_alert_note` — Add operator notes to an alert
 - `close_alert` — Resolve and close an alert
 - `find_emails` — Search email archive for notification evidence
-- `run_reporting_pipeline` — Generate PDE alert reports
 
 ## Setup
 
@@ -121,13 +120,6 @@ Search email archive for alert notifications.
 
 ```python
 find_emails(subject="Possible provider merge needed", since="01-Jul-2026")
-```
-
-### run_reporting_pipeline
-Generate alert metrics and summary reports.
-
-```python
-run_reporting_pipeline(start="2026-07-01T00:00", end="2026-07-31T23:59")
 ```
 
 ## Related Skills & Tools
