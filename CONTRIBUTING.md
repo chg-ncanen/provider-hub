@@ -45,6 +45,12 @@ Model Context Protocol server configs and definitions.
 - Setup instructions
 - `README.md`
 
+**If this needs to be usable outside this repo** (most team MCP servers/skills do — see
+[Distributing as a plugin](#distributing-as-a-plugin) below), the actual server code and the skill(s)
+that use it move into `plugins/<area>/` instead of staying split across `ai-skills/`/`mcp/`. Shared
+library code it depends on (`tools/team/<area>/...`) stays put and becomes a normal pip/package
+dependency — don't duplicate that source into the plugin.
+
 ### Scripts
 **Directory:** `scripts/team/<area>/` or `scripts/user/<username>/`
 
@@ -90,6 +96,27 @@ Reusable utilities and libraries (local use, not deployed).
 - Dependency specs
 - Documentation
 - `README.md`
+
+## Distributing as a plugin
+
+`ai-skills/`, `mcp/`, and `tools/` are organized by content type for authoring and review, but they
+aren't reachable from someone else's Claude Code session unless `provider-hub` happens to be their
+cwd. If a skill (and the MCP server(s) it needs) should work from *any* project, package it as a
+Claude Code plugin:
+
+- Create `plugins/<area>/` with a self-contained `.claude-plugin/plugin.json`, `skills/`, and
+  `.mcp.json`/`mcp-servers/` — see `plugins/pde/` for a working example.
+- List it in the root `.claude-plugin/marketplace.json`.
+- Keep genuinely reusable library code (not glue/wrapper code) under `tools/team/<area>/` as an
+  independently pip-installable package, and have the plugin's MCP server depend on it via
+  `requirements.txt` instead of copying its source in — a plugin can't reference files outside its
+  own directory once installed, so anything it needs must either live inside `plugins/<area>/` or be
+  a real package dependency.
+- Content that doesn't need standalone distribution (experiments, scripts, services, user-scoped
+  tools) has no reason to move — it stays under its existing content-type directory.
+
+Copilot CLI has no plugin system; if your content needs to support Copilot CLI too, also follow the
+`mcp/`/`ai-skills/` registration path described in each MCP server's README.
 
 ## Ownership Model
 

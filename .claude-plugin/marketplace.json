@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "provider-hub",
+  "owner": {
+    "name": "PDE Team"
+  },
+  "description": "Team-shared Claude Code plugins from provider-hub.",
+  "plugins": [
+    {
+      "name": "pde",
+      "source": "./plugins/pde",
+      "description": "JSM alert management (pde-jsm MCP server) and the resolve-duplicate-contact-alerts skill."
+    }
+  ]
+}

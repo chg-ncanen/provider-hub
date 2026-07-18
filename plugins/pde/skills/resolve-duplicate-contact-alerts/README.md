@@ -10,10 +10,10 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 
 ### Required MCPs
 
-1. **`pde-jsm`** (this repo)
-   - Available at: `../../../mcp/team/pde/pde-jsm/`
+1. **`pde-jsm`** (bundled in this same plugin)
+   - Available at: `../../mcp-servers/pde-jsm/`
    - Provides: Alert listing, details, notes, closing, and email search
-   - Setup: See `../../../mcp/team/pde/pde-jsm/README.md`
+   - Setup: See `../../mcp-servers/pde-jsm/README.md`
 
 2. **`salesforce-prod`** (Copilot CLI extension)
    - Provides: SOQL queries against Salesforce prod
@@ -43,14 +43,14 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 Fastest approach—run the Python script:
 
 ```bash
-# From provider-hub root or any project importing this skill:
-python ai-skills/team/pde/resolve-duplicate-contact-alerts/run.py
+# From this skill's own directory (or the equivalent path once installed as a plugin):
+python run.py
 
 # Dry run (default — no changes):
-python ai-skills/team/pde/resolve-duplicate-contact-alerts/run.py --dry-run
+python run.py --dry-run
 
 # Live mode (add notes and close resolved alerts):
-python ai-skills/team/pde/resolve-duplicate-contact-alerts/run.py --live
+python run.py --live
 ```
 
 ### Manual Workflow
@@ -79,7 +79,7 @@ For autonomous agents or Copilot CLI, the `run.py` script is invoked as a subpro
 - **"No ATLASSIAN_EMAIL"** — Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
 - **"sf: command not found"** — Install Salesforce CLI: `npm install -g @salesforce/cli`
 - **"Not authenticated to prod"** — Run `sf org authenticate org_name:prod` first
-- **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../../mcp/team/pde/pde-jsm/requirements.txt`
+- **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../mcp-servers/pde-jsm/requirements.txt`
 
 ## Files
 

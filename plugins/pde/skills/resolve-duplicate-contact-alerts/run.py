@@ -6,10 +6,12 @@ Fetches open "More than one contact found" alerts, verifies which contacts
 still exist in Salesforce prod, then closes resolved alerts and reports on
 the rest.
 
-Usage (run from project root):
-    python .agents/skills/resolve-duplicate-contact-alerts/run.py [--dry-run|--live]
+Usage:
+    python run.py [--dry-run|--live]
 
 Requires:
+    - pde-ops-api installed (pip install -e tools/team/pde/pde-ops-api, or via
+      the pde-jsm MCP server's requirements.txt, which depends on it)
     - ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN in .env (or environment)
     - EMAIL_USERNAME / EMAIL_PASSWORD in .env for email checks (optional)
     - `sf` CLI authenticated to the 'prod' org alias
@@ -19,25 +21,22 @@ import argparse
 import json
 import re
 import subprocess
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# Allow imports from project root regardless of invocation location
-_SCRIPT_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _SCRIPT_DIR.parents[2]  # .agents/skills/<name>/ -> project root
-sys.path.insert(0, str(_PROJECT_ROOT))
+# .env and app_config.json are shared with the pde-jsm MCP server this skill uses.
+_MCP_SERVER_DIR = Path(__file__).resolve().parents[1] / "mcp-servers" / "pde-jsm"
 
 try:
     from dotenv import load_dotenv
-    load_dotenv(_PROJECT_ROOT / ".env")
+    load_dotenv(_MCP_SERVER_DIR / ".env")
 except Exception:
     pass
 
-from api.jsm.client import JSMOpsAPI  # noqa: E402
-from api.jsm.config import AppConfig  # noqa: E402
-from api.email.email_tool import EmailTool  # noqa: E402
+from api.jsm.client import JSMOpsAPI
+from api.jsm.config import AppConfig
+from api.mail.email_tool import EmailTool
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -186,7 +185,7 @@ def main() -> int:
     print(f"{'='*70}\n")
 
     # -- Setup -----------------------------------------------------------------
-    cfg = AppConfig.from_env(config_path=str(_PROJECT_ROOT / "app_config.json"))
+    cfg = AppConfig.from_env(config_path=str(_MCP_SERVER_DIR / "app_config.json"))
     cfg.validate_for_alert_fetch()
     api = JSMOpsAPI(config=cfg)
     email_tool = EmailTool()

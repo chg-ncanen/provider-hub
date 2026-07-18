@@ -56,22 +56,28 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 
 ## Running the MCP Server
 
+### As part of the `pde` Claude Code plugin (recommended)
+
+Install via `/plugin install pde@provider-hub` — see `../../README.md` (the plugin root). Claude Code
+handles the venv, `${CLAUDE_PLUGIN_ROOT}`-relative paths, and credential prompts for you.
+
 ### Locally (stdio transport)
 ```bash
 python app.py
 ```
 
-The server runs on stdin/stdout. Configure in your Claude Desktop or Copilot CLI config to call this command.
+The server runs on stdin/stdout.
 
 ### Example Copilot CLI Config
 
-In your project's `.copilot-config.json`:
+Copilot CLI has no plugin system, so register this server directly in your project's
+`.copilot-config.json`:
 ```json
 {
   "mcpServers": {
     "pde-jsm": {
       "command": "python",
-      "args": ["/path/to/provider-hub/mcp/team/pde/pde-jsm/app.py"]
+      "args": ["/path/to/provider-hub/plugins/pde/mcp-servers/pde-jsm/app.py"]
     }
   }
 }
@@ -134,8 +140,9 @@ find_emails(subject="Possible provider merge needed", since="01-Jul-2026")
 
 ## Related Skills & Tools
 
-- `ai-skills/team/pde/resolve-duplicate-contact-alerts` — Uses this MCP to process duplicate contact alerts
-- `tools/team/pde/pde-ops-api` — Shared API layer for JSM operations
+- `../../skills/resolve-duplicate-contact-alerts` — Uses this MCP to process duplicate contact alerts
+- `tools/team/pde/pde-ops-api` (repo root) — Shared API layer for JSM operations; a `requirements.txt`
+  dependency of this server, not a bundled copy
 
 ## Troubleshooting
 

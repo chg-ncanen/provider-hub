@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "pde",
+  "displayName": "PDE Ops Tools",
+  "description": "JSM alert management (pde-jsm MCP server) and the resolve-duplicate-contact-alerts skill.",
+  "version": "1.0.0",
+  "author": {
+    "name": "PDE Team"
+  },
+  "userConfig": {
+    "ATLASSIAN_EMAIL": {
+      "type": "string",
+      "title": "Atlassian email",
+      "description": "Email address for Atlassian/JSM API authentication.",
+      "required": true
+    },
+    "ATLASSIAN_API_TOKEN": {
+      "type": "string",
+      "title": "Atlassian API token",
+      "description": "API token from https://id.atlassian.com/manage-profile/security/api-tokens",
+      "required": true,
+      "sensitive": true
+    },
+    "EMAIL_USERNAME": {
+      "type": "string",
+      "title": "Email username (optional)",
+      "description": "IMAP account used by find_emails. Only needed for email search.",
+      "required": false
+    },
+    "EMAIL_PASSWORD": {
+      "type": "string",
+      "title": "Email app password (optional)",
+      "description": "IMAP app password (not your account password) for the email above.",
+      "required": false,
+      "sensitive": true
+    }
+  }
+}

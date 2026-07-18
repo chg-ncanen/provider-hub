@@ -1,0 +1,6 @@
+requests>=2.32.0,<3.0.0
+python-dotenv>=1.0.1,<2.0.0
+mcp>=0.1.0
+# TODO: switch to the pushed repo's https:// URL once provider-hub has a real remote,
+# e.g. pde-ops-api @ git+https://github.com/<org>/provider-hub.git#subdirectory=tools/team/pde/pde-ops-api
+pde-ops-api @ git+file:///home/ncanen/dev/provider-hub#subdirectory=tools/team/pde/pde-ops-api

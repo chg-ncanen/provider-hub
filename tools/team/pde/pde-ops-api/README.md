@@ -9,36 +9,25 @@ Shared Python library for JSM Ops and Email operations. Used by the `pde-jsm` MC
   - `JiraServiceManagement` — JSM project queries and alert management
   - Query, create, update, close JSM alerts
   
-- **`email/`** — Email utilities
+- **`mail/`** — Email utilities
   - `EmailTool` — IMAP-based email search and operations
   - Search email archives by subject, sender, date
+  - (named `mail/`, not `email/` — a directory literally named `email` shadows Python's stdlib `email` package for anything that lands on `sys.path` near it)
 
 ## Installation
 
-This is a shared library — add to your PYTHONPATH or install via pip in development mode:
+This is a real pip package (`pde-ops-api`), importable as `api` (matching its existing internal `api.jsm.*` / `api.mail.*` imports — see `pyproject.toml`'s `package-dir` mapping):
 
 ```bash
 cd provider-hub/tools/team/pde/pde-ops-api
 pip install -e .
 ```
 
-Or install the parent pde-jsm MCP/skill first (it depends on this):
+The `pde-jsm` MCP server (`provider-hub/plugins/pde/mcp-servers/pde-jsm/`) depends on this package via its `requirements.txt` rather than bundling a copy — install that instead to get both:
 
 ```bash
-cd provider-hub/mcp/team/pde/pde-jsm
+cd provider-hub/plugins/pde/mcp-servers/pde-jsm
 pip install -r requirements.txt
-```
-
-### Required Packages
-
-From `requirements.txt`:
-- `requests` — HTTP client for API calls
-- `python-dotenv` — Environment variable loading
-- `mcp` — Model Context Protocol (for MCP server integration)
-
-Install all at once:
-```bash
-pip install -r provider-hub/mcp/team/pde/pde-jsm/requirements.txt
 ```
 
 ## Configuration
@@ -90,7 +79,7 @@ api.close_alert("alert-id-here", note="Resolved")
 ### Email Search
 
 ```python
-from api.email.email_tool import EmailTool
+from api.mail.email_tool import EmailTool
 
 # Initialize
 email = EmailTool()
@@ -113,17 +102,16 @@ The library reads `app_config.json` for JSM settings:
 
 ## Related
 
-- `mcp/team/pde/pde-jsm/` — MCP server exposing these APIs as tools
-- `ai-skills/team/pde/resolve-duplicate-contact-alerts/` — Skill using JSM operations
+- `plugins/pde/mcp-servers/pde-jsm/` — MCP server exposing these APIs as tools
+- `plugins/pde/skills/resolve-duplicate-contact-alerts/` — Skill using JSM operations
 
 ## Dependencies
 
-See `requirements.txt` in the parent mcp directory.
+See `requirements.txt` in `plugins/pde/mcp-servers/pde-jsm/`.
 
 Key packages:
 - `requests` — HTTP client
 - `python-dotenv` — Env file loading
-- `mcp` — Model Context Protocol (for MCP server integration)
 
 ## Contributing
 

@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pde-ops-api"
+version = "1.0.0"
+description = "Shared JSM Ops and email library, importable as `api` (api.jsm, api.mail)."
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.32.0,<3.0.0",
+    "python-dotenv>=1.0.1,<2.0.0",
+]
+
+[tool.setuptools]
+# The source tree isn't laid out under an `api/` folder, but the code (and its
+# consumers: the pde-jsm MCP server, the resolve-duplicate-contact-alerts skill)
+# already imports it as `api.jsm.*` / `api.mail.*` — remap instead of renaming.
+package-dir = { "api" = "." }
+packages = ["api", "api.jsm", "api.mail"]

@@ -36,7 +36,10 @@ provider-hub/
 ├── scripts/         Automation scripts
 ├── services/        Deployable services
 ├── tools/           Reusable utilities
+├── plugins/         Claude Code plugins (see "Using skills & MCPs elsewhere" below)
 │
+├── .claude-plugin/
+│   └── marketplace.json              # Lists the plugins under plugins/
 ├── .github/
 │   ├── CODEOWNERS                    # Ownership & review rules
 │   └── pull_request_template.md      # PR guidelines
@@ -49,6 +52,28 @@ provider-hub/
 Each content type has:
 - `team/` — shared across the team (organized by area: provider, pde, web)
 - `user/` — individual contributions (organized by username)
+
+## Using skills & MCPs from another project (Claude Code)
+
+Most teammates won't have `provider-hub` as their working directory, so a skill or MCP server living
+under `ai-skills/`/`mcp/` alone isn't reachable from elsewhere — those paths are for authoring and
+review. Anything meant to be *used* outside this repo ships as a **Claude Code plugin** under
+`plugins/<team>/`, listed in `.claude-plugin/marketplace.json`. Plugins register globally on install,
+independent of cwd:
+
+```bash
+/plugin marketplace add /path/to/provider-hub   # or its git URL, once pushed
+/plugin install pde@provider-hub
+```
+
+The plugin's own `README.md` documents what it bundles and any required credentials/prerequisites.
+`ai-skills/`, `mcp/`, `tools/`, etc. remain the right home for reusable libraries, scripts, services,
+and anything that doesn't need standalone distribution — a plugin assembles the pieces it needs from
+there (e.g. `plugins/pde/mcp-servers/pde-jsm` depends on `tools/team/pde/pde-ops-api` as a normal pip
+dependency, not a copy).
+
+Copilot CLI has no plugin system; Copilot CLI users continue to use `bootstrap.py` /
+`ai-skills/team/pde/setup-provider-hub` to register MCPs into `.copilot-config.json`.
 
 ## How to Contribute
 
