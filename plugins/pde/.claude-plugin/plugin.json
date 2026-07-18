@@ -3,7 +3,6 @@
   "name": "pde",
   "displayName": "PDE Ops Tools",
   "description": "JSM alert management (pde-jsm MCP server) and the resolve-duplicate-contact-alerts skill.",
-  "version": "1.0.0",
   "author": {
     "name": "PDE Team"
   },
