@@ -1,4 +1,4 @@
 requests>=2.32.0,<3.0.0
 python-dotenv>=1.0.1,<2.0.0
 mcp>=0.1.0
-pde-ops-api @ git+https://github.com/chghealthcare/provider-hub.git#subdirectory=tools/team/pde/pde-ops-api
+pde-ops-api @ git+https://github.com/chg-ncanen/provider-hub.git#subdirectory=tools/team/pde/pde-ops-api

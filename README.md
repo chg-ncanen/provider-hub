@@ -16,7 +16,7 @@ A shared team repository for AI skills, MCP configs, APIs, scripts, services, to
 
 ```bash
 # Clone the repo
-git clone https://github.com/chghealthcare/provider-hub.git
+git clone https://github.com/chg-ncanen/provider-hub.git
 cd provider-hub
 
 # Explore available content
@@ -62,11 +62,11 @@ the `.claude-plugin/` layout:
 
 ```bash
 # Claude Code
-/plugin marketplace add https://github.com/chghealthcare/provider-hub.git
+/plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 /plugin install pde@provider-hub
 
 # Copilot CLI
-copilot plugin marketplace add https://github.com/chghealthcare/provider-hub.git
+copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 
