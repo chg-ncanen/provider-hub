@@ -17,11 +17,11 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 
 ```bash
 # Claude Code
-/plugin marketplace add <path-or-url-to-provider-hub>
+/plugin marketplace add https://github.com/chghealthcare/provider-hub.git
 /plugin install pde@provider-hub
 
 # Copilot CLI
-copilot plugin marketplace add <path-or-url-to-provider-hub>
+copilot plugin marketplace add https://github.com/chghealthcare/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 

@@ -2,8 +2,6 @@
 
 A shared team repository for AI skills, MCP configs, APIs, scripts, services, tools, and more.
 
-> **Note:** Repository name subject to change. Final name TBD before pushing to GitHub.
-
 ## Purpose
 
 `provider-hub` is a central location for team-shared and individual contributions:
@@ -18,7 +16,7 @@ A shared team repository for AI skills, MCP configs, APIs, scripts, services, to
 
 ```bash
 # Clone the repo
-git clone https://path/to/provider-hub.git
+git clone https://github.com/chghealthcare/provider-hub.git
 cd provider-hub
 
 # Explore available content
@@ -64,11 +62,11 @@ the `.claude-plugin/` layout:
 
 ```bash
 # Claude Code
-/plugin marketplace add /path/to/provider-hub   # or its git URL, once pushed
+/plugin marketplace add https://github.com/chghealthcare/provider-hub.git
 /plugin install pde@provider-hub
 
 # Copilot CLI
-copilot plugin marketplace add /path/to/provider-hub
+copilot plugin marketplace add https://github.com/chghealthcare/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 
