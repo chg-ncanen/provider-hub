@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "pde-jsm": {
-      "command": "${CLAUDE_PLUGIN_DATA}/venv/bin/python",
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/pde-jsm/app.py"]
     }
   }

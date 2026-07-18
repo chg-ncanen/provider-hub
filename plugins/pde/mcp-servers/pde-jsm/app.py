@@ -29,10 +29,9 @@ from tools import alerts, email, skills
 try:
     from dotenv import load_dotenv
 
-    # CLAUDE_PLUGIN_DATA persists across plugin updates; the SessionStart hook
-    # writes credentials there. Fall back to a local .env for manual runs.
-    _env_dir = os.environ.get("CLAUDE_PLUGIN_DATA")
-    load_dotenv(Path(_env_dir) / ".env" if _env_dir else MCP_DIR / ".env")
+    # The SessionStart hook (bootstrap-venv.sh) writes credentials here when
+    # available; otherwise this is whatever a user set up by hand.
+    load_dotenv(MCP_DIR / ".env")
 except Exception:
     pass
 
