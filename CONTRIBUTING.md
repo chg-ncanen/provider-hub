@@ -100,9 +100,9 @@ Reusable utilities and libraries (local use, not deployed).
 ## Distributing as a plugin
 
 `ai-skills/`, `mcp/`, and `tools/` are organized by content type for authoring and review, but they
-aren't reachable from someone else's Claude Code session unless `provider-hub` happens to be their
-cwd. If a skill (and the MCP server(s) it needs) should work from *any* project, package it as a
-Claude Code plugin:
+aren't reachable from someone else's session unless `provider-hub` happens to be their cwd. If a
+skill (and the MCP server(s) it needs) should work from *any* project, package it as a plugin — both
+Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layout, no forking needed:
 
 - Create `plugins/<area>/` with a self-contained `.claude-plugin/plugin.json`, `skills/`, and
   `.mcp.json`/`mcp-servers/` — see `plugins/pde/` for a working example.
@@ -114,9 +114,10 @@ Claude Code plugin:
   a real package dependency.
 - Content that doesn't need standalone distribution (experiments, scripts, services, user-scoped
   tools) has no reason to move — it stays under its existing content-type directory.
-
-Copilot CLI has no plugin system; if your content needs to support Copilot CLI too, also follow the
-`mcp/`/`ai-skills/` registration path described in each MCP server's README.
+- Avoid Claude-Code-only mechanisms where a cross-CLI equivalent matters: e.g. `${CLAUDE_PLUGIN_ROOT}`
+  resolves on both CLIs, but `${CLAUDE_PLUGIN_DATA}` and `userConfig`-based credential prompts don't
+  exist on Copilot CLI — see `plugins/pde/scripts/bootstrap-venv.sh` for the pattern that works on
+  both.
 
 ## Ownership Model
 

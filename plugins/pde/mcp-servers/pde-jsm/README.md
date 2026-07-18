@@ -56,10 +56,13 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 
 ## Running the MCP Server
 
-### As part of the `pde` Claude Code plugin (recommended)
+### As part of the `pde` plugin (recommended)
 
-Install via `/plugin install pde@provider-hub` — see `../../README.md` (the plugin root). Claude Code
-handles the venv, `${CLAUDE_PLUGIN_ROOT}`-relative paths, and credential prompts for you.
+Install via `/plugin install pde@provider-hub` (Claude Code) or `copilot plugin install
+pde@provider-hub` (Copilot CLI) — see `../../README.md` (the plugin root). Both CLIs handle the venv
+and `${CLAUDE_PLUGIN_ROOT}`-relative paths for you via the `SessionStart` hook; Claude Code also
+prompts for credentials via `userConfig`, Copilot CLI does not (see that README for the manual
+alternative).
 
 ### Locally (stdio transport)
 ```bash
@@ -68,10 +71,8 @@ python app.py
 
 The server runs on stdin/stdout.
 
-### Example Copilot CLI Config
+### Manual MCP registration (either CLI, without the plugin)
 
-Copilot CLI has no plugin system, so register this server directly in your project's
-`.copilot-config.json`:
 ```json
 {
   "mcpServers": {
@@ -82,6 +83,9 @@ Copilot CLI has no plugin system, so register this server directly in your proje
   }
 }
 ```
+Claude Code: add this under `mcpServers` in the relevant `.claude.json` project entry, or run
+`claude mcp add`. Copilot CLI: `copilot mcp add pde-jsm -- python /path/to/.../app.py` (writes to the
+global `~/.copilot/mcp-config.json`).
 
 ## Deployment (Docker)
 

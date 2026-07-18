@@ -15,16 +15,17 @@ This skill processes open JSM "More than one contact found..." alerts and automa
    - Provides: Alert listing, details, notes, closing, and email search
    - Setup: See `../../mcp-servers/pde-jsm/README.md`
 
-2. **`salesforce-prod`** (Copilot CLI extension)
+2. **`salesforce-prod`** (a regular MCP server, not bundled with this plugin)
    - Provides: SOQL queries against Salesforce prod
    - Prerequisite: `sf` CLI authenticated to the `prod` org alias
-   - Installation:
+   - Installation (either CLI — this is the `@salesforce/mcp` npm package, not a Copilot-specific
+     extension):
      ```bash
      # Check if installed
-     copilot config mcp list | grep salesforce-prod
-     
-     # If not found, install from the Copilot CLI extensions directory
-     # See: https://github.com/github/copilot-extensions for latest instructions
+     copilot mcp list | grep salesforce-prod   # or: claude mcp list
+
+     # If not found:
+     copilot mcp add salesforce-prod -- npx -y @salesforce/mcp --orgs prod --toolsets orgs,data
      ```
 
 ### Environment & Tools
