@@ -12,6 +12,10 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 - **`skills/resolve-duplicate-contact-alerts/`** — Skill that resolves duplicate-contact JSM alerts
   using the MCP server above plus `salesforce-prod`, a separate MCP server (the `@salesforce/mcp`
   npm package) not bundled here — see that skill's README for how to register it.
+- **`launch-darkly`** — LaunchDarkly's own remote MCP server (`mcp.launchdarkly.com`), bundled
+  directly in `.mcp.json` since it's a plain PDE dependency with no official Claude/Copilot plugin of
+  its own. No static credentials to configure — it authenticates via an interactive OAuth prompt the
+  first time it connects.
 
 ## Installing
 
