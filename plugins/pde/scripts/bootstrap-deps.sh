@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 # SessionStart hook: keeps the pde-mcp MCP server's venv in sync so its
 # command (${CLAUDE_PLUGIN_ROOT}/.venv/bin/python in .mcp.json) actually
-# exists and has its deps installed. Runs on every session start but only
+# exists and has its deps installed, and mirrors Claude Code's userConfig
+# credentials into pde-mcp's own .env. Runs on every session start but only
 # does real work when something's actually missing/changed, so it's cheap
-# on the common path. Nothing else lives here on purpose — credentials come
-# in via .mcp.json's ${user_config.*} substitution (Claude Code) or a
-# hand-written .env (Copilot CLI/local dev), and companion tooling like the
-# `sf` CLI is set up via the setup-companion-tools skill instead, since none
-# of that is required just to start pde-mcp.
+# on the common path.
+#
+# The .env mirroring exists ONLY for resolve-duplicate-contact-alerts/run.py:
+# unlike pde-mcp itself (which gets credentials straight from .mcp.json's
+# ${user_config.*} substitution when Claude Code spawns it), run.py is
+# invoked directly and never goes through that path, so without this it has
+# no credential source at all on Claude Code. Companion tooling (the `sf`
+# CLI, salesforce-prod, etc.) deliberately stays out of this hook — that's
+# the setup-companion-tools skill's job, since none of it is required just
+# to start pde-mcp.
 #
 # Uses CLAUDE_PLUGIN_ROOT (not CLAUDE_PLUGIN_DATA) so this works under both
 # Claude Code and Copilot CLI: Copilot injects CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/
@@ -45,7 +51,12 @@ find_system_python() {
 }
 
 if [ ! -d "$VENV_DIR" ]; then
-  "$(find_system_python)" -m venv "$VENV_DIR"
+  # --copies (not the default symlinks): some hook sandboxes block symlink
+  # creation, which otherwise silently leaves bin/python missing while the
+  # rest of venv creation "succeeds" (verified against a real Claude Code
+  # SessionStart hook run — pip and its installed console scripts showed up
+  # fine, but bin/python and bin/python3 were the only things missing).
+  "$(find_system_python)" -m venv --copies "$VENV_DIR"
 fi
 
 # Normalize to a `bin/` layout regardless of what the venv module produced.
@@ -59,4 +70,20 @@ if [ ! -f "$INSTALLED_MARKER" ] || [ "$(cat "$REQ_FILE")" != "$(cat "$INSTALLED_
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet -r "$REQ_FILE"
   cp "$REQ_FILE" "$INSTALLED_MARKER"
+fi
+
+# Mirror userConfig credentials into pde-mcp/.env for run.py's benefit (see
+# header comment) — only if Claude Code actually supplied any, so this is a
+# no-op on Copilot CLI (no userConfig, CLAUDE_PLUGIN_OPTION_* is never set
+# there) and doesn't wipe a .env someone created by hand in that case.
+ENV_FILE="$MCP_SERVER_DIR/.env"
+if [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN:-}${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME:-}${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD:-}" ]; then
+  {
+    [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}" ] && echo "ATLASSIAN_EMAIL=${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL}"
+    [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN:-}" ] && echo "ATLASSIAN_API_TOKEN=${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN}"
+    [ -n "${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME:-}" ] && echo "EMAIL_USERNAME=${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME}"
+    [ -n "${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD:-}" ] && echo "EMAIL_PASSWORD=${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD}"
+    true
+  } > "$ENV_FILE"
+  chmod 600 "$ENV_FILE" 2>/dev/null || true
 fi
