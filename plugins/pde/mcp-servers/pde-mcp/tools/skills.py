@@ -16,8 +16,8 @@ def definitions() -> list[types.Tool]:
         types.Tool(
             name="list_project_skills",
             description=(
-                "List AI skills bundled with this project so MCP clients can discover "
-                "available workflows. Skills are loaded from .agents/skills."
+                "List AI skills bundled with this plugin so MCP clients can discover "
+                "available workflows. Skills are loaded from the plugin's skills/ directory."
             ),
             inputSchema={
                 "type": "object",
@@ -32,7 +32,7 @@ def definitions() -> list[types.Tool]:
         types.Tool(
             name="get_project_skill",
             description=(
-                "Read a specific project skill document from .agents/skills by skill id. "
+                "Read a specific plugin skill document from skills/ by skill id. "
                 "Use the id returned by list_project_skills."
             ),
             inputSchema={
@@ -40,7 +40,7 @@ def definitions() -> list[types.Tool]:
                 "properties": {
                     "skill_id": {
                         "type": "string",
-                        "description": "Skill id (folder name under .agents/skills).",
+                        "description": "Skill id (folder name under the plugin's skills/ directory).",
                     },
                 },
                 "required": ["skill_id"],
@@ -54,11 +54,28 @@ def can_handle(name: str) -> bool:
 
 
 def _skills_root(project_root: Path) -> Path:
-    return project_root / ".agents" / "skills"
+    return project_root / "skills"
+
+
+def _strip_frontmatter(content: str) -> str:
+    """Drop a leading YAML frontmatter block (---\\n...\\n---) if present.
+
+    Doesn't parse the YAML itself (no yaml dependency) — SKILL.md frontmatter
+    commonly uses multi-line folded scalars (`description: >-`) that a naive
+    "description: <rest of this line>" grab would truncate, so it's simpler
+    and more robust to just skip the whole block and excerpt real prose.
+    """
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return content
+    for i, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "\n".join(lines[i + 1:])
+    return content
 
 
 def _extract_excerpt(content: str) -> str:
-    for line in content.splitlines():
+    for line in _strip_frontmatter(content).splitlines():
         text = line.strip()
         if not text:
             continue
@@ -109,7 +126,7 @@ def _list_skills(project_root: Path, include_excerpt: bool) -> dict[str, Any]:
 
 def _safe_skill_file(project_root: Path, skill_id: str) -> Path:
     if not skill_id or "/" in skill_id or "\\" in skill_id or ".." in skill_id:
-        raise ValueError("Invalid skill_id. Expected a folder name under .agents/skills.")
+        raise ValueError("Invalid skill_id. Expected a folder name under the plugin's skills/ directory.")
 
     skill_file = _skills_root(project_root) / skill_id / "SKILL.md"
     if not skill_file.exists() or not skill_file.is_file():
