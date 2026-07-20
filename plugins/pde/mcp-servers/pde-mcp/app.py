@@ -1,4 +1,4 @@
-"""MCP application wiring for the PDE JSM server."""
+"""MCP application wiring for the PDE MCP server."""
 
 import asyncio
 import os
@@ -29,7 +29,7 @@ from tools import alerts, email, skills
 try:
     from dotenv import load_dotenv
 
-    # The SessionStart hook (bootstrap-venv.sh) writes credentials here when
+    # The SessionStart hook (bootstrap-deps.sh) writes credentials here when
     # available; otherwise this is whatever a user set up by hand.
     load_dotenv(MCP_DIR / ".env")
 except Exception:
