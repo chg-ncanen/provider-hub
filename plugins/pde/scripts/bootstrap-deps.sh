@@ -115,8 +115,18 @@ fi
 
   # Installing the binary is automatable; authenticating it is not (it's an
   # interactive browser OAuth flow) — just tell the user if 'prod' isn't set up.
+  # Uses python3 (not grep) to check the alias list — a personal PATH override
+  # broke a plain `diff` call earlier for the exact same reason: never assume
+  # a generic CLI tool behaves the way you expect on someone else's machine.
   if command -v sf >/dev/null 2>&1; then
-    if ! sf alias list --json 2>/dev/null | grep -q '"alias": *"prod"'; then
+    if ! sf alias list --json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+sys.exit(0 if any(a.get('alias') == 'prod' for a in d.get('result', [])) else 1)
+" 2>/dev/null; then
       echo "bootstrap-deps.sh: sf CLI has no 'prod' org alias — run 'sf org login web --alias prod' if you need resolve-duplicate-contact-alerts." >&2
     fi
   fi

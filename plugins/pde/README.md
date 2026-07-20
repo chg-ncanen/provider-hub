@@ -16,6 +16,11 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   directly in `.mcp.json` since it's a plain PDE dependency with no official Claude/Copilot plugin of
   its own. No static credentials to configure — it authenticates via an interactive OAuth prompt the
   first time it connects.
+- **`skills/setup-companion-tools/`** — an opt-in skill (invoke it by asking to set up/connect
+  companion tools) for installing Grafana, LogRocket, Atlassian, and `salesforce-prod` one at a
+  time. Deliberately *not* automatic (no `SessionStart` hook does this) — those aren't dependencies
+  of anything in this plugin, and installing `pde` shouldn't silently pull in other teams'/vendors'
+  plugins without you choosing to.
 
 ## Installing
 
