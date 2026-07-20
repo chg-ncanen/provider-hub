@@ -50,7 +50,7 @@ if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$VENV_DIR/Scripts/python.exe" ]; the
   cp "$VENV_DIR/Scripts/pip.exe" "$VENV_DIR/bin/pip"
 fi
 
-if [ ! -f "$INSTALLED_MARKER" ] || ! diff -q "$REQ_FILE" "$INSTALLED_MARKER" >/dev/null 2>&1; then
+if [ ! -f "$INSTALLED_MARKER" ] || [ "$(cat "$REQ_FILE")" != "$(cat "$INSTALLED_MARKER")" ]; then
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet -r "$REQ_FILE"
   cp "$REQ_FILE" "$INSTALLED_MARKER"
