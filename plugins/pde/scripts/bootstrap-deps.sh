@@ -81,9 +81,12 @@ fi
   if ! command -v sf >/dev/null 2>&1; then
     if command -v npm >/dev/null 2>&1; then
       echo "bootstrap-deps.sh: installing Salesforce CLI (npm install -g @salesforce/cli)..." >&2
+      # Never invokes sudo — if the global npm prefix isn't user-writable, npm
+      # fails fast with a permission error (doesn't hang prompting for a
+      # password), and we just tell the user the standard sudo-free fix.
       npm install -g @salesforce/cli >/dev/null 2>&1 \
         && echo "bootstrap-deps.sh: sf CLI installed." >&2 \
-        || echo "bootstrap-deps.sh: sf CLI install failed — install manually with 'npm install -g @salesforce/cli' if you need resolve-duplicate-contact-alerts." >&2
+        || echo "bootstrap-deps.sh: sf CLI install failed (often a permissions issue with the global npm prefix) — if you need resolve-duplicate-contact-alerts, either ask whoever manages this machine to install it, or avoid needing sudo yourself: 'npm config set prefix ~/.npm-global && export PATH=\$HOME/.npm-global/bin:\$PATH' (add that export to your shell profile), then 'npm install -g @salesforce/cli'." >&2
     else
       echo "bootstrap-deps.sh: npm not found, can't auto-install sf CLI — install Node.js/npm, then 'npm install -g @salesforce/cli', if you need resolve-duplicate-contact-alerts." >&2
     fi

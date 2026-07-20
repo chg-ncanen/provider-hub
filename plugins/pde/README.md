@@ -29,12 +29,20 @@ copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 
-Either way, a `SessionStart` hook (`scripts/bootstrap-deps.sh`) creates a venv under
-`${CLAUDE_PLUGIN_ROOT}/.venv` and installs `mcp-servers/pde-jsm/requirements.txt` into it, only
-reinstalling when that file changes. It also best-effort installs the `sf` CLI (via
-`npm install -g @salesforce/cli`) if `resolve-duplicate-contact-alerts` needs it and it's missing —
-but it can't authenticate `sf` for you (that's an interactive browser login); it just tells you to
-run `sf org login web --alias prod` if that alias isn't set up yet.
+**Then start a new session** (close and reopen) — installing alone isn't enough. The dependency
+setup below runs via a `SessionStart` hook, which only fires at an actual session boundary (new
+session, `--resume`/`--continue`, `/clear`, or compaction); `/plugin install` and `/reload-plugins`
+do *not* trigger it. Until that hook runs once, `pde-jsm` can't launch — its command points at a
+venv that doesn't exist yet.
+
+That hook (`scripts/bootstrap-deps.sh`) creates a venv under `${CLAUDE_PLUGIN_ROOT}/.venv` and
+installs `mcp-servers/pde-jsm/requirements.txt` into it, only reinstalling when that file changes.
+It also best-effort installs the `sf` CLI (via `npm install -g @salesforce/cli`) if
+`resolve-duplicate-contact-alerts` needs it and it's missing — but it can't authenticate `sf` for you
+(that's an interactive browser login); it just tells you to run `sf org login web --alias prod` if
+that alias isn't set up yet. It also never uses `sudo`: if the global npm prefix isn't writable, the
+install just fails with a clear message pointing at the standard sudo-free fix (a user-owned npm
+prefix), rather than hanging or silently doing nothing.
 
 **Credentials** (`ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`, required; `EMAIL_USERNAME` /
 `EMAIL_PASSWORD`, optional for `find_emails`):
