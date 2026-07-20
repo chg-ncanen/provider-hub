@@ -25,13 +25,13 @@ A Python script at `run.py` in this directory automates all steps. **Use this in
 **Prerequisites:** `.env` with `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, optional `EMAIL_*` vars for email check, and `sf` CLI authenticated to the `prod` org alias.
 
 ```bash
-# from the project root
+# from this skill's own directory (its "Base directory" shown when invoked)
 
 # dry run (default — no changes, just report)
-python .agents/skills/resolve-duplicate-contact-alerts/run.py
+python run.py
 
 # live — add notes and close resolved alerts
-python .agents/skills/resolve-duplicate-contact-alerts/run.py --live
+python run.py --live
 ```
 
 After the script runs, review the printed summary table and share it with the user. Only fall back to manual MCP tool calls when the script fails or needs debugging.
