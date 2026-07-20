@@ -22,7 +22,7 @@ Always confirm whether to run in **dry run** (default) or **live** mode before d
 
 A Python script at `run.py` in this directory automates all steps. **Use this instead of manual MCP tool calls** whenever possible — it parallelises JSM detail fetches, batches the Salesforce query, and processes all alerts in one pass.
 
-**Prerequisites:** `.env` with `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, optional `EMAIL_*` vars for email check, and `sf` CLI authenticated to the `prod` org alias.
+**Prerequisites:** `mcp-servers/pde-mcp/.env` with `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, optional `EMAIL_*` vars for email check, and `sf` CLI authenticated to the `prod` org alias. This applies on **both** CLIs, including Claude Code — this script runs directly, not through `.mcp.json`, so it never sees the credentials Claude Code's `userConfig` prompt hands to the `pde-mcp` MCP server itself. If `run.py` reports missing credentials, fall back to manual `pde-mcp` MCP tool calls instead (those already have your configured credentials on Claude Code).
 
 ```bash
 # from this skill's own directory (its "Base directory" shown when invoked)

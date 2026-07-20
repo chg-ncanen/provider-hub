@@ -33,7 +33,12 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 
 ### Environment & Tools
 
-- `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
+- `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `../../mcp-servers/pde-mcp/.env` — required for
+  `run.py` specifically **on both CLIs**, including Claude Code: this script is invoked directly, not
+  through `.mcp.json`, so it never receives the credentials Claude Code's `userConfig` prompt hands to
+  the `pde-mcp` MCP server process. If you've only configured `userConfig` and haven't created this
+  `.env`, `run.py` will fail with a clear message — fall back to manual `pde-mcp` MCP tool calls
+  instead, which do have your configured credentials.
 - Optional: `EMAIL_USERNAME` / `EMAIL_PASSWORD` for email validation
 - **`sf` CLI** — Salesforce CLI (required)
   - Install: `npm install -g @salesforce/cli`

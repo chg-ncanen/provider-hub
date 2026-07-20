@@ -56,6 +56,12 @@ to start at all. Credentials and companion tooling (below) are handled elsewhere
   `mcp-servers/pde-mcp/.env` yourself and fill it in; `app.py`'s `load_dotenv()` picks it up. If you
   already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` etc. yourself (either CLI), those take
   precedence over `.env` regardless (see `app.py`'s `load_dotenv()`, default `override=False`).
+- **`resolve-duplicate-contact-alerts`'s `run.py` is the one exception**, on *either* CLI: it's
+  invoked directly rather than spawned via `.mcp.json`, so it never sees `userConfig`-substituted
+  credentials — it needs the same hand-created `mcp-servers/pde-mcp/.env` that Copilot CLI always
+  needs. Verified: with no `.env` and a clean environment, `run.py` fails with a clear message telling
+  you to create that file or fall back to manual `pde-mcp` MCP tool calls (which do work via
+  `userConfig` on Claude Code). See that skill's own README/SKILL.md.
 
 ## Prerequisites
 

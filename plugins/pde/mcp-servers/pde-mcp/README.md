@@ -153,6 +153,13 @@ find_emails(subject="Possible provider merge needed", since="01-Jul-2026")
 - **"Missing required credentials"** — Check `.env` file has ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN
 - **"requests package not installed"** — Run `pip install -r requirements.txt`
 - **"Connection timeout"** — Check Atlassian cloud ID in `app_config.json`, increase timeout_seconds if needed
+- **Tools not callable in headless/scripted sessions** (`claude -p` / `copilot -p`) — verified this is
+  a client-side limitation of both CLIs' non-interactive mode, not specific to this plugin: on Claude
+  Code, plugin-sourced MCP tools can be entirely invisible to the model even though `claude mcp list`
+  reports the server "Connected" (multiple upstream GitHub issues track this); on Copilot CLI, the
+  tool schema is discovered but the CLI reports it cannot invoke it directly in `-p` mode. Regular
+  interactive sessions on both CLIs don't have this problem. If you need this working in `-p` mode,
+  register `pde-mcp` directly via `--mcp-config` (Claude Code) rather than through the plugin.
 
 ## Support
 
