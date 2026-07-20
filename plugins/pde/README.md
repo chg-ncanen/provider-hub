@@ -52,6 +52,14 @@ prefix), rather than hanging or silently doing nothing.
   hook writes them to `mcp-servers/pde-mcp/.env`.
 - Copilot CLI has no equivalent prompt — create that `.env` yourself (copy
   `mcp-servers/pde-mcp/.env.example`) after installing.
+- **Rotating a credential later?** Run `/plugin configure pde@provider-hub` and restart the session
+  as usual. The hook *unconditionally overwrites* `.env` from `CLAUDE_PLUGIN_OPTION_*` whenever those
+  are non-empty (no comparison against what's already there), so if Claude Code re-passes the updated
+  value on the next session, it'll take automatically. Whether it actually does that (vs. only ever
+  passing the value from first-configure) isn't documented, so if the old value still seems to be in
+  effect after restarting: delete `mcp-servers/pde-mcp/.env` and restart again, or fully reinstall the
+  plugin. Note this doesn't apply if you already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`
+  yourself — those take precedence over `.env` regardless (see `app.py`'s `load_dotenv()`).
 
 ## Prerequisites
 
