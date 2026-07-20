@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# SessionStart hook: keeps the pde-jsm MCP server's venv (and .env) in sync.
-# Runs on every session start but only reinstalls when requirements.txt changed,
-# so it's cheap on the common path.
+# SessionStart hook: keeps the pde-jsm MCP server's venv (and .env) in sync,
+# and best-effort installs the `sf` CLI the resolve-duplicate-contact-alerts
+# skill needs. Runs on every session start but only does real work when
+# something's actually missing/changed, so it's cheap on the common path.
 #
 # Uses CLAUDE_PLUGIN_ROOT (not CLAUDE_PLUGIN_DATA) so this works under both
 # Claude Code and Copilot CLI: Copilot injects CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/
@@ -18,7 +19,7 @@ set -euo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT:-${COPILOT_PLUGIN_ROOT:-}}}"
 if [ -z "$PLUGIN_ROOT" ]; then
-  echo "bootstrap-venv.sh: no CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT set, skipping" >&2
+  echo "bootstrap-deps.sh: no CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT set, skipping" >&2
   exit 0
 fi
 
@@ -33,7 +34,7 @@ find_system_python() {
   elif command -v python >/dev/null 2>&1; then
     echo "python"
   else
-    echo "bootstrap-venv.sh: no python3/python found on PATH" >&2
+    echo "bootstrap-deps.sh: no python3/python found on PATH" >&2
     exit 1
   fi
 }
@@ -71,3 +72,28 @@ if [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}${CLAUDE_PLUGIN_OPTION_ATLASSI
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE" 2>/dev/null || true
 fi
+
+# --- Salesforce CLI, needed by the resolve-duplicate-contact-alerts skill ---
+# Best-effort and non-fatal: this whole block must never abort the script,
+# since the pde-jsm MCP server itself doesn't depend on `sf` at all — only
+# that one skill does, when a user actually invokes it.
+{
+  if ! command -v sf >/dev/null 2>&1; then
+    if command -v npm >/dev/null 2>&1; then
+      echo "bootstrap-deps.sh: installing Salesforce CLI (npm install -g @salesforce/cli)..." >&2
+      npm install -g @salesforce/cli >/dev/null 2>&1 \
+        && echo "bootstrap-deps.sh: sf CLI installed." >&2 \
+        || echo "bootstrap-deps.sh: sf CLI install failed — install manually with 'npm install -g @salesforce/cli' if you need resolve-duplicate-contact-alerts." >&2
+    else
+      echo "bootstrap-deps.sh: npm not found, can't auto-install sf CLI — install Node.js/npm, then 'npm install -g @salesforce/cli', if you need resolve-duplicate-contact-alerts." >&2
+    fi
+  fi
+
+  # Installing the binary is automatable; authenticating it is not (it's an
+  # interactive browser OAuth flow) — just tell the user if 'prod' isn't set up.
+  if command -v sf >/dev/null 2>&1; then
+    if ! sf alias list --json 2>/dev/null | grep -q '"alias": *"prod"'; then
+      echo "bootstrap-deps.sh: sf CLI has no 'prod' org alias — run 'sf org login web --alias prod' if you need resolve-duplicate-contact-alerts." >&2
+    fi
+  fi
+} || true

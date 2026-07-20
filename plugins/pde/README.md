@@ -25,9 +25,12 @@ copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 
-Either way, a `SessionStart` hook (`scripts/bootstrap-venv.sh`) creates a venv under
+Either way, a `SessionStart` hook (`scripts/bootstrap-deps.sh`) creates a venv under
 `${CLAUDE_PLUGIN_ROOT}/.venv` and installs `mcp-servers/pde-jsm/requirements.txt` into it, only
-reinstalling when that file changes.
+reinstalling when that file changes. It also best-effort installs the `sf` CLI (via
+`npm install -g @salesforce/cli`) if `resolve-duplicate-contact-alerts` needs it and it's missing —
+but it can't authenticate `sf` for you (that's an interactive browser login); it just tells you to
+run `sf org login web --alias prod` if that alias isn't set up yet.
 
 **Credentials** (`ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`, required; `EMAIL_USERNAME` /
 `EMAIL_PASSWORD`, optional for `find_emails`):

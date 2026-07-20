@@ -116,7 +116,7 @@ Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layou
   tools) has no reason to move — it stays under its existing content-type directory.
 - Avoid Claude-Code-only mechanisms where a cross-CLI equivalent matters: e.g. `${CLAUDE_PLUGIN_ROOT}`
   resolves on both CLIs, but `${CLAUDE_PLUGIN_DATA}` and `userConfig`-based credential prompts don't
-  exist on Copilot CLI — see `plugins/pde/scripts/bootstrap-venv.sh` for the pattern that works on
+  exist on Copilot CLI — see `plugins/pde/scripts/bootstrap-deps.sh` for the pattern that works on
   both.
 
 ## Ownership Model
