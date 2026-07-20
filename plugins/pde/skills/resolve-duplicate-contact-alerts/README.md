@@ -33,17 +33,23 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 
 ### Environment & Tools
 
-- `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `../../mcp-servers/pde-mcp/.env` — required for
-  `run.py` specifically **on both CLIs**, including Claude Code: this script is invoked directly, not
-  through `.mcp.json`, so it never receives the credentials Claude Code's `userConfig` prompt hands to
-  the `pde-mcp` MCP server process. If you've only configured `userConfig` and haven't created this
-  `.env`, `run.py` will fail with a clear message — fall back to manual `pde-mcp` MCP tool calls
-  instead, which do have your configured credentials.
+- `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `../../mcp-servers/pde-mcp/.env` — `run.py` is
+  invoked directly, not through `.mcp.json`, so it never receives Claude Code's `userConfig`
+  substitution the way the `pde-mcp` MCP server process does. On Claude Code, the plugin's
+  `SessionStart` hook mirrors `userConfig` into this `.env` for exactly this reason, so it should
+  already be there after `/plugin configure pde@provider-hub` + a session restart. On Copilot CLI
+  (no `userConfig`), create it by hand. If `run.py` still reports missing credentials, fall back to
+  manual `pde-mcp` MCP tool calls instead, which get credentials straight from `userConfig`.
 - Optional: `EMAIL_USERNAME` / `EMAIL_PASSWORD` for email validation
-- **`sf` CLI** — Salesforce CLI (required)
+- **`sf` CLI** — Salesforce CLI (required): `run.py` calls it directly (`sf data query`) at step 3,
+  it does not go through the `salesforce-prod` MCP server above (that's only used by the manual
+  workflow's MCP tool calls).
   - Install: `npm install -g @salesforce/cli`
   - Authenticate: `sf org login web --alias prod`
   - Verify: `sf org list --all` should show `prod` as available
+
+`run.py` checks all of the above itself before doing any work (see Troubleshooting) — it reports
+exactly what's missing and exits cleanly rather than failing partway through.
 
 ## Running
 
@@ -85,9 +91,14 @@ For autonomous agents or Copilot CLI, the `run.py` script is invoked as a subpro
 
 ## Troubleshooting
 
-- **"No ATLASSIAN_EMAIL"** — Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
-- **"sf: command not found"** — Install Salesforce CLI: `npm install -g @salesforce/cli`
-- **"Not authenticated to prod"** — Run `sf org login web --alias prod` first
+`run.py` runs a dependency check before doing anything else and prints exactly what's wrong — the
+messages below are what to do about each one it can report:
+
+- **Missing ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN** — see "Environment & Tools" above (Claude Code:
+  restart the session after `/plugin configure`; Copilot CLI: create `.env` by hand)
+- **`sf` CLI not found on PATH** — Install: `npm install -g @salesforce/cli`
+- **`sf` CLI has no 'prod' org alias** — Run `sf org login web --alias prod` (interactive browser
+  login, can't be automated)
 - **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../mcp-servers/pde-mcp/requirements.txt`
 
 ## Files

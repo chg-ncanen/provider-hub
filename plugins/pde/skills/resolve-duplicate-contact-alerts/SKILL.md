@@ -22,7 +22,9 @@ Always confirm whether to run in **dry run** (default) or **live** mode before d
 
 A Python script at `run.py` in this directory automates all steps. **Use this instead of manual MCP tool calls** whenever possible — it parallelises JSM detail fetches, batches the Salesforce query, and processes all alerts in one pass.
 
-**Prerequisites:** `mcp-servers/pde-mcp/.env` with `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, optional `EMAIL_*` vars for email check, and `sf` CLI authenticated to the `prod` org alias. This applies on **both** CLIs, including Claude Code — this script runs directly, not through `.mcp.json`, so it never sees the credentials Claude Code's `userConfig` prompt hands to the `pde-mcp` MCP server itself. If `run.py` reports missing credentials, fall back to manual `pde-mcp` MCP tool calls instead (those already have your configured credentials on Claude Code).
+**Prerequisites:** `mcp-servers/pde-mcp/.env` with `ATLASSIAN_EMAIL` + `ATLASSIAN_API_TOKEN`, optional `EMAIL_*` vars for email check, and `sf` CLI authenticated to the `prod` org alias. This script runs directly, not through `.mcp.json`, so it never sees Claude Code's `userConfig` substitution the way `pde-mcp` itself does — on Claude Code, the plugin's `SessionStart` hook mirrors `userConfig` into this `.env` for exactly this reason, so it should just be there after `/plugin configure pde@provider-hub` + a session restart. On Copilot CLI (no `userConfig`), create it by hand.
+
+`run.py` checks all of the above itself before doing any real work — it prints exactly what's missing (credentials, `sf` CLI not installed, or not authenticated to `prod`) and exits, rather than failing partway through with a traceback. If it reports missing credentials, fall back to manual `pde-mcp` MCP tool calls instead (those get credentials straight from `userConfig` on Claude Code regardless of this script) — that fallback can't cover a missing `sf` CLI, though, since that's this script's own direct dependency for the Salesforce query.
 
 ```bash
 # from this skill's own directory (its "Base directory" shown when invoked)

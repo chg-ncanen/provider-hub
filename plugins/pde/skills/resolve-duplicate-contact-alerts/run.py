@@ -19,7 +19,9 @@ Requires:
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -147,6 +149,82 @@ def email_mentions_any(emails: list[dict], contact_ids: list[str]) -> bool:
     return False
 
 
+def check_dependencies(cfg: AppConfig) -> tuple[list[str], list[str]]:
+    """Preflight check for everything this script actually needs to run.
+
+    Returns (problems, notes): problems are blocking (script can't do real
+    work without them); notes are informational (e.g. optional email check
+    being skipped) and don't stop the run. Checked here rather than letting
+    the script fail wherever the first missing dependency happens to bite —
+    JSM credentials would only surface at Step 1, a missing/unauthenticated
+    `sf` CLI wouldn't surface until Step 3 (as an uncaught FileNotFoundError
+    or RuntimeError), both as unhelpful mid-run tracebacks.
+    """
+    problems: list[str] = []
+    notes: list[str] = []
+
+    try:
+        cfg.validate_for_alert_fetch()
+    except ValueError as exc:
+        # Unlike pde-mcp itself (which gets credentials from .mcp.json's
+        # ${user_config.*} substitution when Claude Code spawns it), this
+        # script is invoked directly and never goes through that path. On
+        # Claude Code, bootstrap-deps.sh's SessionStart hook mirrors userConfig
+        # into mcp-servers/pde-mcp/.env specifically so this script has a
+        # source too — so landing here on Claude Code usually means the hook
+        # hasn't run yet this session (needs a session restart after
+        # install/configure) or userConfig was never filled in. On Copilot CLI
+        # (no userConfig, no hook mirroring) it means that .env was never
+        # hand-created.
+        problems.append(
+            f"{exc}\n"
+            f"    Credentials expected in {_MCP_SERVER_DIR / '.env'} (or your shell "
+            "environment) and weren't found.\n"
+            "    Claude Code: if you've already run '/plugin configure "
+            "pde@provider-hub', restart the session so the SessionStart hook can "
+            "mirror it into .env — configuring alone doesn't do it.\n"
+            "    Otherwise: copy mcp-servers/pde-mcp/.env.example to that path and "
+            "fill in ATLASSIAN_EMAIL / ATLASSIAN_API_TOKEN yourself.\n"
+            "    Alternatively, skip this script and use the pde-mcp MCP tools "
+            "directly (list_alerts, get_alert, etc.) — those get credentials "
+            "straight from userConfig on Claude Code regardless of this script."
+        )
+
+    if not os.getenv("EMAIL_USERNAME") or not os.getenv("EMAIL_PASSWORD"):
+        notes.append(
+            "EMAIL_USERNAME/EMAIL_PASSWORD not set — the email-notification check "
+            "(step 5a) will report 'no email found' for every unresolved duplicate, "
+            "even if one was actually sent. Optional; set both in .env to enable it."
+        )
+
+    sf_path = shutil.which("sf")
+    if not sf_path:
+        problems.append(
+            "`sf` CLI not found on PATH, but this script queries Salesforce prod "
+            "directly via `sf data query` at step 3.\n"
+            "    Install: npm install -g @salesforce/cli\n"
+            "    Or run the setup-companion-tools skill and pick salesforce-prod, "
+            "which checks/guides this for you."
+        )
+    else:
+        try:
+            result = subprocess.run(
+                ["sf", "alias", "list", "--json"], capture_output=True, text=True, timeout=15,
+            )
+            data = json.loads(result.stdout)
+            has_prod_alias = any(a.get("alias") == SF_ORG for a in data.get("result", []))
+        except Exception:
+            has_prod_alias = False
+        if not has_prod_alias:
+            problems.append(
+                f"`sf` CLI has no '{SF_ORG}' org alias authenticated — run "
+                f"'sf org login web --alias {SF_ORG}' (interactive browser login, "
+                "can't be automated)."
+            )
+
+    return problems, notes
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -186,31 +264,20 @@ def main() -> int:
     print(f"  Resolve Duplicate Contact Alerts  [{mode_label}]")
     print(f"{'='*70}\n")
 
-    # -- Setup -----------------------------------------------------------------
+    # -- Setup -------------------------------------------------------------
     cfg = AppConfig.from_env(config_path=str(_MCP_SERVER_DIR / "app_config.json"))
-    try:
-        cfg.validate_for_alert_fetch()
-    except ValueError as exc:
-        # Unlike pde-mcp itself (which gets credentials from .mcp.json's
-        # ${user_config.*} substitution when Claude Code spawns it), this
-        # script is invoked directly and never goes through that path — it
-        # only ever sees a real ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN if they're
-        # exported in the shell or in mcp-servers/pde-mcp/.env, regardless of
-        # which CLI you're on. A raw traceback here isn't actionable, so fail
-        # cleanly with the fix instead.
-        print(f"{exc}\n")
-        print(
-            "This script needs its own credentials — it doesn't get them from "
-            "Claude Code's userConfig prompt the way the pde-mcp MCP server does, "
-            "since it's run directly rather than spawned via .mcp.json.\n"
-            "Fix: copy mcp-servers/pde-mcp/.env.example to "
-            f"{_MCP_SERVER_DIR / '.env'} and fill in ATLASSIAN_EMAIL / "
-            "ATLASSIAN_API_TOKEN, or export them in your shell.\n"
-            "Alternatively, skip this script and use the pde-mcp MCP tools "
-            "directly (list_alerts, get_alert, etc.) — those already have your "
-            "configured credentials."
-        )
+
+    print("Checking dependencies…")
+    problems, notes = check_dependencies(cfg)
+    for note in notes:
+        print(f"  ⚠ {note}")
+    if problems:
+        print(f"\n{len(problems)} problem(s) found — can't continue:\n")
+        for i, problem in enumerate(problems, start=1):
+            print(f"{i}. {problem}\n")
         return 1
+    print("  All good.\n")
+
     api = JSMOpsAPI(config=cfg)
     email_tool = EmailTool()
 
@@ -292,7 +359,16 @@ def main() -> int:
 
     print(f"\nStep 3: Querying Salesforce prod for {len(all_ids)} contact ID(s)…")
     id_clause = ", ".join(f"'{cid}'" for cid in sorted(all_ids))
-    sf_records = sf_query(f"SELECT Id, Name FROM Contact WHERE Id IN ({id_clause})")
+    try:
+        sf_records = sf_query(f"SELECT Id, Name FROM Contact WHERE Id IN ({id_clause})")
+    except Exception as exc:
+        # The preflight check already confirmed `sf` is installed and
+        # authenticated to SF_ORG, so a failure here is something that
+        # changed mid-run (expired session, network blip, bad query) rather
+        # than a missing dependency — still worth failing cleanly instead of
+        # an uncaught traceback.
+        print(f"\nERROR: Salesforce query failed: {exc}")
+        return 1
     surviving: dict[str, str] = {r["Id"]: r["Name"] for r in sf_records}
     print(f"  {len(surviving)} contact(s) still exist in Salesforce.")
 
