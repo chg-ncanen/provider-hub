@@ -3,11 +3,6 @@
     "pde-jsm": {
       "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/pde-jsm/app.py"]
-    },
-    "launch-darkly": {
-      "type": "http",
-      "url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
-      "tools": ["*"]
     }
   }
 }

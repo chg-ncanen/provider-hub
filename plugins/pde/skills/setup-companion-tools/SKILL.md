@@ -1,14 +1,17 @@
 ---
 name: setup-companion-tools
-description: Interactively install optional companion MCPs/plugins for PDE work (Grafana, LogRocket, Atlassian, Salesforce prod) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
+description: Interactively install optional companion MCPs/plugins for PDE work (Grafana, LogRocket, Atlassian, Salesforce prod, LaunchDarkly) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
 ---
 
 # Setup Companion Tools
 
 Helps a developer optionally install MCP servers/plugins commonly used alongside PDE tooling, that
 aren't bundled in the `pde` plugin itself: Grafana (`gcx`), LogRocket, Atlassian (Jira/Confluence),
-and Salesforce prod (needed by `resolve-duplicate-contact-alerts`). Nothing here runs automatically —
-only when a developer explicitly invokes this skill, and only for whichever service(s) they pick.
+Salesforce prod (needed by `resolve-duplicate-contact-alerts`), and LaunchDarkly. None of these are
+actually called by any code in the `pde` plugin (verified — only `salesforce-prod` is a genuine
+dependency, of `resolve-duplicate-contact-alerts` specifically); they're just commonly useful
+alongside it. Nothing here runs automatically — only when a developer explicitly invokes this skill,
+and only for whichever service(s) they pick.
 
 ## Before you start
 
@@ -21,7 +24,7 @@ the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli copilot`
 
 1. Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
    directory) to see what's already installed.
-2. Present the four services to the user with their current status — use a multiple-choice
+2. Present the five services to the user with their current status — use a multiple-choice
    prompt. Let them pick **one at a time**; after handling their pick, ask if they want another, and
    repeat until they say they're done. Don't install anything they didn't explicitly choose.
 3. If `status` already shows their pick installed, say so and go back to step 2 — nothing to do.
@@ -52,3 +55,6 @@ the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli copilot`
 - **Salesforce prod** — SOQL queries against the prod org. Also needs the `sf` CLI authenticated to
   the `prod` alias (see step 5 above) — the skill that actually uses this is
   `resolve-duplicate-contact-alerts`.
+- **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
+  prompt the first time it connects — no static credentials to configure. Same install mechanism on
+  both CLIs.

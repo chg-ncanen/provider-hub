@@ -3,8 +3,8 @@
 Check status of, and install, one at a time, the optional companion
 MCPs/plugins commonly used alongside PDE tooling — none of which are
 bundled in the `pde` plugin itself (grafana/gcx, logrocket, atlassian,
-salesforce-prod). Driven by the setup-companion-tools skill; never runs
-on its own.
+salesforce-prod, launch-darkly). Driven by the setup-companion-tools
+skill; never runs on its own.
 
 Usage:
     python3 manage_companions.py status --cli claude|copilot
@@ -47,6 +47,12 @@ SERVICES = {
         "mcp_name": "salesforce-prod",
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
         "needs_sf_cli": True,
+    },
+    "launch-darkly": {
+        "label": "LaunchDarkly — feature flag management (not used by anything in the pde plugin itself, just handy alongside it)",
+        "kind": "mcp",
+        "mcp_name": "launch-darkly",
+        "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
     },
 }
 
@@ -167,10 +173,18 @@ def cmd_install(service_key, cli):
         return
 
     if svc["kind"] == "mcp":
-        cmd = [cli, "mcp", "add", svc["mcp_name"]]
-        if cli == "claude":
-            cmd += ["--scope", "user"]
-        cmd += ["--"] + svc["mcp_command"]
+        if "mcp_url" in svc:
+            # Remote HTTP server (e.g. launch-darkly) — no command/args, just a URL.
+            cmd = [cli, "mcp", "add", "--transport", "http", svc["mcp_name"], svc["mcp_url"]]
+            if cli == "claude":
+                cmd.insert(3, "--scope")
+                cmd.insert(4, "user")
+        else:
+            # Local/stdio server (e.g. salesforce-prod).
+            cmd = [cli, "mcp", "add", svc["mcp_name"]]
+            if cli == "claude":
+                cmd += ["--scope", "user"]
+            cmd += ["--"] + svc["mcp_command"]
         rc, o, e = run(cmd)
         print(json.dumps({
             "success": rc == 0,
