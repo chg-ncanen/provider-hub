@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SessionStart hook: keeps the pde-jsm MCP server's venv (and .env) in sync,
+# SessionStart hook: keeps the pde-mcp MCP server's venv (and .env) in sync,
 # and best-effort installs the `sf` CLI the resolve-duplicate-contact-alerts
 # skill needs. Runs on every session start but only does real work when
 # something's actually missing/changed, so it's cheap on the common path.
@@ -23,7 +23,7 @@ if [ -z "$PLUGIN_ROOT" ]; then
   exit 0
 fi
 
-MCP_SERVER_DIR="$PLUGIN_ROOT/mcp-servers/pde-jsm"
+MCP_SERVER_DIR="$PLUGIN_ROOT/mcp-servers/pde-mcp"
 REQ_FILE="$MCP_SERVER_DIR/requirements.txt"
 VENV_DIR="$PLUGIN_ROOT/.venv"
 INSTALLED_MARKER="$PLUGIN_ROOT/.venv-requirements.installed"
@@ -76,17 +76,17 @@ fi
 # Guide the developer if credentials still aren't there — non-blocking, just
 # a heads-up (Claude Code: nothing prompted userConfig yet, or the user
 # skipped it; Copilot CLI: no prompt exists at all, so this is the only
-# signal they'll get). pde-jsm itself still starts fine either way; only
+# signal they'll get). pde-mcp itself still starts fine either way; only
 # tool calls that need these will fail, later, when actually invoked.
 _env_content=""
 [ -f "$ENV_FILE" ] && _env_content="$(cat "$ENV_FILE" 2>/dev/null)"
 if [[ "$_env_content" != *"ATLASSIAN_EMAIL="* ]] || [[ "$_env_content" != *"ATLASSIAN_API_TOKEN="* ]]; then
-  echo "bootstrap-deps.sh: pde-jsm has no ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN configured yet — alert tools will fail until you do. Claude Code: run '/plugin configure pde@provider-hub'. Copilot CLI (no config prompt exists): copy mcp-servers/pde-jsm/.env.example to mcp-servers/pde-jsm/.env and fill it in." >&2
+  echo "bootstrap-deps.sh: pde-mcp has no ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN configured yet — alert tools will fail until you do. Claude Code: run '/plugin configure pde@provider-hub'. Copilot CLI (no config prompt exists): copy mcp-servers/pde-mcp/.env.example to mcp-servers/pde-mcp/.env and fill it in." >&2
 fi
 
 # --- Salesforce CLI, needed by the resolve-duplicate-contact-alerts skill ---
 # Best-effort and non-fatal: this whole block must never abort the script,
-# since the pde-jsm MCP server itself doesn't depend on `sf` at all — only
+# since the pde-mcp MCP server itself doesn't depend on `sf` at all — only
 # that one skill does, when a user actually invokes it.
 {
   if ! command -v sf >/dev/null 2>&1; then

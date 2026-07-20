@@ -42,7 +42,7 @@ After the script runs, review the printed summary table and share it with the us
 
 ### 1. Fetch open duplicate contact alerts
 
-Use the `pde-jsm` MCP to list all open alerts. Filter to only those whose message contains `"More than one contact found"`.
+Use the `pde-mcp` MCP to list all open alerts. Filter to only those whose message contains `"More than one contact found"`.
 
 ### 2. Fetch alert details, emails, and Salesforce username in parallel
 
@@ -127,5 +127,5 @@ After processing all alerts, output a table:
 
 ## MCPs Required
 
-- `pde-jsm` — for fetching alerts, adding notes, closing alerts, and searching emails (`find_emails`)
+- `pde-mcp` — for fetching alerts, adding notes, closing alerts, and searching emails (`find_emails`)
 - `salesforce-prod` — for querying contact existence

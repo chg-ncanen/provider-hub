@@ -76,23 +76,23 @@ The server runs on stdin/stdout.
 ```json
 {
   "mcpServers": {
-    "pde-jsm": {
+    "pde-mcp": {
       "command": "python",
-      "args": ["/path/to/provider-hub/plugins/pde/mcp-servers/pde-jsm/app.py"]
+      "args": ["/path/to/provider-hub/plugins/pde/mcp-servers/pde-mcp/app.py"]
     }
   }
 }
 ```
 Claude Code: add this under `mcpServers` in the relevant `.claude.json` project entry, or run
-`claude mcp add`. Copilot CLI: `copilot mcp add pde-jsm -- python /path/to/.../app.py` (writes to the
+`claude mcp add`. Copilot CLI: `copilot mcp add pde-mcp -- python /path/to/.../app.py` (writes to the
 global `~/.copilot/mcp-config.json`).
 
 ## Deployment (Docker)
 
 Build and run as a containerized service:
 ```bash
-docker build -t pde-jsm-mcp .
-docker run -e ATLASSIAN_EMAIL=... -e ATLASSIAN_API_TOKEN=... pde-jsm-mcp
+docker build -t pde-mcp-mcp .
+docker run -e ATLASSIAN_EMAIL=... -e ATLASSIAN_API_TOKEN=... pde-mcp-mcp
 ```
 
 (Dockerfile coming soon)

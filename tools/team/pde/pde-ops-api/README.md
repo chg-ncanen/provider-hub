@@ -1,6 +1,6 @@
 # PDE Ops API
 
-Shared Python library for JSM Ops and Email operations. Used by the `pde-jsm` MCP server and `resolve-duplicate-contact-alerts` skill.
+Shared Python library for JSM Ops and Email operations. Used by the `pde-mcp` MCP server and `resolve-duplicate-contact-alerts` skill.
 
 ## Contents
 
@@ -23,10 +23,10 @@ cd provider-hub/tools/team/pde/pde-ops-api
 pip install -e .
 ```
 
-The `pde-jsm` MCP server (`provider-hub/plugins/pde/mcp-servers/pde-jsm/`) depends on this package via its `requirements.txt` rather than bundling a copy — install that instead to get both:
+The `pde-mcp` MCP server (`provider-hub/plugins/pde/mcp-servers/pde-mcp/`) depends on this package via its `requirements.txt` rather than bundling a copy — install that instead to get both:
 
 ```bash
-cd provider-hub/plugins/pde/mcp-servers/pde-jsm
+cd provider-hub/plugins/pde/mcp-servers/pde-mcp
 pip install -r requirements.txt
 ```
 
@@ -102,12 +102,12 @@ The library reads `app_config.json` for JSM settings:
 
 ## Related
 
-- `plugins/pde/mcp-servers/pde-jsm/` — MCP server exposing these APIs as tools
+- `plugins/pde/mcp-servers/pde-mcp/` — MCP server exposing these APIs as tools
 - `plugins/pde/skills/resolve-duplicate-contact-alerts/` — Skill using JSM operations
 
 ## Dependencies
 
-See `requirements.txt` in `plugins/pde/mcp-servers/pde-jsm/`.
+See `requirements.txt` in `plugins/pde/mcp-servers/pde-mcp/`.
 
 Key packages:
 - `requests` — HTTP client

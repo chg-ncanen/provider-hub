@@ -9,7 +9,7 @@ from typing import Any
 
 MCP_DIR = Path(__file__).resolve().parent
 # CLAUDE_PLUGIN_ROOT is set by Claude Code when this runs as a plugin; fall back
-# to the on-disk plugin root (two levels up: mcp-servers/pde-jsm -> plugins/pde)
+# to the on-disk plugin root (two levels up: mcp-servers/pde-mcp -> plugins/pde)
 # for local/manual runs.
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT", str(MCP_DIR.parents[1])))
 
@@ -35,7 +35,7 @@ try:
 except Exception:
     pass
 
-server = Server("pde-jsm")
+server = Server("pde-mcp")
 
 _cfg: AppConfig | None = None
 _api: JSMOpsAPI | None = None
@@ -88,7 +88,7 @@ async def main() -> None:
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name="pde-jsm",
+                server_name="pde-mcp",
                 server_version="1.0.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),

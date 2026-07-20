@@ -10,10 +10,10 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 
 ### Required MCPs
 
-1. **`pde-jsm`** (bundled in this same plugin)
-   - Available at: `../../mcp-servers/pde-jsm/`
+1. **`pde-mcp`** (bundled in this same plugin)
+   - Available at: `../../mcp-servers/pde-mcp/`
    - Provides: Alert listing, details, notes, closing, and email search
-   - Setup: See `../../mcp-servers/pde-jsm/README.md`
+   - Setup: See `../../mcp-servers/pde-mcp/README.md`
 
 2. **`salesforce-prod`** (a regular MCP server, not bundled with this plugin)
    - Provides: SOQL queries against Salesforce prod
@@ -83,7 +83,7 @@ For autonomous agents or Copilot CLI, the `run.py` script is invoked as a subpro
 - **"No ATLASSIAN_EMAIL"** — Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
 - **"sf: command not found"** — Install Salesforce CLI: `npm install -g @salesforce/cli`
 - **"Not authenticated to prod"** — Run `sf org login web --alias prod` first
-- **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../mcp-servers/pde-jsm/requirements.txt`
+- **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../mcp-servers/pde-mcp/requirements.txt`
 
 ## Files
 

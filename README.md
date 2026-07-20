@@ -73,7 +73,7 @@ copilot plugin install pde@provider-hub
 The plugin's own `README.md` documents what it bundles and any required credentials/prerequisites.
 `ai-skills/`, `mcp/`, `tools/`, etc. remain the right home for reusable libraries, scripts, services,
 and anything that doesn't need standalone distribution — a plugin assembles the pieces it needs from
-there (e.g. `plugins/pde/mcp-servers/pde-jsm` depends on `tools/team/pde/pde-ops-api` as a normal pip
+there (e.g. `plugins/pde/mcp-servers/pde-mcp` depends on `tools/team/pde/pde-ops-api` as a normal pip
 dependency, not a copy).
 
 ## How to Contribute

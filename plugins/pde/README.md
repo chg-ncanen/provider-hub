@@ -5,7 +5,7 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 
 ## Contents
 
-- **`mcp-servers/pde-jsm/`** — MCP server exposing JSM alert operations (`list_alerts`, `get_alert`,
+- **`mcp-servers/pde-mcp/`** — MCP server exposing JSM alert operations (`list_alerts`, `get_alert`,
   `acknowledge_alert`, `add_alert_note`, `close_alert`, `find_emails`, `send_email`) plus project
   skill discovery. Depends on the `pde-ops-api` library (`tools/team/pde/pde-ops-api` in this repo)
   via `requirements.txt` rather than bundling a copy — see that library's README.
@@ -34,11 +34,11 @@ copilot plugin install pde@provider-hub
 **Then start a new session** (close and reopen) — installing alone isn't enough. The dependency
 setup below runs via a `SessionStart` hook, which only fires at an actual session boundary (new
 session, `--resume`/`--continue`, `/clear`, or compaction); `/plugin install` and `/reload-plugins`
-do *not* trigger it. Until that hook runs once, `pde-jsm` can't launch — its command points at a
+do *not* trigger it. Until that hook runs once, `pde-mcp` can't launch — its command points at a
 venv that doesn't exist yet.
 
 That hook (`scripts/bootstrap-deps.sh`) creates a venv under `${CLAUDE_PLUGIN_ROOT}/.venv` and
-installs `mcp-servers/pde-jsm/requirements.txt` into it, only reinstalling when that file changes.
+installs `mcp-servers/pde-mcp/requirements.txt` into it, only reinstalling when that file changes.
 It also best-effort installs the `sf` CLI (via `npm install -g @salesforce/cli`) if
 `resolve-duplicate-contact-alerts` needs it and it's missing — but it can't authenticate `sf` for you
 (that's an interactive browser login); it just tells you to run `sf org login web --alias prod` if
@@ -49,9 +49,9 @@ prefix), rather than hanging or silently doing nothing.
 **Credentials** (`ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`, required; `EMAIL_USERNAME` /
 `EMAIL_PASSWORD`, optional for `find_emails`):
 - Claude Code prompts for these on first enable (`.claude-plugin/plugin.json`'s `userConfig`) and the
-  hook writes them to `mcp-servers/pde-jsm/.env`.
+  hook writes them to `mcp-servers/pde-mcp/.env`.
 - Copilot CLI has no equivalent prompt — create that `.env` yourself (copy
-  `mcp-servers/pde-jsm/.env.example`) after installing.
+  `mcp-servers/pde-mcp/.env.example`) after installing.
 
 ## Prerequisites
 

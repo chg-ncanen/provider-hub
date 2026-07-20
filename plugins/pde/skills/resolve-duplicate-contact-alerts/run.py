@@ -11,7 +11,7 @@ Usage:
 
 Requires:
     - pde-ops-api installed (pip install -e tools/team/pde/pde-ops-api, or via
-      the pde-jsm MCP server's requirements.txt, which depends on it)
+      the pde-mcp MCP server's requirements.txt, which depends on it)
     - ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN in .env (or environment)
     - EMAIL_USERNAME / EMAIL_PASSWORD in .env for email checks (optional)
     - `sf` CLI authenticated to the 'prod' org alias
@@ -25,8 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-# .env and app_config.json are shared with the pde-jsm MCP server this skill uses.
-_MCP_SERVER_DIR = Path(__file__).resolve().parents[1] / "mcp-servers" / "pde-jsm"
+# .env and app_config.json are shared with the pde-mcp MCP server this skill uses.
+_MCP_SERVER_DIR = Path(__file__).resolve().parents[1] / "mcp-servers" / "pde-mcp"
 
 try:
     from dotenv import load_dotenv

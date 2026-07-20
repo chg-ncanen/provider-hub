@@ -9,7 +9,7 @@
     {
       "name": "pde",
       "source": "./plugins/pde",
-      "description": "JSM alert management (pde-jsm MCP server) and the resolve-duplicate-contact-alerts skill."
+      "description": "JSM alert management (pde-mcp MCP server) and the resolve-duplicate-contact-alerts skill."
     }
   ]
 }
