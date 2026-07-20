@@ -12,6 +12,11 @@ DEFAULT_CLOUD_ID = "e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2"
 DEFAULT_FILTER = 'responders:"PDE" AND status:open'
 
 
+class _PermanentAPIError(RuntimeError):
+    """A non-retryable API error (e.g. 401/403/404) — retrying wastes time
+    since the same response is guaranteed every attempt."""
+
+
 class JSMOpsAlertsTool:
     """Wrapper around JSM Ops alerts endpoints with a tool-friendly interface."""
 
@@ -108,9 +113,14 @@ class JSMOpsAlertsTool:
 
                 if response.status_code >= 400:
                     excerpt = json.dumps(body)[:800]
-                    raise RuntimeError(f"JSM Ops API error {response.status_code}: {excerpt}")
+                    raise _PermanentAPIError(f"JSM Ops API error {response.status_code}: {excerpt}")
 
                 return body if isinstance(body, dict) else {"data": body}
+            except _PermanentAPIError:
+                # Same request, same credentials, same alert ID — guaranteed
+                # to fail identically every time, so retrying (with sleeps)
+                # only adds latency without any chance of succeeding.
+                raise
             except Exception as exc:
                 last_error = exc
                 if attempt >= self.max_retries:
