@@ -213,14 +213,22 @@ def check_dependencies(cfg: AppConfig) -> tuple[list[str], list[str]]:
             )
             data = json.loads(result.stdout)
             has_prod_alias = any(a.get("alias") == SF_ORG for a in data.get("result", []))
-        except Exception:
-            has_prod_alias = False
-        if not has_prod_alias:
-            problems.append(
-                f"`sf` CLI has no '{SF_ORG}' org alias authenticated — run "
-                f"'sf org login web --alias {SF_ORG}' (interactive browser login, "
-                "can't be automated)."
+        except Exception as exc:
+            # A parse/timeout failure here isn't proof of a missing alias —
+            # don't block the run on a flaky check when step 3 already has
+            # its own error handling for a genuine auth failure; just warn.
+            notes.append(
+                f"Couldn't verify whether `sf` is authenticated to '{SF_ORG}' "
+                f"({exc}) — proceeding anyway; if step 3 fails with an auth "
+                f"error, run 'sf org login web --alias {SF_ORG}'."
             )
+        else:
+            if not has_prod_alias:
+                problems.append(
+                    f"`sf` CLI has no '{SF_ORG}' org alias authenticated — run "
+                    f"'sf org login web --alias {SF_ORG}' (interactive browser login, "
+                    "can't be automated)."
+                )
 
     return problems, notes
 

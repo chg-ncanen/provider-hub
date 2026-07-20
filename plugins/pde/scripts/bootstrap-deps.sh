@@ -79,11 +79,20 @@ fi
 ENV_FILE="$MCP_SERVER_DIR/.env"
 if [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN:-}${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME:-}${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD:-}" ]; then
   {
+    # Preserve any line this hook doesn't manage — e.g. .env.example's
+    # EMAIL_IMAP_HOST/EMAIL_SMTP_HOST overrides for non-Gmail providers —
+    # rather than truncating the whole file down to just these 4 keys.
+    # Written to a temp file first: reading and truncating the same file in
+    # one redirect can read back an already-empty file.
+    if [ -f "$ENV_FILE" ]; then
+      grep -vE '^(ATLASSIAN_EMAIL|ATLASSIAN_API_TOKEN|EMAIL_USERNAME|EMAIL_PASSWORD)=' "$ENV_FILE" || true
+    fi
     [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}" ] && echo "ATLASSIAN_EMAIL=${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL}"
     [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN:-}" ] && echo "ATLASSIAN_API_TOKEN=${CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN}"
     [ -n "${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME:-}" ] && echo "EMAIL_USERNAME=${CLAUDE_PLUGIN_OPTION_EMAIL_USERNAME}"
     [ -n "${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD:-}" ] && echo "EMAIL_PASSWORD=${CLAUDE_PLUGIN_OPTION_EMAIL_PASSWORD}"
     true
-  } > "$ENV_FILE"
+  } > "$ENV_FILE.tmp"
+  mv "$ENV_FILE.tmp" "$ENV_FILE"
   chmod 600 "$ENV_FILE" 2>/dev/null || true
 fi
