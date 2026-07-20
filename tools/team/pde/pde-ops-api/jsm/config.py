@@ -1,3 +1,8 @@
+# pyproject.toml declares requires-python >=3.9, but this file uses PEP 604
+# `X | Y` union syntax (e.g. `str | None`), which only evaluates at runtime on
+# 3.10+ — deferring annotation evaluation keeps it working on 3.9.
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from pathlib import Path

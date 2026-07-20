@@ -1,3 +1,8 @@
+# pyproject.toml declares requires-python >=3.9, but this file uses PEP 604
+# `X | Y` union syntax (e.g. `datetime | str`), which only evaluates at
+# runtime on 3.10+ — deferring annotation evaluation keeps it working on 3.9.
+from __future__ import annotations
+
 from datetime import datetime
 import json
 import re
@@ -310,7 +315,12 @@ class JSMOpsAPI:
 
     @staticmethod
     def _is_close_event(text: str) -> bool:
-        return "close" in text or "resolved" in text
+        # Mirror _is_ack_event's un-prefix guard: "Alert un-resolved by X" (a
+        # reopen) contains "resolved" as a substring and would otherwise be
+        # misclassified as the alert's close event.
+        if "unresolved" in text or "un-resolved" in text or "reopen" in text:
+            return False
+        return bool(re.search(r"\b(close|closed|resolve|resolved)\b", text))
 
     def _is_system_actor(self, actor: str) -> bool:
         return actor.strip().lower() in self.system_actors
@@ -320,6 +330,14 @@ class JSMOpsAPI:
         normalized_logs: List[Dict[str, Any]],
         after_time: Optional[datetime],
     ) -> Optional[Dict[str, Any]]:
+        if after_time is None:
+            # Can't establish "after the system ack" ordering without a
+            # timestamp for that ack event (e.g. its logTime failed to parse)
+            # — returning the first assignment match anywhere in the log
+            # regardless of order risks misattributing a pre-ack assignment
+            # as having happened after it, so report nothing instead.
+            return None
+
         # More flexible regex pattern to handle variations in assignment message format
         pattern = re.compile(
             r"(?:alert ownership|owner|assigned)\s+(?:assigned\s+)?to\s+\[?([^\]\n,]+)\]?",
@@ -327,11 +345,8 @@ class JSMOpsAPI:
         )
         for item in normalized_logs:
             event_time = item.get("time")
-            if after_time is not None:
-                if event_time is None:
-                    continue
-                if event_time < after_time:
-                    continue
+            if event_time is None or event_time < after_time:
+                continue
 
             raw_log = str(item.get("raw_log") or "")
             match = pattern.search(raw_log)

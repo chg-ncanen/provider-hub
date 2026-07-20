@@ -26,7 +26,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # .env and app_config.json are shared with the pde-mcp MCP server this skill uses.
-_MCP_SERVER_DIR = Path(__file__).resolve().parents[1] / "mcp-servers" / "pde-mcp"
+# __file__ is plugins/pde/skills/resolve-duplicate-contact-alerts/run.py, so
+# parents[2] is plugins/pde — parents[1] (skills/) was one level too shallow.
+_MCP_SERVER_DIR = Path(__file__).resolve().parents[2] / "mcp-servers" / "pde-mcp"
 
 try:
     from dotenv import load_dotenv
@@ -335,16 +337,23 @@ def main() -> int:
             email_sent = email_mentions_any(emails, contact_ids)
 
             if not email_sent:
-                # Targeted follow-up in case initial fetch was capped
-                try:
-                    followup = email_tool.find_emails(
-                        subject="Possible provider merge needed",
-                        since=email_since,
-                        limit=20,
-                    )
-                    email_sent = email_mentions_any(followup.get("emails", []), contact_ids)
-                except Exception:
-                    pass
+                # Targeted follow-up in case the initial batch fetch was capped:
+                # search the body directly for one of this alert's contact IDs,
+                # rather than repeating the same subject+since query with a
+                # smaller limit (which can only ever be a subset of what the
+                # initial fetch already covered).
+                for cid in contact_ids:
+                    try:
+                        followup = email_tool.find_emails(
+                            subject="Possible provider merge needed",
+                            body_contains=cid,
+                            limit=5,
+                        )
+                    except Exception:
+                        continue
+                    if email_mentions_any(followup.get("emails", []), contact_ids):
+                        email_sent = True
+                        break
 
             email_status = "📧 email sent" if email_sent else "📭 no email found"
             action = (

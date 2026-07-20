@@ -24,6 +24,7 @@ def definitions() -> list[types.Tool]:
                     "subject": {"type": "string", "description": "Search term to match in the email subject."},
                     "sender": {"type": "string", "description": "Filter by sender email address or name."},
                     "since": {"type": "string", "description": "Return emails since this date. Format: DD-Mon-YYYY e.g. '01-Jul-2026'."},
+                    "body_contains": {"type": "string", "description": "Search term that must appear in the email body (IMAP BODY search)."},
                     "mailbox": {"type": "string", "description": "Mailbox/folder to search (default: INBOX)."},
                     "limit": {"type": "integer", "description": "Max number of emails to return (default: 10)."},
                 },
@@ -71,6 +72,7 @@ def handle(name: str, arguments: dict[str, Any], email_tool: Any) -> dict[str, A
             subject=arguments.get("subject"),
             sender=arguments.get("sender"),
             since=arguments.get("since"),
+            body_contains=arguments.get("body_contains"),
             mailbox=arguments.get("mailbox", "INBOX"),
             limit=arguments.get("limit", 10),
         )

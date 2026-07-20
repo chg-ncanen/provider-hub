@@ -45,8 +45,8 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
    # Edit .env with your credentials:
    # - ATLASSIAN_EMAIL
    # - ATLASSIAN_API_TOKEN
-   # - ATLASSIAN_CLOUD_ID (optional, auto-detected if omitted)
    # - EMAIL_USERNAME / EMAIL_PASSWORD (optional, for email checks)
+   # (ATLASSIAN_CLOUD_ID is not an env var — it's set in app_config.json, see below)
    ```
 
 3. Verify config:

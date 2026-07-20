@@ -20,8 +20,7 @@ git clone https://github.com/chg-ncanen/provider-hub.git
 cd provider-hub
 
 # Explore available content
-ls -la ai-skills/team/pde/     # Team PDE skills
-ls -la scripts/user/ncanen/    # User scripts
+ls -la plugins/pde/            # PDE team's plugin (skills + MCP server)
 ```
 
 ## Repository Structure

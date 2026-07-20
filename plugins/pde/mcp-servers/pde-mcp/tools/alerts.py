@@ -145,8 +145,16 @@ def can_handle(name: str) -> bool:
 
 def handle(name: str, arguments: dict[str, Any], api: Any) -> dict[str, Any]:
     if name == "list_alerts":
-        profile = arguments.get("profile")
-        base_query = 'responders:"PDE"' if profile == "pde" else api.config.alert_filter
+        # app_config.json's default_profile ("pde") is what the tool description
+        # promises ("Defaults to the PDE responder filter") when the caller omits
+        # `profile` — and when the "pde" profile does apply, AND it onto the
+        # configured base filter (status:open) rather than replacing it, so
+        # "PDE alerts" doesn't silently drop the "open" scoping.
+        profile = arguments.get("profile") or api.config.default_profile
+        if profile == "pde":
+            base_query = f'{api.config.alert_filter} AND responders:"PDE"'
+        else:
+            base_query = api.config.alert_filter
         result = api.list_alerts(
             query=base_query,
             status=arguments.get("status"),

@@ -1,5 +1,10 @@
 """Email tools: IMAP (search/read) and SMTP (send) via standard protocols."""
 
+# pyproject.toml declares requires-python >=3.9, but this file uses PEP 604
+# `X | Y` union syntax (e.g. `str | list[str]`), which only evaluates at
+# runtime on 3.10+ — deferring annotation evaluation keeps it working on 3.9.
+from __future__ import annotations
+
 import imaplib
 import json
 import os
@@ -71,6 +76,7 @@ class EmailTool:
         subject: Optional[str] = None,
         sender: Optional[str] = None,
         since: Optional[str] = None,
+        body_contains: Optional[str] = None,
         mailbox: str = "INBOX",
         limit: int = 10,
     ) -> dict[str, Any]:
@@ -83,6 +89,8 @@ class EmailTool:
         if since:
             # Expects "DD-Mon-YYYY" e.g. "01-Jul-2026"
             criteria.append(f'SINCE "{since}"')
+        if body_contains:
+            criteria.append(f'BODY "{body_contains}"')
         if not criteria:
             criteria.append("ALL")
 

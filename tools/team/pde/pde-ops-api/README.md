@@ -37,7 +37,6 @@ Set environment variables for API access:
 ```bash
 export ATLASSIAN_EMAIL=your-email@example.com
 export ATLASSIAN_API_TOKEN=your-token-here
-export ATLASSIAN_CLOUD_ID=cloud-instance-id  # Optional: auto-detected if missing
 
 # For email features:
 export EMAIL_USERNAME=your-email@example.com
@@ -48,10 +47,12 @@ Or set in `.env`:
 ```bash
 ATLASSIAN_EMAIL=...
 ATLASSIAN_API_TOKEN=...
-ATLASSIAN_CLOUD_ID=...
 EMAIL_USERNAME=...
 EMAIL_PASSWORD=...
 ```
+
+`ATLASSIAN_CLOUD_ID` is not an env var — `AppConfig` only reads it from `app_config.json` (see
+`jsm/config.py`), where it already has a working default.
 
 ## Usage
 
@@ -60,8 +61,8 @@ EMAIL_PASSWORD=...
 ```python
 from api.jsm.client import JSMOpsAPI
 
-# Initialize
-api = JSMOpsAPI.from_env()
+# Initialize (reads app_config.json + ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN from the environment)
+api = JSMOpsAPI.from_config_file()
 
 # List alerts
 alerts = api.list_alerts(status="open", priority="P1")
@@ -70,10 +71,10 @@ alerts = api.list_alerts(status="open", priority="P1")
 alert = api.get_alert("alert-id-here")
 
 # Acknowledge alert
-api.acknowledge_alert("alert-id-here", note="Working on it")
+api.acknowledge("alert-id-here", note="Working on it")
 
 # Close alert
-api.close_alert("alert-id-here", note="Resolved")
+api.close("alert-id-here", note="Resolved")
 ```
 
 ### Email Search
