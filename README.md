@@ -138,7 +138,7 @@ See `mcp/README.md` for details.
 ## Naming & Conventions
 
 - **Skills:** Prefix with team/area (e.g., `pde-ai-ticket-discovery`)
-- **Services:** Clear, descriptive name (e.g., `agent-scheduler`, `pde-jsm-mcp`)
+- **Services:** Clear, descriptive name (e.g., `agent-scheduler`, `pde-mcp`)
 - **Scripts:** Lowercase with hyphens (e.g., `sync-contacts`, `deploy-worker`)
 - **Directories:** Lowercase with hyphens (no spaces or special chars)
 
