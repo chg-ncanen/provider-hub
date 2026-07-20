@@ -73,6 +73,17 @@ if [ -n "${CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL:-}${CLAUDE_PLUGIN_OPTION_ATLASSI
   chmod 600 "$ENV_FILE" 2>/dev/null || true
 fi
 
+# Guide the developer if credentials still aren't there — non-blocking, just
+# a heads-up (Claude Code: nothing prompted userConfig yet, or the user
+# skipped it; Copilot CLI: no prompt exists at all, so this is the only
+# signal they'll get). pde-jsm itself still starts fine either way; only
+# tool calls that need these will fail, later, when actually invoked.
+_env_content=""
+[ -f "$ENV_FILE" ] && _env_content="$(cat "$ENV_FILE" 2>/dev/null)"
+if [[ "$_env_content" != *"ATLASSIAN_EMAIL="* ]] || [[ "$_env_content" != *"ATLASSIAN_API_TOKEN="* ]]; then
+  echo "bootstrap-deps.sh: pde-jsm has no ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN configured yet — alert tools will fail until you do. Claude Code: run '/plugin configure pde@provider-hub'. Copilot CLI (no config prompt exists): copy mcp-servers/pde-jsm/.env.example to mcp-servers/pde-jsm/.env and fill it in." >&2
+fi
+
 # --- Salesforce CLI, needed by the resolve-duplicate-contact-alerts skill ---
 # Best-effort and non-fatal: this whole block must never abort the script,
 # since the pde-jsm MCP server itself doesn't depend on `sf` at all — only
