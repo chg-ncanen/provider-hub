@@ -1,5 +1,10 @@
 """MCP application wiring for the PDE MCP server."""
 
+# The plugin README documents Python 3.9+ as a prerequisite, but this file uses
+# PEP 604 `X | Y` union syntax (e.g. `AppConfig | None`), which only evaluates
+# at runtime on 3.10+ — deferring annotation evaluation keeps it working on 3.9.
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path
@@ -26,11 +31,26 @@ from api.jsm.config import AppConfig
 from api.mail.email_tool import EmailTool
 from tools import alerts, email, skills
 
+# Copilot CLI loads the same .mcp.json as Claude Code but has no `userConfig`
+# of its own, so it doesn't understand .mcp.json's ${user_config.*} env
+# substitution — verified against the real `copilot` CLI that it passes the
+# literal, unsubstituted string through as the credential's value instead of
+# leaving it unset. Strip that placeholder before load_dotenv() runs, or its
+# default override=False would treat the credential as "already set" and
+# silently ignore a hand-written .env, breaking the documented Copilot CLI
+# fallback (copy .env.example to .env).
+_USERCONFIG_PLACEHOLDER_PREFIX = "${user_config."
+for _credential_env_var in ("ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN", "EMAIL_USERNAME", "EMAIL_PASSWORD"):
+    if os.environ.get(_credential_env_var, "").startswith(_USERCONFIG_PLACEHOLDER_PREFIX):
+        del os.environ[_credential_env_var]
+
 try:
     from dotenv import load_dotenv
 
-    # The SessionStart hook (bootstrap-deps.sh) writes credentials here when
-    # available; otherwise this is whatever a user set up by hand.
+    # Claude Code passes userConfig credentials straight into this process's
+    # environment via .mcp.json's ${user_config.*} substitution, so this is
+    # only load-bearing for Copilot CLI (no userConfig equivalent) or local
+    # dev, where a user creates this .env by hand from .env.example.
     load_dotenv(MCP_DIR / ".env")
 except Exception:
     pass

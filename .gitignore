@@ -46,6 +46,7 @@ venv/
 ENV/
 env/
 .venv
+.venv-requirements.installed
 
 # Node.js
 node_modules/

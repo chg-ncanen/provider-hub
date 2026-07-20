@@ -2,7 +2,13 @@
   "mcpServers": {
     "pde-mcp": {
       "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/pde-mcp/app.py"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/pde-mcp/app.py"],
+      "env": {
+        "ATLASSIAN_EMAIL": "${user_config.ATLASSIAN_EMAIL}",
+        "ATLASSIAN_API_TOKEN": "${user_config.ATLASSIAN_API_TOKEN}",
+        "EMAIL_USERNAME": "${user_config.EMAIL_USERNAME}",
+        "EMAIL_PASSWORD": "${user_config.EMAIL_PASSWORD}"
+      }
     }
   }
 }

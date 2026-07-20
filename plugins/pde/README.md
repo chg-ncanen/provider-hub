@@ -31,39 +31,37 @@ copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 copilot plugin install pde@provider-hub
 ```
 
-**Then start a new session** (close and reopen) — installing alone isn't enough. The dependency
-setup below runs via a `SessionStart` hook, which only fires at an actual session boundary (new
-session, `--resume`/`--continue`, `/clear`, or compaction); `/plugin install` and `/reload-plugins`
-do *not* trigger it. Until that hook runs once, `pde-mcp` can't launch — its command points at a
-venv that doesn't exist yet.
+**Then start a new session** (close and reopen) — installing alone isn't enough. The venv setup
+below runs via a `SessionStart` hook, which only fires at an actual session boundary (new session,
+`--resume`/`--continue`, `/clear`, or compaction); `/plugin install` and `/reload-plugins` do *not*
+trigger it. Until that hook runs once, `pde-mcp` can't launch — its command points at a venv that
+doesn't exist yet.
 
-That hook (`scripts/bootstrap-deps.sh`) creates a venv under `${CLAUDE_PLUGIN_ROOT}/.venv` and
-installs `mcp-servers/pde-mcp/requirements.txt` into it, only reinstalling when that file changes.
-It also best-effort installs the `sf` CLI (via `npm install -g @salesforce/cli`) if
-`resolve-duplicate-contact-alerts` needs it and it's missing — but it can't authenticate `sf` for you
-(that's an interactive browser login); it just tells you to run `sf org login web --alias prod` if
-that alias isn't set up yet. It also never uses `sudo`: if the global npm prefix isn't writable, the
-install just fails with a clear message pointing at the standard sudo-free fix (a user-owned npm
-prefix), rather than hanging or silently doing nothing.
+That hook (`scripts/bootstrap-deps.sh`) does exactly one thing: creates a venv under
+`${CLAUDE_PLUGIN_ROOT}/.venv` and installs `mcp-servers/pde-mcp/requirements.txt` into it, only
+reinstalling when that file changes. It's deliberately minimal — only what's required for `pde-mcp`
+to start at all. Credentials and companion tooling (below) are handled elsewhere, not by this hook.
 
 **Credentials** (`ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`, required; `EMAIL_USERNAME` /
 `EMAIL_PASSWORD`, optional for `find_emails`):
-- Claude Code prompts for these on first enable (`.claude-plugin/plugin.json`'s `userConfig`) and the
-  hook writes them to `mcp-servers/pde-mcp/.env`.
-- Copilot CLI has no equivalent prompt — create that `.env` yourself (copy
-  `mcp-servers/pde-mcp/.env.example`) after installing.
-- **Rotating a credential later?** Run `/plugin configure pde@provider-hub` and restart the session
-  as usual. The hook *unconditionally overwrites* `.env` from `CLAUDE_PLUGIN_OPTION_*` whenever those
-  are non-empty (no comparison against what's already there), so if Claude Code re-passes the updated
-  value on the next session, it'll take automatically. Whether it actually does that (vs. only ever
-  passing the value from first-configure) isn't documented, so if the old value still seems to be in
-  effect after restarting: delete `mcp-servers/pde-mcp/.env` and restart again, or fully reinstall the
-  plugin. Note this doesn't apply if you already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN`
-  yourself — those take precedence over `.env` regardless (see `app.py`'s `load_dotenv()`).
+- **Claude Code**: prompts for these on first enable (`.claude-plugin/plugin.json`'s `userConfig`)
+  and passes them straight into the `pde-mcp` process's environment via `.mcp.json`'s
+  `${user_config.*}` substitution — verified this actually reaches the subprocess env, including for
+  the `sensitive: true` token/password fields, and that unset optional fields substitute to an empty
+  string rather than a literal placeholder. No `.env` file is written; nothing to rotate by hand.
+- **Rotating a credential later**: run `/plugin configure pde@provider-hub`, then restart the
+  session. Since Claude Code re-supplies the current `userConfig` values on every session start
+  through the same substitution, the new value takes effect immediately — no stale `.env` to delete.
+- **Copilot CLI** has no `userConfig` equivalent — copy `mcp-servers/pde-mcp/.env.example` to
+  `mcp-servers/pde-mcp/.env` yourself and fill it in; `app.py`'s `load_dotenv()` picks it up. If you
+  already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` etc. yourself (either CLI), those take
+  precedence over `.env` regardless (see `app.py`'s `load_dotenv()`, default `override=False`).
 
 ## Prerequisites
 
 - Python 3.9+ on the machine running the CLI.
 - For `resolve-duplicate-contact-alerts`: the `sf` CLI authenticated to the `prod` org alias
   (`npm install -g @salesforce/cli && sf org login web --alias prod`), and the `salesforce-prod`
-  MCP server registered separately (see that skill's README).
+  MCP server registered separately (see that skill's README). `setup-companion-tools` can install
+  and guide you through both — ask to set up `salesforce-prod`, or run its `sf-cli-guidance`
+  subcommand directly for OS-specific, sudo-safe install instructions.
