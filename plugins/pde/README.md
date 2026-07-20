@@ -60,5 +60,5 @@ prefix), rather than hanging or silently doing nothing.
 
 - Python 3.9+ on the machine running the CLI.
 - For `resolve-duplicate-contact-alerts`: the `sf` CLI authenticated to the `prod` org alias
-  (`npm install -g @salesforce/cli && sf org authenticate org_name:prod`), and the `salesforce-prod`
+  (`npm install -g @salesforce/cli && sf org login web --alias prod`), and the `salesforce-prod`
   MCP server registered separately (see that skill's README).

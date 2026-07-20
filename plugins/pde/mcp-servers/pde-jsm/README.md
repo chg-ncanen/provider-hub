@@ -29,7 +29,7 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 
 - **Optional: Salesforce CLI** (for use with `resolve-duplicate-contact-alerts` skill)
   - Install: `npm install -g @salesforce/cli`
-  - Authenticate: `sf org authenticate org_name:prod`
+  - Authenticate: `sf org login web --alias prod`
   - Verify: `sf org list --all`
 
 ### Installation

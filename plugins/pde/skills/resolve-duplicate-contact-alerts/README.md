@@ -18,8 +18,11 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 2. **`salesforce-prod`** (a regular MCP server, not bundled with this plugin)
    - Provides: SOQL queries against Salesforce prod
    - Prerequisite: `sf` CLI authenticated to the `prod` org alias
-   - Installation (either CLI — this is the `@salesforce/mcp` npm package, not a Copilot-specific
-     extension):
+   - **Easiest path**: run the `setup-companion-tools` skill (in this same plugin) and pick
+     `salesforce-prod` — it registers the MCP server, checks whether `sf` is installed/authenticated,
+     and gives OS-specific guidance for whichever step is still missing.
+   - Or install manually (either CLI — this is the `@salesforce/mcp` npm package, not a
+     Copilot-specific extension):
      ```bash
      # Check if installed
      copilot mcp list | grep salesforce-prod   # or: claude mcp list
@@ -34,7 +37,7 @@ This skill processes open JSM "More than one contact found..." alerts and automa
 - Optional: `EMAIL_USERNAME` / `EMAIL_PASSWORD` for email validation
 - **`sf` CLI** — Salesforce CLI (required)
   - Install: `npm install -g @salesforce/cli`
-  - Authenticate: `sf org authenticate org_name:prod`
+  - Authenticate: `sf org login web --alias prod`
   - Verify: `sf org list --all` should show `prod` as available
 
 ## Running
@@ -79,7 +82,7 @@ For autonomous agents or Copilot CLI, the `run.py` script is invoked as a subpro
 
 - **"No ATLASSIAN_EMAIL"** — Set `ATLASSIAN_EMAIL` and `ATLASSIAN_API_TOKEN` in `.env`
 - **"sf: command not found"** — Install Salesforce CLI: `npm install -g @salesforce/cli`
-- **"Not authenticated to prod"** — Run `sf org authenticate org_name:prod` first
+- **"Not authenticated to prod"** — Run `sf org login web --alias prod` first
 - **"requests package not installed"** — Install MCP dependencies: `pip install -r ../../mcp-servers/pde-jsm/requirements.txt`
 
 ## Files
