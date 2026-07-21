@@ -24,6 +24,12 @@ SERVICES = {
         "marketplace_source": "grafana/gcx",
         "marketplace_name": "gcx-marketplace",
         "plugin_name": "gcx",
+        "post_install": (
+            "Installing the plugin alone doesn't connect it to anything — gcx has its own "
+            "setup-gcx skill for authenticating and picking a Grafana Cloud stack. After "
+            "restarting your session, ask to 'set up gcx' / 'connect to Grafana' (or run its "
+            "setup-gcx skill directly) to finish this."
+        ),
     },
     "logrocket": {
         "label": "LogRocket — session replay, metrics, issue search",
@@ -31,6 +37,12 @@ SERVICES = {
         "marketplace_source": "logrocket/logrocket-claude-plugin",
         "marketplace_name": "logrocket",
         "plugin_name": "logrocket",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first LogRocket request (e.g. 'show me recent LogRocket sessions') "
+            "will trigger it."
+        ),
     },
     "atlassian": {
         "label": "Atlassian (Jira/Confluence) — full plugin on Claude Code, MCP-only on Copilot CLI",
@@ -40,6 +52,11 @@ SERVICES = {
         "plugin_name": "atlassian",
         "mcp_name": "chg-atlassian",
         "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first Atlassian request (e.g. 'search Jira for...') will trigger it."
+        ),
     },
     "salesforce-prod": {
         "label": "Salesforce prod — SOQL queries against the prod org (needed by resolve-duplicate-contact-alerts)",
@@ -62,6 +79,12 @@ SERVICES = {
         "kind": "mcp",
         "mcp_name": "launch-darkly",
         "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first LaunchDarkly request (e.g. 'list my feature flags') will "
+            "trigger it."
+        ),
     },
 }
 
@@ -167,17 +190,23 @@ def cmd_install(service_key, cli):
         if rc2 != 0:
             print(json.dumps({"success": False, "step": "plugin install", "error": (e2 or o2).strip()}))
             return
-        print(json.dumps({"success": True, "installed": plugin_id}))
+        print(json.dumps({
+            "success": True,
+            "installed": plugin_id,
+            "post_install": svc.get("post_install"),
+        }))
         return
 
     if svc["kind"] == "plugin-or-mcp" and cli == "copilot":
         rc, o, e = run(
             ["copilot", "mcp", "add", svc["mcp_name"], "--transport", "http", svc["mcp_url"]]
         )
+        note = "MCP-only — no bundled skills (Copilot CLI has no compatible Atlassian plugin path right now)" if rc == 0 else None
         print(json.dumps({
             "success": rc == 0,
             "installed": svc["mcp_name"] if rc == 0 else None,
-            "note": "MCP-only — no bundled skills (Copilot CLI has no compatible Atlassian plugin path right now)" if rc == 0 else None,
+            "note": note,
+            "post_install": svc.get("post_install") if rc == 0 else None,
             "error": None if rc == 0 else (e or o).strip(),
         }))
         return
@@ -199,6 +228,7 @@ def cmd_install(service_key, cli):
         print(json.dumps({
             "success": rc == 0,
             "installed": svc["mcp_name"] if rc == 0 else None,
+            "post_install": svc.get("post_install") if rc == 0 else None,
             "error": None if rc == 0 else (e or o).strip(),
         }))
         return

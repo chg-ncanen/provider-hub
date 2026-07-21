@@ -33,17 +33,30 @@ the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli copilot`
 3. If `status` already shows their pick installed, say so and go back to step 2 — nothing to do.
 4. Otherwise, run `python3 manage_companions.py install <service> --cli <claude|copilot>` and
    relay the result (`success`, what got installed, or the `error` if it failed).
-5. **Special case — `salesforce-prod` / `salesforce-uat`**: registering the MCP entry doesn't need
-   the `sf` CLI, but actually *using* it does, and `install` doesn't handle that part. Check
-   `_sf_cli` in the `status` output (`aliases` is keyed by org alias — `prod` and/or `uat`,
-   whichever service(s) are relevant to what the user picked):
-   - `installed: false` → run `python3 manage_companions.py sf-cli-guidance`, which detects the
-     OS (Linux/macOS/Windows) and returns the right sudo-free vs. sudo-needed install command for
-     that system. Relay it — **don't attempt to install `sf` yourself**; it may need root, and you
-     have no way to supply a password interactively even if it does.
-   - `installed: true` but the relevant alias (`prod` or `uat`) is `false` → tell them to run
-     `sf org login web --alias prod` (or `--alias uat`) — an interactive browser login, something
-     only they can do.
+5. **Installed is not the same as ready to use.** `install` only registers the plugin/MCP server —
+   don't stop there. For every successful install, also do whatever's needed to actually finish
+   setup (or, where that's genuinely not automatable, tell the user exactly what to do):
+   - **If the result has a non-null `post_install` field** (grafana, logrocket, atlassian,
+     launch-darkly): relay it verbatim. It already says what happens next (an automatic OAuth
+     prompt on first real use, or — for Grafana specifically — that a separate `setup-gcx` skill
+     is needed to actually connect to a Grafana instance) and that a session restart is required
+     first, since the newly installed server/plugin isn't connected in the *current* session.
+   - **`salesforce-prod` / `salesforce-uat`** (no `post_install` field — handled separately since it
+     needs a live status check, not a static string): registering the MCP entry doesn't need the
+     `sf` CLI, but actually *using* it does. Check `_sf_cli` in the `status` output (`aliases` is
+     keyed by org alias — `prod` and/or `uat`, whichever service(s) are relevant to what the user
+     picked):
+     - `installed: false` → run `python3 manage_companions.py sf-cli-guidance`, which detects the
+       OS (Linux/macOS/Windows) and returns the right sudo-free vs. sudo-needed install command for
+       that system. Relay it — **don't attempt to install `sf` yourself**; it may need root, and
+       you have no way to supply a password interactively even if it does.
+     - `installed: true` but the relevant alias (`prod` or `uat`) is `false` → tell them to run
+       `sf org login web --alias prod` (or `--alias uat`) — an interactive browser login, something
+       only they can do.
+   - After a restart, for OAuth-based services (logrocket, atlassian, launch-darkly), you can
+     proactively call one of that service's tools right away (e.g. "list my feature flags") to
+     trigger the login immediately instead of leaving the user to stumble into it later — ask first
+     if that's what they want, since it'll pop an auth prompt.
 
 ## Available services
 

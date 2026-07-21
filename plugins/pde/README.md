@@ -89,7 +89,11 @@ directly by name:
   are available?") — walks you through installing Grafana, LogRocket, Atlassian, `salesforce-prod`,
   `salesforce-uat`, and LaunchDarkly, one or more at a time. This is how you get `salesforce-prod`
   registered for `resolve-duplicate-contact-alerts` above, and is the natural first thing to run
-  after installing `pde` if you plan to use that skill.
+  after installing `pde` if you plan to use that skill. Installing isn't the same as being ready to
+  use, though — Grafana needs a separate `setup-gcx` step to actually connect to an instance,
+  LogRocket/Atlassian/LaunchDarkly authenticate via OAuth automatically on first real use, and
+  Salesforce needs the `sf` CLI logged in; the skill tells you exactly what's still needed for
+  whichever service(s) you pick, not just whether the install succeeded.
   - Direct/scriptable equivalent, if you'd rather not go through the agent:
     `python skills/setup-companion-tools/manage_companions.py status --cli claude` (or `copilot`),
     `... install <service> --cli claude`, or `... sf-cli-guidance`.
