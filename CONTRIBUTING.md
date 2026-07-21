@@ -173,10 +173,20 @@ Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layou
 
 ## Skill Metadata Format (SKILL.md)
 
-```markdown
-# My AI Skill
+The YAML frontmatter is not optional decoration — it's what Claude Code and Copilot CLI parse to
+discover the skill and decide when to invoke it. `name` must match the skill's directory name.
+`description` must state the trigger condition ("Use when...") — that's the only text the agent
+sees when deciding whether this skill is relevant, so vague descriptions ("helps with tickets")
+mean the skill never gets picked up. Everything below the frontmatter is free-form and for human
+reviewers.
 
-**Description:** One-sentence summary
+```markdown
+---
+name: pde-ai-ticket-discovery
+description: Use when triaging incoming support tickets to auto-classify and route them to the right queue
+---
+
+# PDE AI Ticket Discovery
 
 **Author:** ncanen
 
@@ -202,7 +212,7 @@ Brief usage example or link to README.md
 - [ ] README.md is present and clear
 - [ ] No hardcoded secrets or credentials
 - [ ] Naming conventions followed
-- [ ] For skills: SKILL.md is properly formatted
+- [ ] For skills: SKILL.md has valid YAML frontmatter (`name` matches directory, `description` states the trigger condition)
 - [ ] For services: Dockerfile and deployment docs included
 - [ ] Code is well-commented where needed
 - [ ] Dependencies are documented
