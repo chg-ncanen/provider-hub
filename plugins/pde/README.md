@@ -13,22 +13,31 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   using the MCP server above plus `salesforce-prod`, a separate MCP server (the `@salesforce/mcp`
   npm package) not bundled here — see that skill's README for how to register it.
 - **`skills/setup-companion-tools/`** — an opt-in skill (invoke it by asking to set up/connect
-  companion tools) for installing Grafana, LogRocket, Atlassian, `salesforce-prod`, and LaunchDarkly
-  one at a time. Deliberately *not* automatic (no `SessionStart` hook does this, and none of these —
-  including LaunchDarkly, previously bundled directly — are actually called by any code in this
-  plugin; only `salesforce-prod` is a genuine dependency, of `resolve-duplicate-contact-alerts`).
-  Installing `pde` shouldn't silently pull in other teams'/vendors' plugins without you choosing to.
+  companion tools) for installing Grafana, LogRocket, Atlassian, `salesforce-prod`, `salesforce-uat`,
+  and LaunchDarkly one at a time. Deliberately *not* automatic (no `SessionStart` hook does this, and
+  none of these — including LaunchDarkly, previously bundled directly — are actually called by any
+  code in this plugin; only `salesforce-prod` is a genuine dependency, of
+  `resolve-duplicate-contact-alerts`). Installing `pde` shouldn't silently pull in other
+  teams'/vendors' plugins without you choosing to.
 
 ## Installing
 
+Add the marketplace, then install — either directly, or by browsing it first:
+
 ```bash
-# Claude Code
+# Claude Code — add marketplace, then install directly
 /plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 /plugin install pde@provider-hub
 
-# Copilot CLI
+# Claude Code — or browse instead: run /plugin with no arguments, open the "Discover" tab,
+# and select pde from the provider-hub marketplace listed there
+
+# Copilot CLI — add marketplace, then install directly
 copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 copilot plugin install pde@provider-hub
+
+# Copilot CLI — or browse instead:
+copilot plugin marketplace browse provider-hub
 ```
 
 **Then start a new session** (close and reopen) — installing alone isn't enough. The venv setup
@@ -70,3 +79,24 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
   MCP server registered separately (see that skill's README). `setup-companion-tools` can install
   and guide you through both — ask to set up `salesforce-prod`, or run its `sf-cli-guidance`
   subcommand directly for OS-specific, sudo-safe install instructions.
+
+## After installing: what to actually do
+
+Both skills are `user-invocable`, so you can either ask for them in natural language or invoke them
+directly by name:
+
+- **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
+  are available?") — walks you through installing Grafana, LogRocket, Atlassian, `salesforce-prod`,
+  `salesforce-uat`, and LaunchDarkly, one or more at a time. This is how you get `salesforce-prod`
+  registered for `resolve-duplicate-contact-alerts` above, and is the natural first thing to run
+  after installing `pde` if you plan to use that skill.
+  - Direct/scriptable equivalent, if you'd rather not go through the agent:
+    `python skills/setup-companion-tools/manage_companions.py status --cli claude` (or `copilot`),
+    `... install <service> --cli claude`, or `... sf-cli-guidance`.
+- **`/pde:resolve-duplicate-contact-alerts`** (or ask: "resolve duplicate contact alerts" — dry run
+  by default) — runs the alert-resolution workflow. The agent runs
+  `skills/resolve-duplicate-contact-alerts/run.py` for you; running it yourself directly
+  (`python run.py` from that directory) works the same way and is useful for debugging — it checks
+  its own dependencies up front and reports exactly what's missing.
+- Anything else — `list_alerts`, `get_alert`, `find_emails`, etc. — is available as soon as
+  `pde-mcp` is connected; just ask for what you want (e.g. "show me open P1 alerts").

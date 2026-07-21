@@ -3,8 +3,8 @@
 Check status of, and install, one at a time, the optional companion
 MCPs/plugins commonly used alongside PDE tooling — none of which are
 bundled in the `pde` plugin itself (grafana/gcx, logrocket, atlassian,
-salesforce-prod, launch-darkly). Driven by the setup-companion-tools
-skill; never runs on its own.
+salesforce-prod, salesforce-uat, launch-darkly). Driven by the
+setup-companion-tools skill; never runs on its own.
 
 Usage:
     python3 manage_companions.py status --cli claude|copilot
@@ -47,6 +47,15 @@ SERVICES = {
         "mcp_name": "salesforce-prod",
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
         "needs_sf_cli": True,
+        "org_alias": "prod",
+    },
+    "salesforce-uat": {
+        "label": "Salesforce UAT — SOQL queries against the UAT org",
+        "kind": "mcp",
+        "mcp_name": "salesforce-uat",
+        "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
+        "needs_sf_cli": True,
+        "org_alias": "uat",
     },
     "launch-darkly": {
         "label": "LaunchDarkly — feature flag management (not used by anything in the pde plugin itself, just handy alongside it)",
@@ -122,18 +131,19 @@ def is_installed(service_key, cli):
 
 
 def sf_cli_status():
+    needed_aliases = sorted({v["org_alias"] for v in SERVICES.values() if v.get("needs_sf_cli")})
     rc, _, _ = run(["sf", "--version"])
     if rc != 0:
-        return {"installed": False, "prod_alias": False}
-    prod = False
+        return {"installed": False, "aliases": {alias: False for alias in needed_aliases}}
+    existing: set = set()
     rc, out, _ = run(["sf", "alias", "list", "--json"])
     if rc == 0:
         try:
             d = json.loads(out)
-            prod = any(a.get("alias") == "prod" for a in d.get("result", []))
+            existing = {a.get("alias") for a in d.get("result", [])}
         except Exception:
             pass
-    return {"installed": True, "prod_alias": prod}
+    return {"installed": True, "aliases": {alias: alias in existing for alias in needed_aliases}}
 
 
 def cmd_status(cli):

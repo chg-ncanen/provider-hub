@@ -1,17 +1,19 @@
 ---
 name: setup-companion-tools
-description: Interactively install optional companion MCPs/plugins for PDE work (Grafana, LogRocket, Atlassian, Salesforce prod, LaunchDarkly) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
+description: Interactively install optional companion MCPs/plugins for PDE work (Grafana, LogRocket, Atlassian, Salesforce prod/UAT, LaunchDarkly) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
+user-invocable: true
 ---
 
 # Setup Companion Tools
 
 Helps a developer optionally install MCP servers/plugins commonly used alongside PDE tooling, that
 aren't bundled in the `pde` plugin itself: Grafana (`gcx`), LogRocket, Atlassian (Jira/Confluence),
-Salesforce prod (needed by `resolve-duplicate-contact-alerts`), and LaunchDarkly. None of these are
-actually called by any code in the `pde` plugin (verified — only `salesforce-prod` is a genuine
-dependency, of `resolve-duplicate-contact-alerts` specifically); they're just commonly useful
-alongside it. Nothing here runs automatically — only when a developer explicitly invokes this skill,
-and only for whichever service(s) they pick.
+Salesforce prod and UAT (prod needed by `resolve-duplicate-contact-alerts`; UAT is just commonly
+useful alongside it), and LaunchDarkly. None of these are actually called by any code in the `pde`
+plugin (verified — only `salesforce-prod` is a genuine dependency, of
+`resolve-duplicate-contact-alerts` specifically); the rest are just commonly useful alongside it.
+Nothing here runs automatically — only when a developer explicitly invokes this skill, and only for
+whichever service(s) they pick.
 
 ## Before you start
 
@@ -24,21 +26,24 @@ the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli copilot`
 
 1. Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
    directory) to see what's already installed.
-2. Present the five services to the user with their current status — use a multiple-choice
-   prompt. Let them pick **one at a time**; after handling their pick, ask if they want another, and
-   repeat until they say they're done. Don't install anything they didn't explicitly choose.
+2. Present the six services to the user with their current status — use a multiple-choice
+   prompt. Let them pick **one or more at a time**; after handling their pick(s), ask if they want
+   another, and repeat until they say they're done. Don't install anything they didn't explicitly
+   choose.
 3. If `status` already shows their pick installed, say so and go back to step 2 — nothing to do.
 4. Otherwise, run `python3 manage_companions.py install <service> --cli <claude|copilot>` and
    relay the result (`success`, what got installed, or the `error` if it failed).
-5. **Special case — `salesforce-prod`**: registering the MCP entry doesn't need the `sf` CLI, but
-   actually *using* it (via `resolve-duplicate-contact-alerts`) does, and `install` doesn't handle
-   that part. Check `_sf_cli` in the `status` output:
+5. **Special case — `salesforce-prod` / `salesforce-uat`**: registering the MCP entry doesn't need
+   the `sf` CLI, but actually *using* it does, and `install` doesn't handle that part. Check
+   `_sf_cli` in the `status` output (`aliases` is keyed by org alias — `prod` and/or `uat`,
+   whichever service(s) are relevant to what the user picked):
    - `installed: false` → run `python3 manage_companions.py sf-cli-guidance`, which detects the
      OS (Linux/macOS/Windows) and returns the right sudo-free vs. sudo-needed install command for
      that system. Relay it — **don't attempt to install `sf` yourself**; it may need root, and you
      have no way to supply a password interactively even if it does.
-   - `installed: true` but `prod_alias: false` → tell them to run `sf org login web --alias prod`
-     (an interactive browser login — something only they can do).
+   - `installed: true` but the relevant alias (`prod` or `uat`) is `false` → tell them to run
+     `sf org login web --alias prod` (or `--alias uat`) — an interactive browser login, something
+     only they can do.
 
 ## Available services
 
@@ -55,6 +60,8 @@ the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli copilot`
 - **Salesforce prod** — SOQL queries against the prod org. Also needs the `sf` CLI authenticated to
   the `prod` alias (see step 5 above) — the skill that actually uses this is
   `resolve-duplicate-contact-alerts`.
+- **Salesforce UAT** — SOQL queries against the UAT org. Also needs the `sf` CLI authenticated to
+  the `uat` alias (see step 5 above). Not used by any skill in this plugin — just handy alongside it.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism on
   both CLIs.

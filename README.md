@@ -23,14 +23,32 @@ see [Repository Structure](#repository-structure).
 
 ## Installing & Using
 
+First, add this repo as a marketplace:
+
 ```bash
 # Claude Code
 /plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-/plugin install pde@provider-hub
 
 # Copilot CLI
 copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
+```
+
+Then install a plugin — either by typing the install command directly, or by browsing what the
+marketplace has first:
+
+```bash
+# Claude Code — direct install
+/plugin install pde@provider-hub
+
+# Claude Code — browse instead: run /plugin with no arguments, open the "Discover" tab
+# (lists plugins from every marketplace you've added, provider-hub included), and select
+# pde from there. Functionally identical to the direct command above.
+
+# Copilot CLI — direct install
 copilot plugin install pde@provider-hub
+
+# Copilot CLI — browse instead:
+copilot plugin marketplace browse provider-hub
 ```
 
 Plugins register globally on install, independent of your working directory — the same
@@ -38,10 +56,11 @@ Plugins register globally on install, independent of your working directory — 
 
 **Then start a new session** (close and reopen) before using it — installing alone isn't enough for
 plugins with a dependency-setup hook. See `plugins/pde/README.md` for what it provides, required
-credentials, and why that restart matters.
+credentials, dependency setup (handled automatically), how to pull in optional companion MCPs
+(Grafana, LogRocket, Atlassian, Salesforce, LaunchDarkly), and how to actually use it once installed.
 
-As more plugins are added under `plugins/`, install any of them the same way:
-`/plugin install <name>@provider-hub` (or `copilot plugin install <name>@provider-hub`).
+As more plugins are added under `plugins/`, install any of them the same way, swapping `pde` for the
+plugin's name.
 
 ## Repository Structure
 
