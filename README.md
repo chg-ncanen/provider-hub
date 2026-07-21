@@ -1,10 +1,9 @@
 # provider-hub
 
-A shared team repository for AI skills, MCP configs, APIs, scripts, services, tools, and more.
+## Overview
 
-## Purpose
-
-`provider-hub` is a central location for team-shared and individual contributions:
+`provider-hub` is a shared team repository for AI skills, MCP server configs, APIs, scripts,
+services, and tools — a central location for team-shared and individual contributions:
 - **AI Skills** — Copilot and autonomous agent extensions
 - **MCP Servers** — Model Context Protocol server configs
 - **APIs** — OpenAPI specs, SDKs, integrations
@@ -12,16 +11,37 @@ A shared team repository for AI skills, MCP configs, APIs, scripts, services, to
 - **Services** — Deployable applications (schedulers, agents, REST APIs)
 - **Tools** — Reusable utilities and libraries
 
-## Quick Start
+Most of this content (`ai-skills/`, `mcp/`, `apis/`, `scripts/`, `services/`, `tools/`) is organized
+for authoring and review, and isn't reachable from outside this repo. Anything meant to be
+*installed and used* from any other project — a skill plus the MCP server(s) it needs — ships as a
+**plugin** under `plugins/`, installable via Claude Code or GitHub Copilot CLI regardless of your
+working directory (see [Installing & Using](#installing--using) below).
+
+Right now the only working example is the `pde` plugin (JSM alert management + the
+`resolve-duplicate-contact-alerts` skill). Everything else is scaffolding awaiting contributions —
+see [Repository Structure](#repository-structure).
+
+## Installing & Using
 
 ```bash
-# Clone the repo
-git clone https://github.com/chg-ncanen/provider-hub.git
-cd provider-hub
+# Claude Code
+/plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
+/plugin install pde@provider-hub
 
-# Explore available content
-ls -la plugins/pde/            # PDE team's plugin (skills + MCP server)
+# Copilot CLI
+copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
+copilot plugin install pde@provider-hub
 ```
+
+Plugins register globally on install, independent of your working directory — the same
+`.claude-plugin/` manifest works for both CLIs, since both recognize that layout.
+
+**Then start a new session** (close and reopen) before using it — installing alone isn't enough for
+plugins with a dependency-setup hook. See `plugins/pde/README.md` for what it provides, required
+credentials, and why that restart matters.
+
+As more plugins are added under `plugins/`, install any of them the same way:
+`/plugin install <name>@provider-hub` (or `copilot plugin install <name>@provider-hub`).
 
 ## Repository Structure
 
@@ -33,7 +53,7 @@ provider-hub/
 ├── scripts/         Automation scripts
 ├── services/        Deployable services
 ├── tools/           Reusable utilities
-├── plugins/         Claude Code plugins (see "Using skills & MCPs elsewhere" below)
+├── plugins/         Installable plugins (see "Installing & Using" above)
 │
 ├── .claude-plugin/
 │   └── marketplace.json              # Lists the plugins under plugins/
@@ -50,26 +70,12 @@ Each content type has:
 - `team/` — shared across the team (organized by area: provider, pde, web)
 - `user/` — individual contributions (organized by username)
 
-## Using skills & MCPs from another project
+## Packaging something as a plugin
 
-Most teammates won't have `provider-hub` as their working directory, so a skill or MCP server living
-under `ai-skills/`/`mcp/` alone isn't reachable from elsewhere — those paths are for authoring and
-review. Anything meant to be *used* outside this repo ships as a **plugin** under `plugins/<team>/`,
-listed in `.claude-plugin/marketplace.json`. Plugins register globally on install, independent of
-cwd — and the same manifest works for both Claude Code and GitHub Copilot CLI, which both recognize
-the `.claude-plugin/` layout:
+If you're contributing a skill (and the MCP server(s) it needs) that should work from *any* project,
+package it as a plugin under `plugins/<team>/`, listed in `.claude-plugin/marketplace.json` — see
+`plugins/pde/` for a working example, and [CONTRIBUTING.md](CONTRIBUTING.md) for the full pattern.
 
-```bash
-# Claude Code
-/plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-/plugin install pde@provider-hub
-
-# Copilot CLI
-copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-copilot plugin install pde@provider-hub
-```
-
-The plugin's own `README.md` documents what it bundles and any required credentials/prerequisites.
 `ai-skills/`, `mcp/`, `tools/`, etc. remain the right home for reusable libraries, scripts, services,
 and anything that doesn't need standalone distribution — a plugin assembles the pieces it needs from
 there (e.g. `plugins/pde/mcp-servers/pde-mcp` depends on `tools/team/pde/pde-ops-api` as a normal pip
@@ -82,50 +88,6 @@ dependency, not a copy).
 3. **Write documentation:** Include a README explaining what it is and how to use it
 4. **Submit a PR:** Follow the checklist in the PR template
 5. **Get reviewed:** CODEOWNERS will review based on content type and area
-
-## Skill Discovery & Configuration
-
-### Local Development
-
-**Option 1: Environment Variable** (simplest)
-```bash
-export COPILOT_SKILLS_PATH="$HOME/dev/provider-hub/ai-skills/team:$HOME/dev/provider-hub/ai-skills/user"
-copilot-cli  # Will discover skills from those paths
-```
-
-**Option 2: Git Submodule** (stronger version control)
-In your working project's `.git/config`:
-```ini
-[submodule "provider-hub"]
-    path = .agents/provider-hub
-    url = /path/to/provider-hub
-```
-
-Then in `.agents/mcp-config.json`:
-```json
-{
-  "skills_paths": [
-    ".agents/provider-hub/ai-skills/team",
-    ".agents/provider-hub/ai-skills/user"
-  ]
-}
-```
-
-### MCP-Based Discovery (Team)
-
-Skills can also be discovered via an MCP server endpoint:
-```json
-{
-  "mcpServers": {
-    "provider-hub-skills": {
-      "command": "python",
-      "args": ["/path/to/mcp/provider-hub-skills.py"]
-    }
-  }
-}
-```
-
-See `mcp/README.md` for details.
 
 ## Governance
 
@@ -144,9 +106,5 @@ See `mcp/README.md` for details.
 ## Support
 
 - Questions? Check the README in the relevant content-type directory
-- Issues? Open a GitHub issue (TBD: link when repo goes public)
+- Issues? Open a GitHub issue
 - PRs welcome! Follow [CONTRIBUTING.md](CONTRIBUTING.md)
-
----
-
-**Last updated:** Repository initialization
