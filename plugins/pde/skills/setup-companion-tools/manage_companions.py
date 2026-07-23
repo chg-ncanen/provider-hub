@@ -112,6 +112,28 @@ def gcx_dependency_status():
     }
 
 
+def claude_org_connector_status(keyword):
+    """Detect a pre-existing claude.ai-configured connector whose display name contains
+    `keyword` (case-insensitive) — e.g. an Atlassian connector provisioned by the org via
+    claude.ai's own Settings > Connectors, entirely separate from anything this skill
+    installs. `claude mcp list` has no --json output, so this parses its text lines; any
+    entry whose name starts with "plugin:" is one of this skill's own registrations and is
+    excluded. Claude Code only — claude.ai connectors don't apply to Copilot CLI."""
+    rc, out, _ = run(["claude", "mcp", "list"])
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        if ": " not in line:
+            continue
+        name = line.split(": ", 1)[0].strip()
+        if name.lower().startswith("plugin:"):
+            continue
+        if keyword.lower() not in name.lower():
+            continue
+        return {"name": name, "connected": "✔" in line}
+    return None
+
+
 SERVICES = {
     "grafana": {
         "label": "Grafana (gcx plugin) — dashboards, alerts, SLOs, incident analysis",
@@ -154,6 +176,7 @@ SERVICES = {
         "plugin_name": "atlassian",
         "mcp_name": "chg-atlassian",
         "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "org_connector_check": lambda: claude_org_connector_status("atlassian"),
         "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
@@ -274,6 +297,11 @@ def cmd_status(cli):
             entry["note"] = svc["ready_hint"]
         if dependencies:
             entry["dependencies"] = dependencies
+        org_check = svc.get("org_connector_check")
+        if org_check and cli == "claude":
+            org_connector = org_check()
+            if org_connector:
+                entry["org_connector"] = org_connector
         result[key] = entry
     print(json.dumps(result, indent=2))
 

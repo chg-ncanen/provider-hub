@@ -41,13 +41,19 @@ underneath — this should read like Claude Code's own `/mcp` list, not a wall o
 service line: `[x]`/`[ ]` for `installed`, then `installed`/`not installed`, then if installed and
 `ready` is `false` append `— not ready`, or if `note` is present append `— <note>`. For each
 dependency line, same `[x]`/`[ ]` shape keyed off that dependency's own `installed`, followed by
-its `detail` string verbatim. Example rendering for a mixed-state machine:
+its `detail` string verbatim. If an `org_connector` field is present (Claude Code only, currently
+only checked for Atlassian), append a line noting it: a pre-existing claude.ai-configured
+connector (often org-provisioned, entirely separate from anything this skill installs) that may
+already cover the same tools. Example rendering for a mixed-state machine:
 
 ```
 [ ] Grafana (gcx)             not installed
       gcx CLI                 [ ] not found on PATH
 [ ] LogRocket                 not installed
 [x] Atlassian                 installed — connects via OAuth on first use
+      also: 'claude.ai Atlassian' connector already connected — separate from this plugin's own
+      entry; covers the same tools, so its own OAuth may not be needed unless you want the
+      bundled skills
 [x] Salesforce prod           installed — not ready
       sf CLI                  [x] installed, not logged into 'prod'
 [ ] Salesforce UAT            not installed
@@ -133,6 +139,13 @@ do something outside the conversation.
   a restart, you can proactively call one of that service's tools right away (e.g. "list my
   feature flags") to trigger the login immediately instead of leaving the user to stumble into it
   later — ask first, since it'll pop an auth prompt.
+- **Atlassian specifically**: check `org_connector` from `status` first. If it's present and
+  `connected: true`, say so plainly before pushing OAuth on the plugin's own entry — a connected
+  `claude.ai`-configured connector already provides the same Jira/Confluence tools, so
+  authenticating the plugin's separate `plugin:atlassian:...` entry is only worth doing if the
+  user wants this plugin's bundled skills (`capture-tasks-from-meeting-notes`,
+  `generate-status-report`, `jira-sprint-dashboard-canvas`, `search-company-knowledge`,
+  `spec-to-backlog`, `triage-issue`) — ask which they want rather than assuming.
 
 Never bundle one of these action-needed moments into a paragraph of other text — always give it
 its own callout so it can't be missed.
@@ -164,11 +177,15 @@ yourself:
 - **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
 - **Atlassian** — Jira/Confluence search, issue creation, sprint management.
   - Claude Code: the full official plugin (6 skills), via the pre-registered
-    `claude-plugins-official` marketplace.
+    `claude-plugins-official` marketplace. `status` also checks (Claude Code only) for a
+    pre-existing `claude.ai`-configured Atlassian connector — often provisioned org-wide,
+    entirely separate from this plugin — and surfaces it as `org_connector`; if it's already
+    connected, the bundled skills work against it too, so authenticating this plugin's own entry
+    is only needed if that connector isn't there or the user wants a clean separation.
   - Copilot CLI: that marketplace file fails to parse there (a real schema incompatibility on the
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
-    upstream.
+    upstream. No `org_connector` check either — that's a Claude Code-only concept.
 - **Salesforce prod** — SOQL queries against the prod org. Needs the `sf` CLI authenticated to the
   `prod` alias (see step 4 above). **`install` refuses to register this MCP until that's true** —
   there's no point registering an entry that can't work yet.
