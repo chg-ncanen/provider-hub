@@ -47,23 +47,29 @@ design (matches the loop below — after handling one pick, re-run status and as
 than trying to batch several installs from a single answer).
 
 `AskUserQuestion` allows at most 4 options per question, which is fewer than the 6 possible
-services, so build the option list like this:
-1. Walk the services in a fixed order — Grafana, LogRocket, Atlassian, Salesforce prod,
-   Salesforce UAT, LaunchDarkly — and skip any that are already installed and ready (or, for
-   Atlassian, already covered by a connected `org_connector`).
-2. Take the first 3 remaining as concrete options. **Put the status tag directly in the `label`,
-   not just in `description`** — people scan labels and skip descriptions, so the label has to
-   carry the state on its own: `"Grafana (gcx) — not installed"`, `"Salesforce prod — not ready"`,
-   `"Atlassian — covered by org connector"`. Reserve `description` for the one extra sentence of
-   detail (which dependency is missing, why it's not ready, etc.) — someone who only reads labels
-   should still know the state of everything at a glance. For Atlassian specifically when
-   `org_connector.connected` is `true`, this "covered by org connector" tag plus a one-sentence
-   description is the *whole* explanation — don't also list the six bundled skill names here;
-   mention those only if the user asks what the plugin would add on top.
-3. The 4th option is either "Nothing right now" (if 3 or fewer remained in step 1) or, when more
-   than 3 remain, an option like "Something else" whose description names the rest (with their own
-   short status) — the user can still reach them by typing the name, since `AskUserQuestion`
-   always offers a free-text "Other" alongside the listed options.
+services — but it *always* renders its own built-in free-text option alongside whatever's listed
+(shown as "Type something" in the UI), so there's no need to spend one of the 4 slots manually
+restating an "Other"/"Something else" catch-all; that just duplicates something the tool already
+gives you for free while pushing a real service out of view. Build the option list like this:
+1. Walk the services in this fixed priority order — Salesforce prod, Salesforce UAT, Grafana,
+   LogRocket, Atlassian, LaunchDarkly — and skip any that are already installed and ready (or, for
+   Atlassian, already covered by a connected `org_connector`). Salesforce prod/UAT lead the order
+   since they're the ones a developer is most often here for.
+2. Take the first 4 remaining as concrete options — all 4 slots, not 3 held back for a catch-all.
+   **Put the status tag directly in the `label`, not just in `description`** — people scan labels
+   and skip descriptions, so the label has to carry the state on its own: `"Salesforce prod — not
+   ready"`, `"Grafana (gcx) — not installed"`, `"Atlassian — covered by org connector"`. Reserve
+   `description` for the one extra sentence of detail (which dependency is missing, why it's not
+   ready, etc.) — someone who only reads labels should still know the state of everything at a
+   glance. For Atlassian specifically when `org_connector.connected` is `true`, this "covered by
+   org connector" tag plus a one-sentence description is the *whole* explanation — don't also list
+   the six bundled skill names here; mention those only if the user asks what the plugin would add
+   on top.
+3. If more than 4 services remain after step 1, name the overflow ones directly in the
+   `question` text itself (e.g. "...also want Atlassian or LaunchDarkly? Just type the name.") —
+   the question text is what actually gets read, unlike a 5th option you can't create anyway.
+   If 4 or fewer remain, there's no overflow to mention, and if 3 or fewer remain, use the
+   trailing slot(s) for something like "Nothing right now" instead of leaving them empty.
 
 If every service is already installed and ready (or, for Atlassian, already covered by the org
 connector), there's nothing to ask — say so, backed by a status table (below) rather than a bare
