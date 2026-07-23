@@ -27,6 +27,53 @@ def run(cmd, timeout=30):
         return 1, "", str(e)
 
 
+def pde_mcp_status():
+    """Read-only health check for pde-mcp itself — not a companion service (it's
+    bundled with `pde`, set up by the SessionStart hook, not this script), but
+    worth surfacing here since every companion tool sits alongside it. Mirrors
+    the exact manual diagnosis steps used to track down a real broken-venv bug:
+    locate the plugin root, check the venv's python exists, then actually try
+    importing pde-mcp's dependencies rather than inferring from a marker file."""
+    plugin_root = (
+        os.environ.get("CLAUDE_PLUGIN_ROOT")
+        or os.environ.get("PLUGIN_ROOT")
+        or os.environ.get("COPILOT_PLUGIN_ROOT")
+    )
+    if not plugin_root:
+        return {
+            "ready": None,
+            "detail": (
+                "Can't check from here — no CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT "
+                "set in this environment"
+            ),
+        }
+
+    venv_python = os.path.join(plugin_root, ".venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return {
+            "ready": False,
+            "detail": "venv not found yet — restart your session so the SessionStart hook can build it",
+        }
+
+    mcp_dir = os.path.join(plugin_root, "mcp-servers", "pde-mcp")
+    rc, out, err = run(
+        [
+            venv_python,
+            "-c",
+            f"import sys; sys.path.insert(0, {mcp_dir!r}); "
+            "import mcp, api.jsm.client, api.mail.email_tool",
+        ],
+        timeout=15,
+    )
+    if rc == 0:
+        return {"ready": True, "detail": "venv and dependencies OK"}
+    reason = (err or out).strip().splitlines()[-1] if (err or out).strip() else "unknown import error"
+    return {
+        "ready": False,
+        "detail": f"dependencies broken — {reason} (restart your session to let the hook reinstall)",
+    }
+
+
 def sf_installed():
     rc, _, _ = run(["sf", "--version"])
     return rc == 0
@@ -281,7 +328,7 @@ def is_installed(service_key, cli):
 
 
 def cmd_status(cli):
-    result = {}
+    result = {"pde_mcp": pde_mcp_status()}
     for key, svc in SERVICES.items():
         installed = is_installed(key, cli)
         dependencies = svc["dependencies"]() if "dependencies" in svc else []

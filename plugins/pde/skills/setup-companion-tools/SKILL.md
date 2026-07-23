@@ -36,23 +36,38 @@ later in a brand new conversation, re-running `status` picks up the real current
 ### 1. Show a numbered status table, then ask which one
 
 Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
-directory) and render **all six services** as one markdown table — a plain numbered pick, not an
-interactive tool prompt. (An earlier version of this skill used `AskUserQuestion`, but that tool
-caps at 4 options, which meant 2 of the 6 services always had to be demoted to "type the name
-yourself" — worse than just listing all 6 up front.) A table is also what actually gets read; a
-plain status paragraph followed by something else blends in and gets skipped.
+directory) and render **all six companion services, plus `pde_mcp` itself**, as one markdown
+table — a plain numbered pick, not an interactive tool prompt. (An earlier version of this skill
+used `AskUserQuestion`, but that tool caps at 4 options, which meant 2 of the 6 services always
+had to be demoted to "type the name yourself" — worse than just listing all 6 up front.) A table
+is also what actually gets read; a plain status paragraph followed by something else blends in
+and gets skipped.
 
 One row per service, alphabetical, numbered so the user can reply with just a digit. Name each
-one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed:
+one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed.
+**Add one more row above all of them, unnumbered, for `pde_mcp`** — the core MCP server bundled
+with the `pde` plugin itself, not something this wizard installs (that's the `SessionStart` hook's
+job). It's still worth surfacing here since every companion tool sits alongside it, and its
+`ready`/`detail` fields come from `status` the same way: use `—` instead of a number in that row so
+it's visibly not a pickable option, and if the user replies with that dash or its name anyway,
+just explain it isn't installable here rather than trying to do anything with it.
 
 | # | Service | Status | Description |
 |---|---|---|---|
+| — | pde-mcp | Ready | JSM alert management, email tools, skill discovery — bundled with `pde`, not installed via this wizard |
 | 1 | Atlassian MCP | Covered by org connector | Jira/Confluence search, issue creation, sprint management |
 | 2 | Grafana (gcx) MCP | Not installed | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | Not installed | Feature flag management |
 | 4 | LogRocket MCP | Not installed | Session replay, metrics, issue search |
 | 5 | Salesforce prod MCP | Needs dependencies | SOQL queries against the prod org |
 | 6 | Salesforce UAT MCP | Not installed | SOQL queries against the UAT org |
+
+For the `pde_mcp` row, `ready: null` means `status` couldn't check from this environment (no
+`CLAUDE_PLUGIN_ROOT`/`PLUGIN_ROOT`/`COPILOT_PLUGIN_ROOT` set) — show `detail` verbatim as the
+description in that case rather than a made-up status word. `ready: false` means something's
+actually wrong (venv missing, or a broken dependency) — put `detail` in the Description column
+so it's visible without the user having to ask, since this row never leads to a follow-up step
+the way the picker rows do.
 
 Use "Needs dependencies" (not "not ready") for anything installed but blocked on an unmet
 dependency — it says what's actually needed rather than just that something's wrong. Keep
@@ -71,9 +86,11 @@ let me know if you're done." — handle exactly one pick at a time (matches the 
 handling one pick, re-run status and show a fresh table, rather than batching several installs
 from one answer).
 
-If every service is already installed and ready, skip the question — just show the table and say
-there's nothing left to do. Atlassian being covered by an `org_connector` doesn't count toward
-this on its own, since installing it anyway is still a standing option.
+If every one of the 6 numbered companion services is already installed and ready, skip the
+question — just show the table (`pde_mcp` row included) and say there's nothing left to do.
+Atlassian being covered by an `org_connector` doesn't count toward this on its own, since
+installing it anyway is still a standing option. `pde_mcp`'s own readiness never affects whether
+there's "nothing to do" — it's informational only, not part of what this wizard can act on.
 
 Once they answer with a number or a name, handle exactly that one pick (step 2/3), then loop back
 to step 1 for a fresh status table and a fresh question — never show the table or ask again
