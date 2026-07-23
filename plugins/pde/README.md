@@ -74,6 +74,25 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
   already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` etc. yourself (either CLI), those take
   precedence over `.env` regardless (see `app.py`'s `load_dotenv()`, default `override=False`).
 
+## Upgrading
+
+Pull the marketplace's latest commit, then update the plugin to it:
+
+```bash
+# Claude Code
+/plugin marketplace update provider-hub
+/plugin update pde@provider-hub
+
+# Copilot CLI
+copilot plugin marketplace update provider-hub
+copilot plugin update pde@provider-hub
+```
+
+**Then start a new session** — same requirement as a fresh install (see above); `plugin update`
+doesn't take effect in the session you ran it from. If `pde` isn't installed yet at all, use the
+`marketplace add` / `plugin install` commands under Installing instead — there's nothing to
+update.
+
 ## Prerequisites
 
 - Python 3.9+ on the machine running the CLI.
