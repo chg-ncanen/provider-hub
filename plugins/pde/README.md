@@ -77,20 +77,24 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
 
 ## Upgrading
 
-Pull the marketplace's latest commit, then update the plugin to it:
+Pull the marketplace's latest commit, then update the plugin to it. How you do that depends on
+where you're running the command:
 
-```bash
-# Claude Code
-/plugin marketplace update provider-hub
-/plugin update pde@provider-hub
+- **In a plain terminal** (outside an interactive Claude Code session): the CLI commands work
+  directly with arguments —
+  ```bash
+  claude plugin marketplace update provider-hub
+  claude plugin update pde@provider-hub
+  ```
+- **Inside an interactive Claude Code session**: `/plugin` as a slash command opens a menu UI
+  rather than parsing arguments — typing `/plugin update pde@provider-hub` won't work there. Run
+  `/plugin` with no arguments, find `pde@provider-hub` in the list, and choose the update option
+  from the menu instead.
+- **Copilot CLI**: `copilot plugin marketplace update provider-hub` then
+  `copilot plugin update pde@provider-hub`.
 
-# Copilot CLI
-copilot plugin marketplace update provider-hub
-copilot plugin update pde@provider-hub
-```
-
-**Then start a new session** — same requirement as a fresh install (see above); `plugin update`
-doesn't take effect in the session you ran it from. If `pde` isn't installed yet at all, use the
+**Then start a new session** — same requirement as a fresh install (see above); updating doesn't
+take effect in the session you ran it from. If `pde` isn't installed yet at all, use the
 `marketplace add` / `plugin install` commands under Installing instead — there's nothing to
 update.
 
