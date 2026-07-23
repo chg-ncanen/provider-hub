@@ -185,7 +185,7 @@ SERVICES = {
         ),
     },
     "salesforce-prod": {
-        "label": "Salesforce prod — SOQL queries against the prod org (needed by resolve-duplicate-contact-alerts)",
+        "label": "Salesforce prod — SOQL queries against the prod org",
         "kind": "mcp",
         "mcp_name": "salesforce-prod",
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
