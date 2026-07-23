@@ -26,12 +26,18 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 
 ## Installing
 
-Add the marketplace, then install — either directly, or by browsing it first:
+**A note on Claude Code's `/plugin` slash command**: typed inside an interactive session,
+`/plugin` always opens the picker menu — it doesn't parse anything typed after it (`/plugin
+install pde@provider-hub` opens the same menu as bare `/plugin`, ignoring the argument). To
+actually run these as one-liners instead of navigating the menu, either use the `!` prefix to run
+a literal shell command from inside the chat (`!claude plugin install pde@provider-hub`), or run
+`claude` directly in a plain terminal outside the session — both invoke the real CLI, which does
+take arguments normally.
 
 ```bash
-# Claude Code — add marketplace, then install directly
-/plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-/plugin install pde@provider-hub
+# Claude Code — add marketplace, then install directly (via `!` prefix in-chat, or a plain terminal)
+claude plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
+claude plugin install pde@provider-hub
 
 # Claude Code — or browse instead: run /plugin with no arguments, open the "Discover" tab,
 # and select pde from the provider-hub marketplace listed there
@@ -67,9 +73,11 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
   it would have no credential source at all on Claude Code. The hook only writes `.env` when
   `userConfig` actually supplied a value, so this is a no-op on Copilot CLI (no `userConfig`, so
   nothing to mirror) and won't overwrite a `.env` you created by hand there.
-- **Rotating a credential later**: run `/plugin configure pde@provider-hub`, then restart the
-  session — the hook re-mirrors the updated value into `.env` on that restart, and `.mcp.json`'s
-  substitution picks it up for `pde-mcp` directly too.
+- **Rotating a credential later**: unlike `install`/`update`, "configure" has no plain CLI
+  subcommand at all (`claude plugin --help` doesn't list one) — the interactive `/plugin` menu is
+  the only way. Run `/plugin`, find `pde@provider-hub`, and choose the configure option. Then
+  restart the session — the hook re-mirrors the updated value into `.env` on that restart, and
+  `.mcp.json`'s substitution picks it up for `pde-mcp` directly too.
 - **Copilot CLI** has no `userConfig` equivalent — copy `mcp-servers/pde-mcp/.env.example` to
   `mcp-servers/pde-mcp/.env` yourself and fill it in; `app.py`'s `load_dotenv()` picks it up. If you
   already export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` etc. yourself (either CLI), those take
@@ -80,16 +88,17 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
 Pull the marketplace's latest commit, then update the plugin to it. How you do that depends on
 where you're running the command:
 
-- **In a plain terminal** (outside an interactive Claude Code session): the CLI commands work
-  directly with arguments —
+- **In a plain terminal, or via the `!` prefix from inside a Claude Code chat** (`!claude plugin
+  update pde@provider-hub` runs the literal shell command in-session instead of going through
+  slash-command parsing): the CLI commands work directly with arguments —
   ```bash
   claude plugin marketplace update provider-hub
   claude plugin update pde@provider-hub
   ```
-- **Inside an interactive Claude Code session**: `/plugin` as a slash command opens a menu UI
-  rather than parsing arguments — typing `/plugin update pde@provider-hub` won't work there. Run
-  `/plugin` with no arguments, find `pde@provider-hub` in the list, and choose the update option
-  from the menu instead.
+- **Typing `/plugin update pde@provider-hub` as a slash command**: doesn't work — `/plugin` always
+  opens the menu UI regardless of what follows it, the same as bare `/plugin`. Use the `!` prefix
+  above instead, or run `/plugin` with no arguments, find `pde@provider-hub` in the list, and
+  choose the update option from the menu.
 - **Copilot CLI**: `copilot plugin marketplace update provider-hub` then
   `copilot plugin update pde@provider-hub`.
 
