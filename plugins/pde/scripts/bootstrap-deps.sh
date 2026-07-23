@@ -45,18 +45,56 @@ find_system_python() {
   elif command -v python >/dev/null 2>&1; then
     echo "python"
   else
-    echo "bootstrap-deps.sh: no python3/python found on PATH" >&2
+    # Can't hand this off to manage_companions.py's dep-guidance for a decisive
+    # OS-aware command the way sf/gcx get — that script is Python, so if
+    # there's no python3/python on PATH at all, it can't run either. Give the
+    # same kind of decisive, OS-aware guidance here in bash instead of a bare
+    # "not found" with no next step.
+    {
+      echo "bootstrap-deps.sh: no python3/python found on PATH — pde-mcp can't start without it."
+      case "$(uname -s 2>/dev/null || echo unknown)" in
+        Linux)
+          if [ -f /etc/os-release ] && grep -qiE 'debian|ubuntu' /etc/os-release; then
+            echo "Install it yourself (needs root): sudo apt install python3"
+          else
+            echo "Install Python 3 via your distro's package manager (e.g. sudo dnf install"
+            echo "python3, sudo pacman -S python), then restart your session."
+          fi
+          ;;
+        Darwin)
+          echo "Install it yourself: brew install python3 (no root needed on Homebrew-managed"
+          echo "installs), then restart your session."
+          ;;
+        MINGW*|MSYS*|CYGWIN*)
+          echo "Install it yourself: download the installer from https://python.org (check"
+          echo "'Add python.exe to PATH' during install) or run: winget install Python.Python.3.12"
+          echo "Then restart your session."
+          ;;
+        *)
+          echo "Install Python 3 from https://python.org or your OS's package manager, then"
+          echo "restart your session."
+          ;;
+      esac
+    } >&2
     exit 1
   fi
 }
 
 if [ ! -d "$VENV_DIR" ]; then
+  # Capture into a variable rather than using the substitution directly as a
+  # command name: `exit 1` inside find_system_python only exits the command
+  # substitution's own subshell, not this script, so calling
+  # "$(find_system_python)" directly as a command would silently continue
+  # past a missing python3/python with an empty command instead of actually
+  # stopping. `|| exit 1` here does propagate the subshell's exit status.
+  system_python="$(find_system_python)" || exit 1
+
   # --copies (not the default symlinks): some hook sandboxes block symlink
   # creation, which otherwise silently leaves bin/python missing while the
   # rest of venv creation "succeeds" (verified against a real Claude Code
   # SessionStart hook run — pip and its installed console scripts showed up
   # fine, but bin/python and bin/python3 were the only things missing).
-  "$(find_system_python)" -m venv --copies "$VENV_DIR"
+  "$system_python" -m venv --copies "$VENV_DIR"
 fi
 
 # Normalize to a `bin/` layout regardless of what the venv module produced.

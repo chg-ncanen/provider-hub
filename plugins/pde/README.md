@@ -13,12 +13,12 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   using the MCP server above plus `salesforce-prod`, a separate MCP server (the `@salesforce/mcp`
   npm package) not bundled here — see that skill's README for how to register it.
 - **`skills/setup-companion-tools/`** — an opt-in wizard (invoke it by asking to set up/connect
-  companion tools) for installing Grafana, LogRocket, Atlassian, `salesforce-prod`, `salesforce-uat`,
-  and LaunchDarkly one at a time. It summarizes install/readiness state (including nested
-  dependency state like whether the `sf` CLI is installed/logged in) as plain text before every
-  pick, then asks which one thing to work on next via an actual interactive prompt, and gives
-  OS/root-aware guidance — actually testing this machine rather than guessing — for any step only
-  the human can do. Deliberately *not* automatic (no `SessionStart` hook does this, and none of
+  companion tools) for installing Atlassian, Grafana, LaunchDarkly, LogRocket, `salesforce-prod`,
+  and `salesforce-uat` one at a time. It shows a numbered status table (install/readiness state,
+  including nested dependency state like whether the `sf` CLI is installed/logged in) then asks
+  which one to work on by number, and gives OS/root-aware guidance — actually testing this machine
+  rather than guessing — for any step only the human can do. Deliberately *not* automatic (no
+  `SessionStart` hook does this, and none of
   these — including LaunchDarkly, previously bundled directly — run automatically just because
   `pde` is installed). Installing `pde` shouldn't silently pull in other teams'/vendors' plugins
   without you choosing to; whether a particular skill in this plugin needs one of these installed
@@ -110,13 +110,12 @@ Both skills are `user-invocable`, so you can either ask for them in natural lang
 directly by name:
 
 - **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
-  are available?") — a guided wizard for installing Grafana, LogRocket, Atlassian,
-  `salesforce-prod`, `salesforce-uat`, and LaunchDarkly, one at a time. Before every pick it
-  summarizes install/ready state as plain text (plus nested dependency state — e.g. whether the
-  `sf` CLI is installed and logged in for Salesforce, or `gcx` for Grafana), then asks which one
-  thing to work on next through an actual interactive prompt rather than a plain-text checklist.
-  This is how you get `salesforce-prod` registered for `resolve-duplicate-contact-alerts` above,
-  and is the natural first thing to run after installing `pde` if you plan to use that skill.
+  are available?") — a guided wizard for installing Atlassian, Grafana, LaunchDarkly, LogRocket,
+  `salesforce-prod`, and `salesforce-uat`, one at a time. Before every pick it shows a numbered
+  status table (install/ready state, plus nested dependency state — e.g. whether the `sf` CLI is
+  installed and logged in for Salesforce, or `gcx` for Grafana), then asks which one to work on by
+  number. This is how you get `salesforce-prod` registered for `resolve-duplicate-contact-alerts`
+  above, and is the natural first thing to run after installing `pde` if you plan to use that skill.
   Grafana and Salesforce's MCP servers both shell out to a local CLI directly, so `install`
   refuses to register either one until its CLI is installed *and* authenticated —
   LogRocket/Atlassian/LaunchDarkly, which have no local CLI, authenticate via OAuth automatically

@@ -135,6 +135,22 @@ def claude_org_connector_status(keyword):
 
 
 SERVICES = {
+    "atlassian": {
+        "label": "Atlassian (Jira/Confluence) — full plugin on Claude Code, MCP-only on Copilot CLI",
+        "kind": "plugin-or-mcp",
+        "marketplace_source": "anthropics/claude-plugins-official",
+        "marketplace_name": "claude-plugins-official",
+        "plugin_name": "atlassian",
+        "mcp_name": "chg-atlassian",
+        "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "org_connector_check": lambda: claude_org_connector_status("atlassian"),
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first Atlassian request (e.g. 'search Jira for...') will trigger it."
+        ),
+    },
     "grafana": {
         "label": "Grafana (gcx plugin) — dashboards, alerts, SLOs, incident analysis",
         "kind": "plugin",
@@ -154,6 +170,19 @@ SERVICES = {
             "stack it points at, this plugin's own setup-gcx skill can help with that."
         ),
     },
+    "launch-darkly": {
+        "label": "LaunchDarkly — feature flag management (not used by anything in the pde plugin itself, just handy alongside it)",
+        "kind": "mcp",
+        "mcp_name": "launch-darkly",
+        "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first LaunchDarkly request (e.g. 'list my feature flags') will "
+            "trigger it."
+        ),
+    },
     "logrocket": {
         "label": "LogRocket — session replay, metrics, issue search",
         "kind": "plugin",
@@ -166,22 +195,6 @@ SERVICES = {
             "its tools is actually called — nothing to configure ahead of time. After restarting "
             "your session, the first LogRocket request (e.g. 'show me recent LogRocket sessions') "
             "will trigger it."
-        ),
-    },
-    "atlassian": {
-        "label": "Atlassian (Jira/Confluence) — full plugin on Claude Code, MCP-only on Copilot CLI",
-        "kind": "plugin-or-mcp",
-        "marketplace_source": "anthropics/claude-plugins-official",
-        "marketplace_name": "claude-plugins-official",
-        "plugin_name": "atlassian",
-        "mcp_name": "chg-atlassian",
-        "mcp_url": "https://mcp.atlassian.com/v1/mcp",
-        "org_connector_check": lambda: claude_org_connector_status("atlassian"),
-        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
-        "post_install": (
-            "Authenticates via an interactive OAuth prompt automatically the first time one of "
-            "its tools is actually called — nothing to configure ahead of time. After restarting "
-            "your session, the first Atlassian request (e.g. 'search Jira for...') will trigger it."
         ),
     },
     "salesforce-prod": {
@@ -199,19 +212,6 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("uat")],
         "org_alias": "uat",
-    },
-    "launch-darkly": {
-        "label": "LaunchDarkly — feature flag management (not used by anything in the pde plugin itself, just handy alongside it)",
-        "kind": "mcp",
-        "mcp_name": "launch-darkly",
-        "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
-        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
-        "post_install": (
-            "Authenticates via an interactive OAuth prompt automatically the first time one of "
-            "its tools is actually called — nothing to configure ahead of time. After restarting "
-            "your session, the first LaunchDarkly request (e.g. 'list my feature flags') will "
-            "trigger it."
-        ),
     },
 }
 

@@ -1,14 +1,14 @@
 ---
 name: setup-companion-tools
-description: Interactively install optional companion MCPs/plugins for PDE work (Grafana, LogRocket, Atlassian, Salesforce prod/UAT, LaunchDarkly) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
+description: Interactively install optional companion MCPs/plugins for PDE work (Atlassian, Grafana, LaunchDarkly, LogRocket, Salesforce prod/UAT) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
 user-invocable: true
 ---
 
 # Setup Companion Tools
 
 A guided wizard for optionally installing MCP servers/plugins commonly used alongside PDE
-tooling, that aren't bundled in the `pde` plugin itself: Grafana (`gcx`), LogRocket, Atlassian
-(Jira/Confluence), Salesforce prod, Salesforce UAT, and LaunchDarkly. None of these are called
+tooling, that aren't bundled in the `pde` plugin itself: Atlassian (Jira/Confluence), Grafana
+(`gcx`), LaunchDarkly, LogRocket, Salesforce prod, and Salesforce UAT. None of these are called
 automatically by any code in the `pde` plugin — nothing here runs on its own, only when a
 developer explicitly invokes this skill, and only for whichever service(s) they pick. Whether a
 particular downstream skill needs one of these installed is that skill's own concern to check,
@@ -42,25 +42,29 @@ caps at 4 options, which meant 2 of the 6 services always had to be demoted to "
 yourself" — worse than just listing all 6 up front.) A table is also what actually gets read; a
 plain status paragraph followed by something else blends in and gets skipped.
 
-One row per service, numbered so the user can reply with just a digit:
+One row per service, alphabetical, numbered so the user can reply with just a digit. Name each
+one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed:
 
-| # | Service | Status | Detail |
+| # | Service | Status | Description |
 |---|---|---|---|
-| 1 | Grafana (gcx) | Not installed | Also needs the gcx CLI — not found on PATH |
-| 2 | LogRocket | Not installed | — |
-| 3 | Atlassian | Covered by org connector | `claude.ai Atlassian` already connected |
-| 4 | Salesforce prod | Needs dependencies | sf CLI installed, not logged into 'prod' |
-| 5 | Salesforce UAT | Not installed | Needs the sf CLI |
-| 6 | LaunchDarkly | Not installed | — |
+| 1 | Atlassian MCP | Covered by org connector | Jira/Confluence search, issue creation, sprint management |
+| 2 | Grafana (gcx) MCP | Not installed | Dashboards, alerts, SLOs, incident analysis |
+| 3 | LaunchDarkly MCP | Not installed | Feature flag management |
+| 4 | LogRocket MCP | Not installed | Session replay, metrics, issue search |
+| 5 | Salesforce prod MCP | Needs dependencies | SOQL queries against the prod org |
+| 6 | Salesforce UAT MCP | Not installed | SOQL queries against the UAT org |
 
 Use "Needs dependencies" (not "not ready") for anything installed but blocked on an unmet
-dependency — it says what's actually needed rather than just that something's wrong. For
-Atlassian, when `org_connector.connected` is `true`, "Covered by org connector" plus that one
-detail cell is the *whole* explanation — don't also list the six bundled skill names in the
-table; mention those only if the user asks what the plugin would add on top. **Atlassian stays in
-the table as a real, pickable row even when covered** — it isn't actually installed via this
-plugin in that case, so installing it anyway for the bundled skills is still a live option, not
-something to hide or grey out.
+dependency — it says what's actually needed rather than just that something's wrong. Keep
+`Description` to what the service generally does — **don't fold dependency specifics in there**
+(e.g. don't write "sf CLI not logged into 'prod'" in this column); once the user actually picks a
+row, step 2/3 already explains exactly what's missing and what to do about it, so the table
+doesn't need to front-load it. For Atlassian, `Status` saying "Covered by org connector" is
+sufficient on its own — don't also list the six bundled skill names anywhere in the table;
+mention those only if the user asks what the plugin would add on top. **Atlassian stays in the
+table as a real, pickable row even when covered** — it isn't actually installed via this plugin in
+that case, so installing it anyway for the bundled skills is still a live option, not something to
+hide or grey out.
 
 After the table, ask in plain text: "Which one would you like to work on? Reply with a number, or
 let me know if you're done." — handle exactly one pick at a time (matches the loop below: after
@@ -189,11 +193,6 @@ yourself:
 
 ## Available services
 
-- **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management.
-  Same install mechanism on both CLIs. Its MCP server shells out to the local `gcx` CLI directly
-  (not a hosted HTTP MCP), so it needs the `gcx` CLI installed *and* authenticated to a stack
-  first — `install` refuses to register it otherwise, exactly like Salesforce below.
-- **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
 - **Atlassian** — Jira/Confluence search, issue creation, sprint management.
   - Claude Code: the full official plugin (6 skills), via the pre-registered
     `claude-plugins-official` marketplace. `status` also checks (Claude Code only) for a
@@ -205,11 +204,16 @@ yourself:
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream. No `org_connector` check either — that's a Claude Code-only concept.
+- **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management.
+  Same install mechanism on both CLIs. Its MCP server shells out to the local `gcx` CLI directly
+  (not a hosted HTTP MCP), so it needs the `gcx` CLI installed *and* authenticated to a stack
+  first — `install` refuses to register it otherwise, exactly like Salesforce below.
+- **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
+  prompt the first time it connects — no static credentials to configure. Same install mechanism
+  on both CLIs.
+- **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
 - **Salesforce prod** — SOQL queries against the prod org. Needs the `sf` CLI authenticated to the
   `prod` alias (see step 3 above). **`install` refuses to register this MCP until that's true** —
   there's no point registering an entry that can't work yet.
 - **Salesforce UAT** — SOQL queries against the UAT org. Needs the `sf` CLI authenticated to the
   `uat` alias (see step 3 above); `install` is gated the same way.
-- **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
-  prompt the first time it connects — no static credentials to configure. Same install mechanism
-  on both CLIs.
