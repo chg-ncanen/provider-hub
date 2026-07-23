@@ -56,10 +56,10 @@ just explain it isn't installable here rather than trying to do anything with it
 |---|---|---|---|
 | — | pde-mcp | Ready | JSM alert management, email tools, skill discovery — bundled with `pde`, not installed via this wizard |
 | 1 | Atlassian MCP | Covered by org connector | Jira/Confluence search, issue creation, sprint management |
-| 2 | Grafana (gcx) MCP | Not installed | Dashboards, alerts, SLOs, incident analysis |
+| 2 | Grafana (gcx) MCP | Not installed (will install dependencies) | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | Not installed | Feature flag management |
 | 4 | LogRocket MCP | Not installed | Session replay, metrics, issue search |
-| 5 | Salesforce prod MCP | Needs dependencies | SOQL queries against the prod org |
+| 5 | Salesforce prod MCP | Not installed (will install dependencies) | SOQL queries against the prod org |
 | 6 | Salesforce UAT MCP | Not installed | SOQL queries against the UAT org |
 
 For the `pde_mcp` row, `ready: null` means `status` couldn't check from this environment (no
@@ -69,17 +69,30 @@ actually wrong (venv missing, or a broken dependency) — put `detail` in the De
 so it's visible without the user having to ask, since this row never leads to a follow-up step
 the way the picker rows do.
 
-Use "Needs dependencies" (not "not ready") for anything installed but blocked on an unmet
-dependency — it says what's actually needed rather than just that something's wrong. Keep
-`Description` to what the service generally does — **don't fold dependency specifics in there**
-(e.g. don't write "sf CLI not logged into 'prod'" in this column); once the user actually picks a
-row, step 2/3 already explains exactly what's missing and what to do about it, so the table
-doesn't need to front-load it. For Atlassian, `Status` saying "Covered by org connector" is
-sufficient on its own — don't also list the six bundled skill names anywhere in the table;
-mention those only if the user asks what the plugin would add on top. **Atlassian stays in the
-table as a real, pickable row even when covered** — it isn't actually installed via this plugin in
-that case, so installing it anyway for the bundled skills is still a live option, not something to
-hide or grey out.
+`Status` for the 6 numbered rows comes from `installed`/`ready`/`dependencies`, mapped like this:
+- **Installed and ready** (`installed: true`, `ready: true`, or no dependencies and `installed:
+  true`): `"Installed"`.
+- **Not installed, and its `dependencies` entry isn't ready yet** (`grafana`, `salesforce-prod`,
+  `salesforce-uat` — check the dependency's own `ready`/`installed`, since `status` always
+  includes `dependencies` even when the service itself isn't installed): `"Not installed (will
+  install dependencies)"` — this tells the user up front that picking it walks through the
+  dependency first, not just a plain install.
+- **Not installed, and either it has no dependency or the dependency is already ready**: plain
+  `"Not installed"` — nothing stands between picking it and it working.
+- **Installed but `ready: false`** (the dependency regressed after install — e.g. someone logged
+  out of `sf` later): `"Installed — check dependency"`, a distinct tag from the not-installed
+  case since re-registering isn't what's needed here, just re-authenticating.
+- **Atlassian, when `org_connector.connected` is `true`**: `"Covered by org connector"`, same as
+  before.
+
+Keep `Description` to what the service generally does — **don't fold dependency specifics in
+there** (e.g. don't write "sf CLI not logged into 'prod'" in this column); `Status` already flags
+that something needs doing, and once the user actually picks the row, step 2/3 explains exactly
+what and how. For Atlassian, `Status` saying "Covered by org connector" is sufficient on its own —
+don't also list the six bundled skill names anywhere in the table; mention those only if the user
+asks what the plugin would add on top. **Atlassian stays in the table as a real, pickable row
+even when covered** — it isn't actually installed via this plugin in that case, so installing it
+anyway for the bundled skills is still a live option, not something to hide or grey out.
 
 After the table, ask in plain text: "Which one would you like to work on? Reply with a number, or
 let me know if you're done." — handle exactly one pick at a time (matches the loop below: after
