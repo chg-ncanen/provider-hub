@@ -9,13 +9,108 @@ setup-companion-tools skill; never runs on its own.
 Usage:
     python3 manage_companions.py status --cli claude|copilot
     python3 manage_companions.py install <service> --cli claude|copilot
-    python3 manage_companions.py sf-cli-guidance
+    python3 manage_companions.py dep-guidance <dependency>
 """
 import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
+
+
+def run(cmd, timeout=30):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except Exception as e:
+        return 1, "", str(e)
+
+
+def sf_installed():
+    rc, _, _ = run(["sf", "--version"])
+    return rc == 0
+
+
+def sf_aliases():
+    rc, out, _ = run(["sf", "alias", "list", "--json"])
+    if rc != 0:
+        return set()
+    try:
+        d = json.loads(out)
+        return {a.get("alias") for a in d.get("result", [])}
+    except Exception:
+        return set()
+
+
+def sf_dependency_status(alias):
+    """Status of the `sf` CLI dependency, scoped to one org alias (prod/uat) —
+    each Salesforce service needs its own alias logged in, even though the
+    CLI binary itself is shared. `blocking: True` — registering the MCP entry
+    before the CLI can actually authenticate would just leave a broken-looking
+    install sitting there, so `install` refuses until this is ready."""
+    if not sf_installed():
+        return {
+            "name": "sf CLI",
+            "installed": False,
+            "ready": False,
+            "detail": "sf CLI not found on PATH",
+            "blocking": True,
+        }
+    ready = alias in sf_aliases()
+    return {
+        "name": "sf CLI",
+        "installed": True,
+        "ready": ready,
+        "detail": (
+            f"sf CLI installed, logged into '{alias}'"
+            if ready
+            else f"sf CLI installed but not logged into '{alias}'"
+        ),
+        "blocking": True,
+    }
+
+
+def gcx_installed():
+    rc, _, _ = run(["gcx", "--version"])
+    return rc == 0
+
+
+def gcx_configured():
+    # `gcx config check` verifies the current context is actually authenticated
+    # and connected to a Grafana Cloud stack, not just that the binary exists.
+    rc, _, _ = run(["gcx", "config", "check"])
+    return rc == 0
+
+
+def gcx_dependency_status():
+    """Status of the `gcx` CLI dependency. `blocking: True` — the Grafana
+    plugin's MCP server shells out to this binary directly (this isn't the
+    hosted HTTP Grafana MCP), so registering the plugin before it's present
+    would leave the same kind of broken-looking install as sf would for
+    salesforce-prod — treat it the same way."""
+    if not gcx_installed():
+        return {
+            "name": "gcx CLI",
+            "installed": False,
+            "ready": False,
+            "detail": "gcx CLI not found on PATH",
+            "blocking": True,
+        }
+    ready = gcx_configured()
+    return {
+        "name": "gcx CLI",
+        "installed": True,
+        "ready": ready,
+        "detail": (
+            "gcx CLI installed and authenticated to a Grafana Cloud stack"
+            if ready
+            else "gcx CLI installed but not authenticated — run `gcx login` (or this plugin's "
+            "own setup-gcx skill) to connect it to a stack"
+        ),
+        "blocking": True,
+    }
+
 
 SERVICES = {
     "grafana": {
@@ -24,11 +119,17 @@ SERVICES = {
         "marketplace_source": "grafana/gcx",
         "marketplace_name": "gcx-marketplace",
         "plugin_name": "gcx",
+        "dependencies": lambda: [gcx_dependency_status()],
+        "ready_hint": (
+            "Registered, but the gcx CLI dependency isn't authenticated right now — run "
+            "`gcx login` (or this plugin's own setup-gcx skill) to reconnect it to a stack."
+        ),
         "post_install": (
-            "Installing the plugin alone doesn't connect it to anything — gcx has its own "
-            "setup-gcx skill for authenticating and picking a Grafana Cloud stack. After "
-            "restarting your session, ask to 'set up gcx' / 'connect to Grafana' (or run its "
-            "setup-gcx skill directly) to finish this."
+            "install only succeeds once the gcx CLI dependency is already installed and "
+            "authenticated (see the dependency check), so this is ready to use as soon as you "
+            "restart your session — still required, since the newly installed server isn't "
+            "connected in the *current* session. If you ever want to switch which Grafana Cloud "
+            "stack it points at, this plugin's own setup-gcx skill can help with that."
         ),
     },
     "logrocket": {
@@ -37,6 +138,7 @@ SERVICES = {
         "marketplace_source": "logrocket/logrocket-claude-plugin",
         "marketplace_name": "logrocket",
         "plugin_name": "logrocket",
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
             "its tools is actually called — nothing to configure ahead of time. After restarting "
@@ -52,6 +154,7 @@ SERVICES = {
         "plugin_name": "atlassian",
         "mcp_name": "chg-atlassian",
         "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
             "its tools is actually called — nothing to configure ahead of time. After restarting "
@@ -63,7 +166,7 @@ SERVICES = {
         "kind": "mcp",
         "mcp_name": "salesforce-prod",
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
-        "needs_sf_cli": True,
+        "dependencies": lambda: [sf_dependency_status("prod")],
         "org_alias": "prod",
     },
     "salesforce-uat": {
@@ -71,7 +174,7 @@ SERVICES = {
         "kind": "mcp",
         "mcp_name": "salesforce-uat",
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
-        "needs_sf_cli": True,
+        "dependencies": lambda: [sf_dependency_status("uat")],
         "org_alias": "uat",
     },
     "launch-darkly": {
@@ -79,6 +182,7 @@ SERVICES = {
         "kind": "mcp",
         "mcp_name": "launch-darkly",
         "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
             "its tools is actually called — nothing to configure ahead of time. After restarting "
@@ -87,14 +191,6 @@ SERVICES = {
         ),
     },
 }
-
-
-def run(cmd, timeout=30):
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.returncode, r.stdout, r.stderr
-    except Exception as e:
-        return 1, "", str(e)
 
 
 def claude_plugin_installed(plugin_id):
@@ -153,30 +249,46 @@ def is_installed(service_key, cli):
     return False
 
 
-def sf_cli_status():
-    needed_aliases = sorted({v["org_alias"] for v in SERVICES.values() if v.get("needs_sf_cli")})
-    rc, _, _ = run(["sf", "--version"])
-    if rc != 0:
-        return {"installed": False, "aliases": {alias: False for alias in needed_aliases}}
-    existing: set = set()
-    rc, out, _ = run(["sf", "alias", "list", "--json"])
-    if rc == 0:
-        try:
-            d = json.loads(out)
-            existing = {a.get("alias") for a in d.get("result", [])}
-        except Exception:
-            pass
-    return {"installed": True, "aliases": {alias: alias in existing for alias in needed_aliases}}
-
-
 def cmd_status(cli):
-    result = {k: {"label": v["label"], "installed": is_installed(k, cli)} for k, v in SERVICES.items()}
-    result["_sf_cli"] = sf_cli_status()
+    result = {}
+    for key, svc in SERVICES.items():
+        installed = is_installed(key, cli)
+        dependencies = svc["dependencies"]() if "dependencies" in svc else []
+
+        ready = None
+        if installed:
+            dep_ready_values = [d["ready"] for d in dependencies if d["ready"] is not None]
+            if dep_ready_values:
+                ready = all(dep_ready_values)
+
+        entry = {"label": svc["label"], "installed": installed, "ready": ready}
+        if installed and ready is not True and svc.get("ready_hint"):
+            entry["note"] = svc["ready_hint"]
+        if dependencies:
+            entry["dependencies"] = dependencies
+        result[key] = entry
     print(json.dumps(result, indent=2))
 
 
 def cmd_install(service_key, cli):
     svc = SERVICES[service_key]
+
+    deps_fn = svc.get("dependencies")
+    if deps_fn:
+        unmet = [d for d in deps_fn() if d.get("blocking") and not d.get("ready")]
+        if unmet:
+            print(json.dumps({
+                "success": False,
+                "blocked": True,
+                "unmet_dependencies": unmet,
+                "error": (
+                    "Can't install yet — " +
+                    "; ".join(f"{d['name']}: {d['detail']}" for d in unmet) +
+                    ". Run `dep-guidance <dependency>` for how to fix this, then try installing "
+                    "again."
+                ),
+            }, indent=2))
+            return
 
     if svc["kind"] == "plugin" or (svc["kind"] == "plugin-or-mcp" and cli == "claude"):
         rc1, o1, e1 = run(
@@ -234,29 +346,132 @@ def cmd_install(service_key, cli):
         return
 
 
-def cmd_sf_cli_guidance():
+def npm_prefix_writable():
+    rc, out, _ = run(["npm", "config", "get", "prefix"])
+    if rc != 0:
+        return None, None
+    prefix = out.strip()
+    if not prefix:
+        return None, None
+    return prefix, os.access(prefix, os.W_OK)
+
+
+def cmd_dep_guidance(dependency):
+    if dependency == "sf":
+        _dep_guidance_sf()
+    elif dependency == "gcx":
+        _dep_guidance_gcx()
+    else:
+        print(json.dumps({"error": f"no guidance available for dependency '{dependency}'"}))
+
+
+def _dep_guidance_sf():
     system = platform.system()
-    guidance = {
-        "Linux": {
-            "note": "Check /etc/os-release if you need to confirm Ubuntu/Debian vs. another distro — the advice below applies broadly to any apt- or system-package-installed Node.js.",
-            "no_sudo_path": "npm config set prefix ~/.npm-global && export PATH=$HOME/.npm-global/bin:$PATH (add that export to ~/.bashrc or ~/.zshrc), then: npm install -g @salesforce/cli",
-            "with_sudo_path": "sudo npm install -g @salesforce/cli — needed if npm's global prefix is root-owned, which is common when Node.js came from apt/the system package manager.",
-        },
-        "Darwin": {
-            "note": "If Node.js was installed via Homebrew (brew install node), npm's global prefix is already user-owned.",
-            "no_sudo_path": "npm install -g @salesforce/cli — should just work without sudo on Homebrew-managed Node.",
-            "with_sudo_path": "sudo npm install -g @salesforce/cli, or switch to a Homebrew-managed Node.js to avoid needing sudo at all.",
-        },
-        "Windows": {
-            "note": "Behavior depends on how Node.js was installed (official installer, nvm-windows, winget, etc.).",
-            "no_sudo_path": "npm install -g @salesforce/cli — try this first from a normal terminal.",
-            "with_sudo_path": "Right-click your terminal (PowerShell or cmd) and choose 'Run as Administrator', then: npm install -g @salesforce/cli",
-        },
-    }
-    print(json.dumps(
-        {"system": system, "guidance": guidance.get(system, guidance["Linux"])},
-        indent=2,
-    ))
+
+    rc, _, _ = run(["node", "--version"])
+    if rc != 0:
+        print(json.dumps({
+            "dependency": "sf",
+            "system": system,
+            "root_required": None,
+            "command": None,
+            "reason": "Node.js/npm isn't on PATH, so the sf CLI can't be installed via npm yet.",
+            "prerequisite": (
+                "Install Node.js first (nodejs.org, or your OS package manager/nvm), then "
+                "re-run this check."
+            ),
+        }, indent=2))
+        return
+
+    prefix, writable = npm_prefix_writable()
+    if writable is None:
+        # npm itself missing/broken despite node being present — fall back to a
+        # conservative per-OS default rather than guessing wrong.
+        writable = system == "Darwin"
+
+    if system == "Windows":
+        root_required = not writable
+        command = "npm install -g @salesforce/cli"
+        reason = (
+            "This machine's npm prefix is user-writable — no elevation needed."
+            if writable
+            else "Right-click your terminal (PowerShell or cmd) and choose 'Run as "
+            "Administrator' first, then run this."
+        )
+    else:
+        root_required = not writable
+        if writable:
+            command = "npm install -g @salesforce/cli"
+            reason = f"npm's global prefix ({prefix}) is writable by your user — no sudo needed."
+        else:
+            command = "sudo npm install -g @salesforce/cli"
+            reason = (
+                f"npm's global prefix ({prefix}) isn't writable by your user (common when "
+                "Node.js came from apt/a system package manager) — this needs root."
+            )
+
+    print(json.dumps({
+        "dependency": "sf",
+        "system": system,
+        "root_required": root_required,
+        "command": command,
+        "reason": reason,
+    }, indent=2))
+
+
+def _dep_guidance_gcx():
+    # Sourced from https://github.com/grafana/gcx (docs/installation.md): the
+    # official install script defaults to ~/.local/bin, never needs root — a
+    # different situation from sf's npm-global install, which often does.
+    system = platform.system()
+
+    if system in ("Linux", "Darwin"):
+        print(json.dumps({
+            "dependency": "gcx",
+            "system": system,
+            "root_required": False,
+            "command": "curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/install.sh | sh",
+            "reason": "Installs to ~/.local/bin by default — no root needed.",
+            "note": (
+                "Make sure ~/.local/bin is on PATH afterward — add "
+                "`export PATH=\"$HOME/.local/bin:$PATH\"` to your shell profile if `gcx "
+                "--version` isn't found right after installing."
+            ),
+            "alternative": "brew install grafana/grafana/gcx (macOS/Linux, also no root).",
+        }, indent=2))
+        return
+
+    # Windows: no official install script exists for gcx.
+    rc, _, _ = run(["go", "version"])
+    if rc == 0:
+        print(json.dumps({
+            "dependency": "gcx",
+            "system": system,
+            "root_required": False,
+            "command": "go install github.com/grafana/gcx/cmd/gcx@latest",
+            "reason": (
+                "No official Windows install script for gcx, but Go is already usable on this "
+                "machine — this needs Go 1.24+ and git, which this check confirms are present."
+            ),
+            "note": (
+                "Installs to your Go bin directory (usually %USERPROFILE%\\go\\bin) — make sure "
+                "that's on PATH."
+            ),
+        }, indent=2))
+        return
+
+    print(json.dumps({
+        "dependency": "gcx",
+        "system": system,
+        "root_required": None,
+        "command": None,
+        "reason": "No official Windows install script for gcx, and Go isn't on PATH either.",
+        "prerequisite": (
+            "Install Go (go.dev) and git, then run "
+            "`go install github.com/grafana/gcx/cmd/gcx@latest` — or download a prebuilt binary "
+            "from https://github.com/grafana/gcx/releases and add it to PATH manually."
+        ),
+    }, indent=2))
 
 
 def main():
@@ -270,15 +485,16 @@ def main():
     p_install.add_argument("service", choices=list(SERVICES.keys()))
     p_install.add_argument("--cli", choices=["claude", "copilot"], required=True)
 
-    sub.add_parser("sf-cli-guidance")
+    p_dep = sub.add_parser("dep-guidance")
+    p_dep.add_argument("dependency")
 
     args = parser.parse_args()
     if args.cmd == "status":
         cmd_status(args.cli)
     elif args.cmd == "install":
         cmd_install(args.service, args.cli)
-    elif args.cmd == "sf-cli-guidance":
-        cmd_sf_cli_guidance()
+    elif args.cmd == "dep-guidance":
+        cmd_dep_guidance(args.dependency)
 
 
 if __name__ == "__main__":

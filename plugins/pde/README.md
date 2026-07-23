@@ -12,13 +12,15 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 - **`skills/resolve-duplicate-contact-alerts/`** — Skill that resolves duplicate-contact JSM alerts
   using the MCP server above plus `salesforce-prod`, a separate MCP server (the `@salesforce/mcp`
   npm package) not bundled here — see that skill's README for how to register it.
-- **`skills/setup-companion-tools/`** — an opt-in skill (invoke it by asking to set up/connect
+- **`skills/setup-companion-tools/`** — an opt-in wizard (invoke it by asking to set up/connect
   companion tools) for installing Grafana, LogRocket, Atlassian, `salesforce-prod`, `salesforce-uat`,
-  and LaunchDarkly one at a time. Deliberately *not* automatic (no `SessionStart` hook does this, and
-  none of these — including LaunchDarkly, previously bundled directly — are actually called by any
-  code in this plugin; only `salesforce-prod` is a genuine dependency, of
-  `resolve-duplicate-contact-alerts`). Installing `pde` shouldn't silently pull in other
-  teams'/vendors' plugins without you choosing to.
+  and LaunchDarkly one at a time. It renders a status tree (install state, readiness, and nested
+  dependency state like whether the `sf` CLI is installed/logged in) before every pick, and gives
+  OS/root-aware guidance — actually testing this machine rather than guessing — for any step only
+  the human can do. Deliberately *not* automatic (no `SessionStart` hook does this, and none of
+  these — including LaunchDarkly, previously bundled directly — are actually called by any code in
+  this plugin; only `salesforce-prod` is a genuine dependency, of `resolve-duplicate-contact-alerts`).
+  Installing `pde` shouldn't silently pull in other teams'/vendors' plugins without you choosing to.
 
 ## Installing
 
@@ -77,8 +79,9 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
 - For `resolve-duplicate-contact-alerts`: the `sf` CLI authenticated to the `prod` org alias
   (`npm install -g @salesforce/cli && sf org login web --alias prod`), and the `salesforce-prod`
   MCP server registered separately (see that skill's README). `setup-companion-tools` can install
-  and guide you through both — ask to set up `salesforce-prod`, or run its `sf-cli-guidance`
-  subcommand directly for OS-specific, sudo-safe install instructions.
+  and guide you through both — ask to set up `salesforce-prod`, or run its `dep-guidance sf`
+  subcommand directly, which tests this machine and returns one decisive, sudo-safe install
+  command rather than a menu of options.
 
 ## After installing: what to actually do
 
@@ -86,17 +89,21 @@ Both skills are `user-invocable`, so you can either ask for them in natural lang
 directly by name:
 
 - **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
-  are available?") — walks you through installing Grafana, LogRocket, Atlassian, `salesforce-prod`,
-  `salesforce-uat`, and LaunchDarkly, one or more at a time. This is how you get `salesforce-prod`
-  registered for `resolve-duplicate-contact-alerts` above, and is the natural first thing to run
-  after installing `pde` if you plan to use that skill. Installing isn't the same as being ready to
-  use, though — Grafana needs a separate `setup-gcx` step to actually connect to an instance,
-  LogRocket/Atlassian/LaunchDarkly authenticate via OAuth automatically on first real use, and
-  Salesforce needs the `sf` CLI logged in; the skill tells you exactly what's still needed for
-  whichever service(s) you pick, not just whether the install succeeded.
+  are available?") — a guided wizard for installing Grafana, LogRocket, Atlassian,
+  `salesforce-prod`, `salesforce-uat`, and LaunchDarkly, one or more at a time. Before every pick it
+  shows a status tree (installed/ready state, plus nested dependency state — e.g. whether the `sf`
+  CLI is installed and logged in for Salesforce, or `gcx` for Grafana). This is how you get
+  `salesforce-prod` registered for `resolve-duplicate-contact-alerts` above, and is the natural
+  first thing to run after installing `pde` if you plan to use that skill. Grafana and Salesforce's
+  MCP servers both shell out to a local CLI directly, so `install` refuses to register either one
+  until its CLI is installed *and* authenticated — LogRocket/Atlassian/LaunchDarkly, which have no
+  local CLI, authenticate via OAuth automatically on first real use instead; steps only a human can
+  do (root-required local installs, interactive logins) are called out explicitly rather than left
+  in a wall of prose, and re-invoking
+  the skill later (even in a new conversation) always re-checks real state instead of assuming.
   - Direct/scriptable equivalent, if you'd rather not go through the agent:
     `python skills/setup-companion-tools/manage_companions.py status --cli claude` (or `copilot`),
-    `... install <service> --cli claude`, or `... sf-cli-guidance`.
+    `... install <service> --cli claude`, or `... dep-guidance sf`.
 - **`/pde:resolve-duplicate-contact-alerts`** (or ask: "resolve duplicate contact alerts" — dry run
   by default) — runs the alert-resolution workflow. The agent runs
   `skills/resolve-duplicate-contact-alerts/run.py` for you; running it yourself directly
