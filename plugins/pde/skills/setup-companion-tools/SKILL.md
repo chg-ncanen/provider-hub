@@ -8,12 +8,11 @@ user-invocable: true
 
 A guided wizard for optionally installing MCP servers/plugins commonly used alongside PDE
 tooling, that aren't bundled in the `pde` plugin itself: Grafana (`gcx`), LogRocket, Atlassian
-(Jira/Confluence), Salesforce prod and UAT (prod needed by `resolve-duplicate-contact-alerts`;
-UAT is just commonly useful alongside it), and LaunchDarkly. None of these are actually called by
-any code in the `pde` plugin (verified — only `salesforce-prod` is a genuine dependency, of
-`resolve-duplicate-contact-alerts` specifically); the rest are just commonly useful alongside it.
-Nothing here runs automatically — only when a developer explicitly invokes this skill, and only
-for whichever service(s) they pick.
+(Jira/Confluence), Salesforce prod, Salesforce UAT, and LaunchDarkly. None of these are called
+automatically by any code in the `pde` plugin — nothing here runs on its own, only when a
+developer explicitly invokes this skill, and only for whichever service(s) they pick. Whether a
+particular downstream skill needs one of these installed is that skill's own concern to check,
+not this one's.
 
 ## Before you start
 
@@ -24,8 +23,12 @@ with the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli cop
 
 ## The wizard loop
 
-Repeat this loop until the user says they're done. Every pass through it starts from a fresh
-`status` call — **never** rely on what a prior turn in this conversation said was true. That's
+Repeat this loop until the user says they're done. Each iteration runs `status` exactly once and
+asks exactly one question, then **stops and waits for the user's actual reply** — never render
+the tree or ask what to work on twice in a row without new input in between, and never re-run
+`status` again until either the user has responded, or they've picked an action that changes state
+(an install, or coming back after fixing a dependency). Every fresh iteration starts from a new
+`status` call rather than trusting what a prior turn in this conversation said was true — that's
 what makes "resume" work for free (see "Resuming" below): whether the user just ran a command in
 another terminal, backgrounded this session and came back, or closed Claude entirely and returned
 later in a brand new conversation, re-running `status` picks up the real current state either way.
@@ -53,10 +56,12 @@ its `detail` string verbatim. Example rendering for a mixed-state machine:
 
 ### 2. Ask what to work on
 
-Offer, as a multiple-choice prompt: install one or more not-yet-installed services, fix an
-outstanding dependency/readiness gap for something already installed, re-check status (in case
-they just finished something out-of-band), or stop. Let them pick one or more at a time; handle
-the pick(s), then loop back to step 1 so the tree reflects whatever just changed.
+Immediately after rendering the tree in the same message, ask (once) what to work on: install one
+or more not-yet-installed services, fix an outstanding dependency/readiness gap for something
+already installed, re-check status (in case they just finished something out-of-band), or stop.
+Then stop talking and wait — do not render the tree again or repeat the question until the user
+actually answers. Once they pick, handle the pick(s) (step 3/4), and only then loop back to step 1
+so the tree reflects whatever just changed.
 
 ### 3. Handle an install pick
 
@@ -165,12 +170,10 @@ yourself:
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream.
 - **Salesforce prod** — SOQL queries against the prod org. Needs the `sf` CLI authenticated to the
-  `prod` alias (see step 4 above) — the skill that actually uses this is
-  `resolve-duplicate-contact-alerts`. **`install` refuses to register this MCP until that's
-  true** — there's no point registering an entry that can't work yet.
+  `prod` alias (see step 4 above). **`install` refuses to register this MCP until that's true** —
+  there's no point registering an entry that can't work yet.
 - **Salesforce UAT** — SOQL queries against the UAT org. Needs the `sf` CLI authenticated to the
-  `uat` alias (see step 4 above); `install` is gated the same way. Not used by any skill in this
-  plugin — just handy alongside it.
+  `uat` alias (see step 4 above); `install` is gated the same way.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.

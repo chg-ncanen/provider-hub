@@ -18,9 +18,10 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   dependency state like whether the `sf` CLI is installed/logged in) before every pick, and gives
   OS/root-aware guidance — actually testing this machine rather than guessing — for any step only
   the human can do. Deliberately *not* automatic (no `SessionStart` hook does this, and none of
-  these — including LaunchDarkly, previously bundled directly — are actually called by any code in
-  this plugin; only `salesforce-prod` is a genuine dependency, of `resolve-duplicate-contact-alerts`).
-  Installing `pde` shouldn't silently pull in other teams'/vendors' plugins without you choosing to.
+  these — including LaunchDarkly, previously bundled directly — run automatically just because
+  `pde` is installed). Installing `pde` shouldn't silently pull in other teams'/vendors' plugins
+  without you choosing to; whether a particular skill in this plugin needs one of these installed
+  is that skill's own concern to check.
 
 ## Installing
 

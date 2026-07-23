@@ -193,7 +193,12 @@ SERVICES = {
 }
 
 
-def claude_plugin_installed(plugin_id):
+def claude_plugin_installed(plugin_name):
+    """Match on the plugin name alone (the part of `id` before "@"), not the
+    full name@marketplace id — a plugin installed from a differently-named or
+    re-added marketplace should still count as installed. Also require
+    `enabled` (defaulting true if the field is ever absent), since a disabled
+    plugin's MCP server won't actually be reachable."""
     rc, out, _ = run(["claude", "plugin", "list", "--json"])
     if rc != 0:
         return False
@@ -201,7 +206,10 @@ def claude_plugin_installed(plugin_id):
         data = json.loads(out)
     except Exception:
         return False
-    return any(p.get("id") == plugin_id for p in data)
+    return any(
+        p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True)
+        for p in data
+    )
 
 
 def claude_mcp_registered(name):
@@ -236,11 +244,11 @@ def is_installed(service_key, cli):
     svc = SERVICES[service_key]
     if svc["kind"] == "plugin":
         if cli == "claude":
-            return claude_plugin_installed(f"{svc['plugin_name']}@{svc['marketplace_name']}")
+            return claude_plugin_installed(svc["plugin_name"])
         return copilot_plugin_installed(svc["marketplace_name"], svc["plugin_name"])
     if svc["kind"] == "plugin-or-mcp":
         if cli == "claude":
-            return claude_plugin_installed(f"{svc['plugin_name']}@{svc['marketplace_name']}")
+            return claude_plugin_installed(svc["plugin_name"])
         return copilot_mcp_registered(svc["mcp_name"])
     if svc["kind"] == "mcp":
         if cli == "claude":
