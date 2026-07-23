@@ -46,15 +46,16 @@ and gets skipped.
 One row per service, alphabetical, numbered so the user can reply with just a digit. Name each
 one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed.
 **Add one more row above all of them, unnumbered, for `pde_mcp`** — the core MCP server bundled
-with the `pde` plugin itself, not something this wizard installs (that's the `SessionStart` hook's
-job). It's still worth surfacing here since every companion tool sits alongside it, and its
+with the PDE Ops Tools plugin (`pde`) itself, not something this wizard installs (that's the
+`SessionStart` hook's job). It's still worth surfacing here since every companion tool sits
+alongside it, and its
 `ready`/`detail` fields come from `status` the same way: use `—` instead of a number in that row so
 it's visibly not a pickable option, and if the user replies with that dash or its name anyway,
 just explain it isn't installable here rather than trying to do anything with it.
 
 | # | Service | Status | Description |
 |---|---|---|---|
-| — | pde-mcp | Ready | JSM alert management, email tools, skill discovery — bundled with `pde`, not installed via this wizard |
+| — | pde-mcp | Ready | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
 | 1 | Atlassian MCP | Covered by org connector | Jira/Confluence search, issue creation, sprint management |
 | 2 | Grafana (gcx) MCP | Not installed (will install dependencies) | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | Not installed | Feature flag management |
@@ -62,12 +63,13 @@ just explain it isn't installable here rather than trying to do anything with it
 | 5 | Salesforce prod MCP | Not installed (will install dependencies) | SOQL queries against the prod org |
 | 6 | Salesforce UAT MCP | Not installed | SOQL queries against the UAT org |
 
-For the `pde_mcp` row, `ready: null` means `status` couldn't check from this environment (no
-`CLAUDE_PLUGIN_ROOT`/`PLUGIN_ROOT`/`COPILOT_PLUGIN_ROOT` set) — show `detail` verbatim as the
-description in that case rather than a made-up status word. `ready: false` means something's
-actually wrong (venv missing, or a broken dependency) — put `detail` in the Description column
-so it's visible without the user having to ask, since this row never leads to a follow-up step
-the way the picker rows do.
+For the `pde_mcp` row, `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found
+installed — genuinely unusual, since this skill is bundled inside it, so seeing this likely means
+something's off with the CLI/marketplace lookup itself; show `detail` verbatim rather than a
+made-up status word. `ready: false` means something's actually wrong with an install that *was*
+found (venv missing, or a broken dependency) — put `detail` in the Description column so it's
+visible without the user having to ask, since this row never leads to a follow-up step the way the
+picker rows do.
 
 `Status` for the 6 numbered rows comes from `installed`/`ready`/`dependencies`, mapped like this:
 - **Installed and ready** (`installed: true`, `ready: true`, or no dependencies and `installed:

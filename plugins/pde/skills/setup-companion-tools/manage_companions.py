@@ -27,25 +27,50 @@ def run(cmd, timeout=30):
         return 1, "", str(e)
 
 
-def pde_mcp_status():
+def find_plugin_root(plugin_name, cli):
+    """Locate an installed plugin's root directory without relying on
+    CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT — those are only set
+    when Claude Code/Copilot spawn something *for* that plugin (a hook, its
+    MCP server); a plain shell invocation of this script (which is how it's
+    actually run) never has them. Mirrors how claude_plugin_installed/
+    copilot_plugin_installed already detect installation, but also captures
+    the install path those helpers only use internally."""
+    if cli == "claude":
+        rc, out, _ = run(["claude", "plugin", "list", "--json"])
+        if rc != 0:
+            return None
+        try:
+            data = json.loads(out)
+        except Exception:
+            return None
+        for p in data:
+            if p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True):
+                return p.get("installPath")
+        return None
+    home = os.environ.get("COPILOT_HOME", os.path.expanduser("~/.copilot"))
+    base = os.path.join(home, "installed-plugins")
+    if not os.path.isdir(base):
+        return None
+    for marketplace in os.listdir(base):
+        candidate = os.path.join(base, marketplace, plugin_name)
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def pde_mcp_status(cli):
     """Read-only health check for pde-mcp itself — not a companion service (it's
-    bundled with `pde`, set up by the SessionStart hook, not this script), but
-    worth surfacing here since every companion tool sits alongside it. Mirrors
-    the exact manual diagnosis steps used to track down a real broken-venv bug:
-    locate the plugin root, check the venv's python exists, then actually try
-    importing pde-mcp's dependencies rather than inferring from a marker file."""
-    plugin_root = (
-        os.environ.get("CLAUDE_PLUGIN_ROOT")
-        or os.environ.get("PLUGIN_ROOT")
-        or os.environ.get("COPILOT_PLUGIN_ROOT")
-    )
+    bundled with the PDE Ops Tools plugin, set up by the SessionStart hook, not
+    this script), but worth surfacing here since every companion tool sits
+    alongside it. Mirrors the exact manual diagnosis steps used to track down a
+    real broken-venv bug: locate the plugin root, check the venv's python
+    exists, then actually try importing pde-mcp's dependencies rather than
+    inferring from a marker file."""
+    plugin_root = find_plugin_root("pde", cli)
     if not plugin_root:
         return {
             "ready": None,
-            "detail": (
-                "Can't check from here — no CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT "
-                "set in this environment"
-            ),
+            "detail": "Not installed — the PDE Ops Tools plugin (`pde`) wasn't found",
         }
 
     venv_python = os.path.join(plugin_root, ".venv", "bin", "python")
@@ -66,7 +91,7 @@ def pde_mcp_status():
         timeout=15,
     )
     if rc == 0:
-        return {"ready": True, "detail": "venv and dependencies OK"}
+        return {"ready": True, "detail": "Bundled with the PDE Ops Tools plugin — venv and dependencies OK"}
     reason = (err or out).strip().splitlines()[-1] if (err or out).strip() else "unknown import error"
     return {
         "ready": False,
@@ -328,7 +353,7 @@ def is_installed(service_key, cli):
 
 
 def cmd_status(cli):
-    result = {"pde_mcp": pde_mcp_status()}
+    result = {"pde_mcp": pde_mcp_status(cli)}
     for key, svc in SERVICES.items():
         installed = is_installed(key, cli)
         dependencies = svc["dependencies"]() if "dependencies" in svc else []
