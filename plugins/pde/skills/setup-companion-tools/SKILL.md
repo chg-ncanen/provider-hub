@@ -24,8 +24,8 @@ with the user directly if genuinely ambiguous. Pass `--cli claude` or `--cli cop
 ## The wizard loop
 
 Repeat this loop until the user says they're done. Each iteration runs `status` exactly once and
-asks exactly one question, then **stops and waits for the user's actual reply** — never render
-the tree or ask what to work on twice in a row without new input in between, and never re-run
+asks exactly one question, then **stops and waits for the user's actual reply** — never show
+status or ask what to work on twice in a row without new input in between, and never re-run
 `status` again until either the user has responded, or they've picked an action that changes state
 (an install, or coming back after fixing a dependency). Every fresh iteration starts from a new
 `status` call rather than trusting what a prior turn in this conversation said was true — that's
@@ -33,41 +33,53 @@ what makes "resume" work for free (see "Resuming" below): whether the user just 
 another terminal, backgrounded this session and came back, or closed Claude entirely and returned
 later in a brand new conversation, re-running `status` picks up the real current state either way.
 
-### 1. Render the status tree
+### 1. Show status as plain text
 
 Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
-directory) and render it as an indented tree, one line per service, dependencies indented
-underneath — this should read like Claude Code's own `/mcp` list, not a wall of prose. For each
-service line: `[x]`/`[ ]` for `installed`, then `installed`/`not installed`, then if installed and
-`ready` is `false` append `— not ready`, or if `note` is present append `— <note>`. For each
-dependency line, same `[x]`/`[ ]` shape keyed off that dependency's own `installed`, followed by
-its `detail` string verbatim. If an `org_connector` field is present (Claude Code only, currently
-only checked for Atlassian), append a line noting it: a pre-existing claude.ai-configured
-connector (often org-provisioned, entirely separate from anything this skill installs) that may
-already cover the same tools. Example rendering for a mixed-state machine:
+directory) and summarize it as short, plain sentences — **no `[x]`/`[ ]` checkbox glyphs, no
+ASCII tree/indentation**. Those look like a real interactive checklist but are just text in a
+chat message; they can't actually be clicked, which is confusing. One line per service is enough;
+fold any dependency detail into that same line rather than a separate indented row:
 
-```
-[ ] Grafana (gcx)             not installed
-      gcx CLI                 [ ] not found on PATH
-[ ] LogRocket                 not installed
-[x] Atlassian                 installed — connects via OAuth on first use
-      also: 'claude.ai Atlassian' connector already connected — separate from this plugin's own
-      entry; covers the same tools, so its own OAuth may not be needed unless you want the
-      bundled skills
-[x] Salesforce prod           installed — not ready
-      sf CLI                  [x] installed, not logged into 'prod'
-[ ] Salesforce UAT            not installed
-[ ] LaunchDarkly              not installed
-```
+- `Grafana (gcx): not installed — also needs the gcx CLI, not currently found on PATH.`
+- `LogRocket: not installed.`
+- `Salesforce prod: installed, but not ready — the sf CLI is installed but not logged into 'prod'.`
+- `LaunchDarkly: not installed.`
 
-### 2. Ask what to work on
+**Atlassian is a special case when `org_connector` is present and `connected: true`**: don't
+present it as "not installed" with a long explanation. Say, in one short line, that it's already
+covered — e.g. `Atlassian: not installed via this plugin, but your existing 'claude.ai Atlassian'
+connector is already connected and covers the same Jira/Confluence tools — only worth installing
+this plugin if you want its bundled skills.` One sentence, not a bulleted list of the six skill
+names — mention those only if the user actually asks what the bundled skills are.
 
-Immediately after rendering the tree in the same message, ask (once) what to work on: install one
-or more not-yet-installed services, fix an outstanding dependency/readiness gap for something
-already installed, re-check status (in case they just finished something out-of-band), or stop.
-Then stop talking and wait — do not render the tree again or repeat the question until the user
-actually answers. Once they pick, handle the pick(s) (step 3/4), and only then loop back to step 1
-so the tree reflects whatever just changed.
+If every service is already installed and ready (or, for Atlassian, already covered by the org
+connector) and the user didn't ask to fix anything specific, just say so plainly — don't force the
+question in step 2 when there's nothing left to offer.
+
+### 2. Ask what to work on — with a real interactive prompt
+
+Use the `AskUserQuestion` tool to ask **which one thing** to work on next — this is an actual
+clickable prompt, unlike the plain status text above, which is what makes this feel like a real
+choice instead of something to type free-form. Set `multiSelect: false`: handle exactly one
+service at a time, by design (matches the loop below — after handling one pick, you re-render
+status and ask again, rather than trying to batch several installs from a single answer).
+
+`AskUserQuestion` allows at most 4 options per question, which is fewer than the 6 possible
+services, so build the option list like this:
+1. Walk the services in a fixed order — Grafana, LogRocket, Atlassian, Salesforce prod,
+   Salesforce UAT, LaunchDarkly — and skip any that are already installed and ready (or, for
+   Atlassian, already covered by a connected `org_connector`).
+2. Take the first 3 remaining as concrete options, each labeled with the service name and a
+   one-line description of its current state.
+3. The 4th option is either "Nothing right now" (if 3 or fewer remained in step 1) or, when more
+   than 3 remain, an option like "Something else" whose description names the rest by name — the
+   user can still reach them by typing the name, since `AskUserQuestion` always offers a free-text
+   "Other" alongside the listed options.
+
+Once they answer (whether a listed option or free text), handle exactly that one pick (step 3/4),
+then loop back to step 1 for a fresh status readout and a fresh single-pick question — never
+render the status or ask again before that reply comes back.
 
 ### 3. Handle an install pick
 
@@ -164,9 +176,9 @@ yourself:
   next diagnostic step (e.g. re-run the command and check its output, confirm they're on the
   right terminal/shell where the install landed).
 - **They closed Claude entirely and came back later** — possibly in a brand new conversation with
-  none of this history: just re-invoke the skill from the top. The status tree reflects whatever
-  changed while they were away; there's no prior state to recover because none of it lived in
-  conversation memory in the first place.
+  none of this history: just re-invoke the skill from the top. The status readout reflects
+  whatever changed while they were away; there's no prior state to recover because none of it
+  lived in conversation memory in the first place.
 
 ## Available services
 

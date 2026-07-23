@@ -14,8 +14,9 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   npm package) not bundled here — see that skill's README for how to register it.
 - **`skills/setup-companion-tools/`** — an opt-in wizard (invoke it by asking to set up/connect
   companion tools) for installing Grafana, LogRocket, Atlassian, `salesforce-prod`, `salesforce-uat`,
-  and LaunchDarkly one at a time. It renders a status tree (install state, readiness, and nested
-  dependency state like whether the `sf` CLI is installed/logged in) before every pick, and gives
+  and LaunchDarkly one at a time. It summarizes install/readiness state (including nested
+  dependency state like whether the `sf` CLI is installed/logged in) as plain text before every
+  pick, then asks which one thing to work on next via an actual interactive prompt, and gives
   OS/root-aware guidance — actually testing this machine rather than guessing — for any step only
   the human can do. Deliberately *not* automatic (no `SessionStart` hook does this, and none of
   these — including LaunchDarkly, previously bundled directly — run automatically just because
@@ -110,16 +111,19 @@ directly by name:
 
 - **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
   are available?") — a guided wizard for installing Grafana, LogRocket, Atlassian,
-  `salesforce-prod`, `salesforce-uat`, and LaunchDarkly, one or more at a time. Before every pick it
-  shows a status tree (installed/ready state, plus nested dependency state — e.g. whether the `sf`
-  CLI is installed and logged in for Salesforce, or `gcx` for Grafana). This is how you get
-  `salesforce-prod` registered for `resolve-duplicate-contact-alerts` above, and is the natural
-  first thing to run after installing `pde` if you plan to use that skill. Grafana and Salesforce's
-  MCP servers both shell out to a local CLI directly, so `install` refuses to register either one
-  until its CLI is installed *and* authenticated — LogRocket/Atlassian/LaunchDarkly, which have no
-  local CLI, authenticate via OAuth automatically on first real use instead; steps only a human can
-  do (root-required local installs, interactive logins) are called out explicitly rather than left
-  in a wall of prose, and re-invoking
+  `salesforce-prod`, `salesforce-uat`, and LaunchDarkly, one at a time. Before every pick it
+  summarizes install/ready state as plain text (plus nested dependency state — e.g. whether the
+  `sf` CLI is installed and logged in for Salesforce, or `gcx` for Grafana), then asks which one
+  thing to work on next through an actual interactive prompt rather than a plain-text checklist.
+  This is how you get `salesforce-prod` registered for `resolve-duplicate-contact-alerts` above,
+  and is the natural first thing to run after installing `pde` if you plan to use that skill.
+  Grafana and Salesforce's MCP servers both shell out to a local CLI directly, so `install`
+  refuses to register either one until its CLI is installed *and* authenticated —
+  LogRocket/Atlassian/LaunchDarkly, which have no local CLI, authenticate via OAuth automatically
+  on first real use instead (Atlassian specifically also checks for a pre-existing, often
+  org-provisioned `claude.ai` connector that may already cover the same tools); steps only a human
+  can do (root-required local installs, interactive logins) are called out explicitly rather than
+  left in a wall of prose, and re-invoking
   the skill later (even in a new conversation) always re-checks real state instead of assuming.
   - Direct/scriptable equivalent, if you'd rather not go through the agent:
     `python skills/setup-companion-tools/manage_companions.py status --cli claude` (or `copilot`),
