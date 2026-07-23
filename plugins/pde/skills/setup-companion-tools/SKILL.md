@@ -33,55 +33,64 @@ what makes "resume" work for free (see "Resuming" below): whether the user just 
 another terminal, backgrounded this session and came back, or closed Claude entirely and returned
 later in a brand new conversation, re-running `status` picks up the real current state either way.
 
-### 1. Show status as plain text
+### 1. Ask what to work on — status lives inside the menu, not above it
 
 Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
-directory) and summarize it as short, plain sentences — **no `[x]`/`[ ]` checkbox glyphs, no
-ASCII tree/indentation**. Those look like a real interactive checklist but are just text in a
-chat message; they can't actually be clicked, which is confusing. One line per service is enough;
-fold any dependency detail into that same line rather than a separate indented row:
+directory), then go **straight** to an `AskUserQuestion` prompt — don't print a separate status
+summary first. A status paragraph followed immediately by a menu gets skipped: people's attention
+jumps straight to the interactive prompt, so anything written above it effectively goes unread.
+The only place status reliably gets seen is inside the menu itself.
 
-- `Grafana (gcx): not installed — also needs the gcx CLI, not currently found on PATH.`
-- `LogRocket: not installed.`
-- `Salesforce prod: installed, but not ready — the sf CLI is installed but not logged into 'prod'.`
-- `LaunchDarkly: not installed.`
-
-**Atlassian is a special case when `org_connector` is present and `connected: true`**: don't
-present it as "not installed" with a long explanation. Say, in one short line, that it's already
-covered — e.g. `Atlassian: not installed via this plugin, but your existing 'claude.ai Atlassian'
-connector is already connected and covers the same Jira/Confluence tools — only worth installing
-this plugin if you want its bundled skills.` One sentence, not a bulleted list of the six skill
-names — mention those only if the user actually asks what the bundled skills are.
-
-If every service is already installed and ready (or, for Atlassian, already covered by the org
-connector) and the user didn't ask to fix anything specific, just say so plainly — don't force the
-question in step 2 when there's nothing left to offer.
-
-### 2. Ask what to work on — with a real interactive prompt
-
-Use the `AskUserQuestion` tool to ask **which one thing** to work on next — this is an actual
-clickable prompt, unlike the plain status text above, which is what makes this feel like a real
-choice instead of something to type free-form. Set `multiSelect: false`: handle exactly one
-service at a time, by design (matches the loop below — after handling one pick, you re-render
-status and ask again, rather than trying to batch several installs from a single answer).
+Use `AskUserQuestion` to ask **which one thing** to work on next — a real clickable prompt, not
+something to type free-form. Set `multiSelect: false`: handle exactly one service at a time, by
+design (matches the loop below — after handling one pick, re-run status and ask again, rather
+than trying to batch several installs from a single answer).
 
 `AskUserQuestion` allows at most 4 options per question, which is fewer than the 6 possible
 services, so build the option list like this:
 1. Walk the services in a fixed order — Grafana, LogRocket, Atlassian, Salesforce prod,
    Salesforce UAT, LaunchDarkly — and skip any that are already installed and ready (or, for
    Atlassian, already covered by a connected `org_connector`).
-2. Take the first 3 remaining as concrete options, each labeled with the service name and a
-   one-line description of its current state.
+2. Take the first 3 remaining as concrete options. **Put the status tag directly in the `label`,
+   not just in `description`** — people scan labels and skip descriptions, so the label has to
+   carry the state on its own: `"Grafana (gcx) — not installed"`, `"Salesforce prod — not ready"`,
+   `"Atlassian — covered by org connector"`. Reserve `description` for the one extra sentence of
+   detail (which dependency is missing, why it's not ready, etc.) — someone who only reads labels
+   should still know the state of everything at a glance. For Atlassian specifically when
+   `org_connector.connected` is `true`, this "covered by org connector" tag plus a one-sentence
+   description is the *whole* explanation — don't also list the six bundled skill names here;
+   mention those only if the user asks what the plugin would add on top.
 3. The 4th option is either "Nothing right now" (if 3 or fewer remained in step 1) or, when more
-   than 3 remain, an option like "Something else" whose description names the rest by name — the
-   user can still reach them by typing the name, since `AskUserQuestion` always offers a free-text
-   "Other" alongside the listed options.
+   than 3 remain, an option like "Something else" whose description names the rest (with their own
+   short status) — the user can still reach them by typing the name, since `AskUserQuestion`
+   always offers a free-text "Other" alongside the listed options.
 
-Once they answer (whether a listed option or free text), handle exactly that one pick (step 3/4),
-then loop back to step 1 for a fresh status readout and a fresh single-pick question — never
-render the status or ask again before that reply comes back.
+If every service is already installed and ready (or, for Atlassian, already covered by the org
+connector), there's nothing to ask — say so, backed by a status table (below) rather than a bare
+sentence, since "everything's fine" is exactly the kind of claim someone will want to glance over
+and verify rather than take on faith.
 
-### 3. Handle an install pick
+**Whenever status needs to stand on its own** — the "nothing to ask" case above, or the user
+explicitly asking to just see status without picking anything ("what's installed", "show me
+companion tools status") — render it as a markdown table, not prose and not the old checkbox/tree
+style. A table is visually distinct enough to actually get read on its own, which a paragraph
+sitting by itself (with no menu to draw the eye) is not. One row per service — name, status, one
+line of detail:
+
+| Service | Status | Detail |
+|---|---|---|
+| Grafana (gcx) | Not installed | Also needs the gcx CLI — not found on PATH |
+| LogRocket | Not installed | — |
+| Atlassian | Covered by org connector | `claude.ai Atlassian` already connected |
+| Salesforce prod | Not ready | sf CLI installed, not logged into 'prod' |
+| Salesforce UAT | Not installed | Needs the sf CLI |
+| LaunchDarkly | Not installed | — |
+
+Once they answer (whether a listed option or free text), handle exactly that one pick (step 2/3),
+then loop back to step 1 for a fresh status check and a fresh single-pick menu — never show a
+menu again before that reply comes back.
+
+### 2. Handle an install pick
 
 If `status` already shows it installed, say so and skip straight to dependency/readiness handling
 below — nothing to install.
@@ -89,13 +98,13 @@ below — nothing to install.
 Otherwise run `python3 manage_companions.py install <service> --cli <claude|copilot>`.
 
 **`install` will refuse to run for a service with an unmet blocking dependency** (currently: `sf`
-for salesforce-prod/uat, `gcx` for grafana — both work the same way; see step 4). Neither the
+for salesforce-prod/uat, `gcx` for grafana — both work the same way; see step 3). Neither the
 Grafana plugin's MCP server nor salesforce-prod's is a hosted/HTTP server — both shell out to a
 local CLI directly, so registering either before its CLI is installed and authenticated would
 leave the same kind of broken-looking, half-working install sitting there. The result comes back
 as `{"success": false, "blocked": true, "unmet_dependencies": [...], ...}`
 instead of actually registering anything. When you see `blocked: true`, don't treat it as a
-generic failure — go straight to step 4 for each entry in `unmet_dependencies`, and once the user
+generic failure — go straight to step 3 for each entry in `unmet_dependencies`, and once the user
 tells you they've fixed it, **retry the same `install` call** (don't just re-check status and
 stop) — that's what actually registers the MCP/plugin once the dependency clears.
 
@@ -110,10 +119,10 @@ needed to actually finish setup:
   — the newly installed server/plugin isn't connected in the *current* session. Tell the user
   plainly: "restart your session now; when you're back, just ask me to check companion tools
   status again (or re-run this skill) and I'll pick up exactly where we left off."
-- For any service with unmet dependencies (see step 4), handle those too before considering the
+- For any service with unmet dependencies (see step 3), handle those too before considering the
   service done.
 
-### 4. Handle a dependency/readiness gap
+### 3. Handle a dependency/readiness gap
 
 This is the part that most needs to be unmistakable, because it's where a human has to stop and
 do something outside the conversation.
@@ -199,10 +208,10 @@ yourself:
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream. No `org_connector` check either — that's a Claude Code-only concept.
 - **Salesforce prod** — SOQL queries against the prod org. Needs the `sf` CLI authenticated to the
-  `prod` alias (see step 4 above). **`install` refuses to register this MCP until that's true** —
+  `prod` alias (see step 3 above). **`install` refuses to register this MCP until that's true** —
   there's no point registering an entry that can't work yet.
 - **Salesforce UAT** — SOQL queries against the UAT org. Needs the `sf` CLI authenticated to the
-  `uat` alias (see step 4 above); `install` is gated the same way.
+  `uat` alias (see step 3 above); `install` is gated the same way.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
