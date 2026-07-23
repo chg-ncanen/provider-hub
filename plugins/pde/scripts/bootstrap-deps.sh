@@ -66,6 +66,34 @@ if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$VENV_DIR/Scripts/python.exe" ]; the
   cp "$VENV_DIR/Scripts/pip.exe" "$VENV_DIR/bin/pip"
 fi
 
+# Debian/Ubuntu (including WSL Ubuntu) strips ensurepip's bundled pip/setuptools
+# wheel data out of the base python3 package — only the version-specific
+# python3.X-venv package includes it — so `python -m venv` above can create the
+# directory and the python binary but silently leave bin/pip missing. Once that
+# half-broken venv exists, the `[ ! -d "$VENV_DIR" ]` check never retries it, so
+# every subsequent session would otherwise fail identically forever (verified
+# against a real broken venv: python/python3 present, pip entirely absent).
+# Self-heal via get-pip.py first — it downloads pip/setuptools straight from
+# PyPI instead of needing the system's bundled wheel data, so it needs no root.
+if [ ! -x "$VENV_DIR/bin/pip" ]; then
+  curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$VENV_DIR/get-pip.py" 2>/dev/null \
+    && "$VENV_DIR/bin/python" "$VENV_DIR/get-pip.py" --quiet 2>/dev/null
+  rm -f "$VENV_DIR/get-pip.py"
+fi
+
+if [ ! -x "$VENV_DIR/bin/pip" ]; then
+  PYVER="$("$VENV_DIR/bin/python" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")' 2>/dev/null || echo "3")"
+  rm -rf "$VENV_DIR" "$INSTALLED_MARKER"
+  {
+    echo "bootstrap-deps.sh: couldn't provision pip into the venv — bin/pip is missing, and"
+    echo "the get-pip.py fallback didn't work either (likely no network access to"
+    echo "bootstrap.pypa.io). This usually means the python3-venv system package isn't"
+    echo "installed. Run this yourself (needs root), then restart your session:"
+    echo "  sudo apt install python${PYVER}-venv"
+  } >&2
+  exit 1
+fi
+
 if [ ! -f "$INSTALLED_MARKER" ] || [ "$(cat "$REQ_FILE")" != "$(cat "$INSTALLED_MARKER")" ]; then
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet -r "$REQ_FILE"
