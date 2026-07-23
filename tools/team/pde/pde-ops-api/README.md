@@ -101,6 +101,32 @@ The library reads `app_config.json` for JSM settings:
 - `max_retries` — Retry count for failed requests
 - `jql_filters` — Predefined JQL query templates
 
+### CLI
+
+```bash
+python -m cli list --profile pde --status open
+python -m cli list-closed --profile pde --since-days 2
+python -m cli export-csv --output ./out/alerts.csv --start 2026-06-08T09:00 --end 2026-07-02T09:00
+```
+
+`.env` is discovered by searching upward from wherever you invoke `python -m cli`, not from
+this package's own location — so run it from `plugins/pde/mcp-servers/pde-mcp/` (where this
+plugin's `.env` actually lives) or export the credentials into your shell first. Running it
+from `pde-ops-api/` itself won't find that `.env`, since it isn't an ancestor directory.
+
+## Running tests
+
+```bash
+cd provider-hub/tools/team/pde/pde-ops-api
+pip install -e .
+python -m unittest discover -s tests -t . -q
+```
+
+(Not `pytest`: the `package-dir = {"api" = "."}` remap above means this directory's own
+`__init__.py` *is* `api/__init__.py`, which trips pytest's rootdir-package detection into
+trying to import it directly and failing with a relative-import error. `unittest discover`
+doesn't have that failure mode.)
+
 ## Related
 
 - `plugins/pde/mcp-servers/pde-mcp/` — MCP server exposing these APIs as tools

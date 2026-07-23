@@ -15,5 +15,7 @@ dependencies = [
 # The source tree isn't laid out under an `api/` folder, but the code (and its
 # consumers: the pde-mcp MCP server, the resolve-duplicate-contact-alerts skill)
 # already imports it as `api.jsm.*` / `api.mail.*` — remap instead of renaming.
+# `cli` isn't remapped: it's a genuine top-level package (invoked as `python -m
+# cli`), so it uses the default package-dir ("." for anything not in the map).
 package-dir = { "api" = "." }
-packages = ["api", "api.jsm", "api.mail"]
+packages = ["api", "api.jsm", "api.mail", "cli", "cli.jsm"]

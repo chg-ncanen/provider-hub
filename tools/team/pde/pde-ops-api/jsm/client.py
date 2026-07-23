@@ -3,7 +3,7 @@
 # runtime on 3.10+ — deferring annotation evaluation keeps it working on 3.9.
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import json
 import re
 from typing import Any, Dict, List, Optional
@@ -63,6 +63,106 @@ class JSMOpsAPI:
             text=text,
         )
         return self.tool.fetch_open_alerts(query=final_query, limit=limit, cursor=cursor)
+
+    def list_closed_alerts(
+        self,
+        since_days: Optional[float] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        query: Optional[str] = None,
+        priority: Optional[str] = None,
+        service: Optional[str] = None,
+        text: Optional[str] = None,
+        limit_per_page: int = 100,
+        max_pages: int = 50,
+    ) -> Dict[str, Any]:
+        # Closed-alert history is unbounded (unlike "open", which is naturally
+        # capped to whatever hasn't been resolved yet), so a time window is
+        # required here to avoid paging through the entire archive.
+        #
+        # The alerts endpoint only supports newest-first offset pagination (no
+        # server-side date filter), so pagination cost scales with (now -
+        # window_start), not with the window width. This is cheap for the
+        # common case (end defaults to now), but an explicit `end` set well in
+        # the past still requires paging through everything newer than it
+        # first; `max_pages` is the hard cap on that cost.
+        if start is None and since_days is None:
+            raise ValueError(
+                "list_closed_alerts requires a time window: pass since_days or start."
+            )
+
+        window_end = self._as_utc(end) if end is not None else datetime.now(timezone.utc)
+        window_start = (
+            self._as_utc(start) if start is not None else window_end - timedelta(days=since_days)
+        )
+
+        final_query = self.build_alert_query(
+            base_query=query,
+            status="closed",
+            priority=priority,
+            service=service,
+            text=text,
+        )
+
+        matched: List[Dict[str, Any]] = []
+        offset = 0
+        pages_fetched = 0
+
+        while pages_fetched < max_pages:
+            pages_fetched += 1
+            payload = self.tool._request(
+                "GET",
+                "",
+                params={"query": final_query, "size": limit_per_page, "offset": offset},
+            )
+            alerts = self.tool._extract_alerts(payload)
+            if not alerts:
+                break
+
+            # Alerts are returned newest-first by default, so once an entire
+            # page predates the window start, nothing further can match.
+            page_has_any_in_window = False
+            for alert in alerts:
+                created_at = self._alert_created_at(alert)
+                if created_at is None or created_at < window_start:
+                    continue
+                page_has_any_in_window = True
+                if created_at <= window_end:
+                    matched.append(alert)
+
+            if not page_has_any_in_window:
+                break
+
+            links = payload.get("links") if isinstance(payload, dict) else None
+            if not isinstance(links, dict) or not links.get("next"):
+                break
+            offset += limit_per_page
+
+        return {
+            "success": True,
+            "operation": "list_closed_alerts",
+            "query": final_query,
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+            "count": len(matched),
+            "alerts": matched,
+            "pages_fetched": pages_fetched,
+        }
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _alert_created_at(alert: Dict[str, Any]) -> Optional[datetime]:
+        raw = (alert or {}).get("createdAt") or (alert or {}).get("created_at")
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
     def get_alert(self, alert_id: str) -> Dict[str, Any]:
         return self.tool.get_alert_detail(alert_id=alert_id)
@@ -377,10 +477,14 @@ class JSMOpsAPI:
         text: Optional[str] = None,
     ) -> str:
         parts: List[str] = []
-        if base_query:
-            parts.append(base_query)
-        else:
-            parts.append(self.config.alert_filter)
+        base = base_query if base_query else self.config.alert_filter
+        # An explicit status overrides any status clause baked into the base
+        # (e.g. self.config.alert_filter defaults to "status:open"), otherwise
+        # requesting status="closed" would AND against "status:open" and never match.
+        if status and base:
+            base = self._strip_status_clause(base)
+        if base:
+            parts.append(base)
 
         if status:
             parts.append(f"status:{self._quote(status)}")
@@ -392,6 +496,14 @@ class JSMOpsAPI:
             parts.append(f"message:{self._quote(text)}")
 
         return " AND ".join(parts)
+
+    @staticmethod
+    def _strip_status_clause(query: str) -> str:
+        without_status = re.sub(r'status:(?:"[^"]*"|\S+)', "", query, flags=re.IGNORECASE)
+        without_status = re.sub(r"\s+AND\s+AND\s+", " AND ", without_status, flags=re.IGNORECASE)
+        without_status = re.sub(r"^\s*AND\s+", "", without_status, flags=re.IGNORECASE)
+        without_status = re.sub(r"\s+AND\s*$", "", without_status, flags=re.IGNORECASE)
+        return without_status.strip()
 
     @staticmethod
     def _quote(value: str) -> str:

@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Any
 
 import mcp.types as types
@@ -6,6 +7,7 @@ import mcp.types as types
 
 _ALERT_TOOL_NAMES = {
     "list_alerts",
+    "list_closed_alerts",
     "get_alert",
     "acknowledge_alert",
     "close_alert",
@@ -72,6 +74,53 @@ def definitions() -> list[types.Tool]:
                         "description": "Max number of alerts to return (default: 50).",
                     },
                 },
+            },
+        ),
+        types.Tool(
+            name="list_closed_alerts",
+            description=(
+                "List closed PDE production alerts from JSM Ops. Use this when the user asks "
+                "about resolved/closed alerts, alert history, or what closed in the past N days. "
+                "Unlike list_alerts, a time window is required (since_days, or start/optionally end) "
+                "because closed-alert history is unbounded and would otherwise mean pulling the entire archive."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "since_days": {
+                        "type": "number",
+                        "description": "Look back this many days from now, e.g. 2 for 'past 2 days'.",
+                    },
+                    "start": {
+                        "type": "string",
+                        "description": "ISO 8601 window start (alternative to since_days), e.g. '2026-07-20T00:00:00Z'.",
+                    },
+                    "end": {
+                        "type": "string",
+                        "description": "ISO 8601 window end (defaults to now if start is given without end).",
+                    },
+                    "profile": {
+                        "type": "string",
+                        "enum": ["pde"],
+                        "description": "Query preset profile. Use 'pde' for PDE alerts (responders:PDE).",
+                    },
+                    "priority": {
+                        "type": "string",
+                        "description": "Filter by priority, e.g. 'P1', 'P2'.",
+                    },
+                    "service": {
+                        "type": "string",
+                        "description": "Filter by service name.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Free-text search in alert message.",
+                    },
+                },
+                "anyOf": [
+                    {"required": ["since_days"]},
+                    {"required": ["start"]},
+                ],
             },
         ),
         types.Tool(
@@ -143,18 +192,21 @@ def can_handle(name: str) -> bool:
     return name in _ALERT_TOOL_NAMES
 
 
+def _resolve_profile_query(profile: str | None, api_config: Any, default_query: str) -> str:
+    # api_config.default_profile ("pde") is what the tool description promises
+    # ("Defaults to the PDE responder filter") when the caller omits `profile`
+    # — and when the "pde" profile does apply, AND it onto the configured base
+    # filter (e.g. status:open) rather than replacing it, so "PDE alerts"
+    # doesn't silently drop that scoping.
+    resolved_profile = profile or api_config.default_profile
+    if resolved_profile != "pde":
+        return default_query
+    return f'{default_query} AND responders:"PDE"' if default_query else 'responders:"PDE"'
+
+
 def handle(name: str, arguments: dict[str, Any], api: Any) -> dict[str, Any]:
     if name == "list_alerts":
-        # app_config.json's default_profile ("pde") is what the tool description
-        # promises ("Defaults to the PDE responder filter") when the caller omits
-        # `profile` — and when the "pde" profile does apply, AND it onto the
-        # configured base filter (status:open) rather than replacing it, so
-        # "PDE alerts" doesn't silently drop the "open" scoping.
-        profile = arguments.get("profile") or api.config.default_profile
-        if profile == "pde":
-            base_query = f'{api.config.alert_filter} AND responders:"PDE"'
-        else:
-            base_query = api.config.alert_filter
+        base_query = _resolve_profile_query(arguments.get("profile"), api.config, api.config.alert_filter)
         result = api.list_alerts(
             query=base_query,
             status=arguments.get("status"),
@@ -166,6 +218,31 @@ def handle(name: str, arguments: dict[str, Any], api: Any) -> dict[str, Any]:
         alerts = result.get("alerts", [])
         summaries = [_alert_summary(a) for a in alerts]
         return {"count": len(summaries), "query": result.get("query"), "alerts": summaries}
+
+    if name == "list_closed_alerts":
+        base_query = _resolve_profile_query(arguments.get("profile"), api.config, api.config.alert_filter)
+        start_raw = arguments.get("start")
+        end_raw = arguments.get("end")
+        start_dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00")) if start_raw else None
+        end_dt = datetime.fromisoformat(end_raw.replace("Z", "+00:00")) if end_raw else None
+        result = api.list_closed_alerts(
+            since_days=arguments.get("since_days"),
+            start=start_dt,
+            end=end_dt,
+            query=base_query,
+            priority=arguments.get("priority"),
+            service=arguments.get("service"),
+            text=arguments.get("text"),
+        )
+        alerts_list = result.get("alerts", [])
+        summaries = [_alert_summary(a) for a in alerts_list]
+        return {
+            "count": len(summaries),
+            "query": result.get("query"),
+            "window_start": result.get("window_start"),
+            "window_end": result.get("window_end"),
+            "alerts": summaries,
+        }
 
     if name == "get_alert":
         return api.get_alert(arguments["alert_id"])

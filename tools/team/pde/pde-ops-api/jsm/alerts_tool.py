@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -10,6 +11,7 @@ except Exception:
 
 DEFAULT_CLOUD_ID = "e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2"
 DEFAULT_FILTER = 'responders:"PDE" AND status:open'
+DEFAULT_CLOSED_FILTER = 'responders:"PDE" AND status:closed'
 
 
 class _PermanentAPIError(RuntimeError):
@@ -146,6 +148,20 @@ class JSMOpsAlertsTool:
                 },
             },
             {
+                "name": "fetch_closed_alerts",
+                "description": "Fetch closed alerts for PDE responders from JSM Ops.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Optional override query."},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100},
+                        "cursor": {"type": "string"},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
+            {
                 "name": "get_alert_detail",
                 "description": "Get full details for an alert.",
                 "input_schema": {
@@ -206,6 +222,12 @@ class JSMOpsAlertsTool:
                     limit=tool_input.get("limit"),
                     cursor=tool_input.get("cursor"),
                 )
+            if name == "fetch_closed_alerts":
+                return self.fetch_closed_alerts(
+                    query=tool_input.get("query"),
+                    limit=tool_input.get("limit"),
+                    cursor=tool_input.get("cursor"),
+                )
             if name == "get_alert_detail":
                 return self.get_alert_detail(alert_id=tool_input["alert_id"])
             if name == "add_alert_note":
@@ -232,7 +254,46 @@ class JSMOpsAlertsTool:
         limit: Optional[int] = None,
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        params: Dict[str, Any] = {"query": query or self.filter_query}
+        return self._fetch_alerts(
+            operation="fetch_open_alerts",
+            default_query=self.filter_query,
+            query=query,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def fetch_closed_alerts(
+        self,
+        query: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._fetch_alerts(
+            operation="fetch_closed_alerts",
+            default_query=self._closed_filter_query(),
+            query=query,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    def _closed_filter_query(self) -> str:
+        if re.search(r"status:\S+", self.filter_query, flags=re.IGNORECASE):
+            return re.sub(
+                r'status:(?:"[^"]*"|\S+)', "status:closed", self.filter_query, flags=re.IGNORECASE
+            )
+        if self.filter_query:
+            return f"{self.filter_query} AND status:closed"
+        return DEFAULT_CLOSED_FILTER
+
+    def _fetch_alerts(
+        self,
+        operation: str,
+        default_query: str,
+        query: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        params: Dict[str, Any] = {"query": query or default_query}
         if limit is not None:
             params["limit"] = limit
         if cursor:
@@ -243,7 +304,7 @@ class JSMOpsAlertsTool:
         next_cursor = payload.get("nextCursor") or payload.get("nextPage") or payload.get("next")
         return {
             "success": True,
-            "operation": "fetch_open_alerts",
+            "operation": operation,
             "query": params["query"],
             "count": len(alerts),
             "alerts": alerts,

@@ -368,7 +368,9 @@ def main() -> int:
     print(f"\nStep 3: Querying Salesforce prod for {len(all_ids)} contact ID(s)…")
     id_clause = ", ".join(f"'{cid}'" for cid in sorted(all_ids))
     try:
-        sf_records = sf_query(f"SELECT Id, Name FROM Contact WHERE Id IN ({id_clause})")
+        sf_records = sf_query(
+            f"SELECT Id, Name, Division_Code__c, CreatedDate FROM Contact WHERE Id IN ({id_clause})"
+        )
     except Exception as exc:
         # The preflight check already confirmed `sf` is installed and
         # authenticated to SF_ORG, so a failure here is something that
@@ -377,13 +379,20 @@ def main() -> int:
         # an uncaught traceback.
         print(f"\nERROR: Salesforce query failed: {exc}")
         return 1
-    surviving: dict[str, str] = {r["Id"]: r["Name"] for r in sf_records}
+    surviving: dict[str, dict] = {
+        r["Id"]: {
+            "name": r["Name"],
+            "division": r.get("Division_Code__c") or "",
+            "created": r.get("CreatedDate") or "",
+        }
+        for r in sf_records
+    }
     print(f"  {len(surviving)} contact(s) still exist in Salesforce.")
 
     # -- Steps 4–5: process each alert -----------------------------------------
     print("\nStep 4–5: Applying brand rules and deciding actions…\n")
 
-    summary: list[tuple[str, str, str]] = []
+    summary: list[tuple[str, str, str, str]] = []
 
     for a in dup_alerts:
         alert_id = a["id"]
@@ -400,10 +409,37 @@ def main() -> int:
                 b = parse_brand(description, cid)
                 survivors.append({
                     "id": cid,
-                    "name": surviving[cid],
+                    "name": surviving[cid]["name"],
                     "brand": b,
                     "group": brand_group(b),
+                    "division": surviving[cid]["division"],
+                    "created": surviving[cid]["created"],
                 })
+
+        # Contact creation gap (oldest → newest among survivors)
+        survivor_dates = []
+        for s in survivors:
+            raw_dt = s["created"]
+            if raw_dt:
+                try:
+                    survivor_dates.append(
+                        datetime.fromisoformat(str(raw_dt).replace("Z", "+00:00"))
+                    )
+                except Exception:
+                    pass
+        if len(survivor_dates) >= 2:
+            survivor_dates.sort()
+            gap_seconds = (survivor_dates[-1] - survivor_dates[0]).total_seconds()
+            if gap_seconds < 60:
+                gap_label = f"{gap_seconds:.0f}s"
+            elif gap_seconds < 3600:
+                gap_label = f"{gap_seconds/60:.0f}m"
+            elif gap_seconds < 86400:
+                gap_label = f"{gap_seconds/3600:.1f}h"
+            else:
+                gap_label = f"{gap_seconds/86400:.0f}d"
+        else:
+            gap_label = "n/a"
 
         # --- Decision ---------------------------------------------------------
         if len(survivors) == 0:
@@ -421,7 +457,8 @@ def main() -> int:
 
         elif not has_duplicate(survivors):
             surviving_str = "; ".join(
-                f"{s['id']} - {s['brand']} - {s['name']}" for s in survivors
+                f"{s['id']} - {s['brand']} - {s['name']} ({s['division'] or 'no division'})"
+                for s in survivors
             )
             note = (
                 f"Verified in Salesforce prod. Surviving contact(s): {surviving_str}. "
@@ -467,15 +504,15 @@ def main() -> int:
             )
 
         print(f"  #{tiny_id}: {action}")
-        summary.append((f"#{tiny_id}", message[:68], action))
+        summary.append((f"#{tiny_id}", message[:55], gap_label, action))
 
     # -- Step 6: summary table -------------------------------------------------
-    print(f"\n{'='*100}")
-    print(f"{'Alert':<10} {'Message':<70} Action")
-    print(f"{'-'*100}")
-    for alert_col, msg_col, action_col in summary:
-        print(f"{alert_col:<10} {msg_col:<70} {action_col}")
-    print(f"{'='*100}")
+    print(f"\n{'='*110}")
+    print(f"{'Alert':<10} {'Message':<57} {'Gap':>7}  Action")
+    print(f"{'-'*110}")
+    for alert_col, msg_col, gap_col, action_col in summary:
+        print(f"{alert_col:<10} {msg_col:<57} {gap_col:>7}  {action_col}")
+    print(f"{'='*110}")
     print(f"\nDone. Mode: {mode_label}. Processed {len(dup_alerts)} alert(s).\n")
     return 0
 
