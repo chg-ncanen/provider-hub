@@ -33,74 +33,47 @@ what makes "resume" work for free (see "Resuming" below): whether the user just 
 another terminal, backgrounded this session and came back, or closed Claude entirely and returned
 later in a brand new conversation, re-running `status` picks up the real current state either way.
 
-### 1. Ask what to work on — status lives inside the menu, not above it
+### 1. Show a numbered status table, then ask which one
 
 Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
-directory), then go **straight** to an `AskUserQuestion` prompt — don't print a separate status
-summary first. A status paragraph followed immediately by a menu gets skipped: people's attention
-jumps straight to the interactive prompt, so anything written above it effectively goes unread.
-The only place status reliably gets seen is inside the menu itself.
+directory) and render **all six services** as one markdown table — a plain numbered pick, not an
+interactive tool prompt. (An earlier version of this skill used `AskUserQuestion`, but that tool
+caps at 4 options, which meant 2 of the 6 services always had to be demoted to "type the name
+yourself" — worse than just listing all 6 up front.) A table is also what actually gets read; a
+plain status paragraph followed by something else blends in and gets skipped.
 
-Use `AskUserQuestion` to ask **which one thing** to work on next — a real clickable prompt, not
-something to type free-form. Set `multiSelect: false`: handle exactly one service at a time, by
-design (matches the loop below — after handling one pick, re-run status and ask again, rather
-than trying to batch several installs from a single answer).
+One row per service, numbered so the user can reply with just a digit:
 
-`AskUserQuestion` allows at most 4 options per question, which is fewer than the 6 possible
-services — but it *always* renders its own built-in free-text option alongside whatever's listed
-(shown as "Type something" in the UI), so there's no need to spend one of the 4 slots manually
-restating an "Other"/"Something else" catch-all; that just duplicates something the tool already
-gives you for free while pushing a real service out of view. Build the option list like this:
-1. Walk the services in this fixed priority order — Salesforce prod, Salesforce UAT, Atlassian,
-   Grafana, LogRocket, LaunchDarkly — and skip only the ones that are **fully done**: actually
-   installed and ready. Salesforce prod/UAT lead since they're what a developer is most often here
-   for. **Atlassian stays in the list even when `org_connector.connected` is `true`** — it isn't
-   actually installed via this plugin in that case, so it's still a real, worthwhile option
-   ("already covered, but install anyway for the bundled skills"), not something to hide.
-2. Take the first 4 remaining as concrete options — all 4 slots, not 3 held back for a catch-all.
-   **Put the status tag directly in the `label`, not just in `description`** — people scan labels
-   and skip descriptions, so the label has to carry the state on its own: `"Salesforce prod —
-   needs dependencies"`, `"Grafana (gcx) — not installed"`, `"Atlassian — covered by org
-   connector"`. Use "needs dependencies" (not "not ready") for anything installed but blocked on
-   an unmet dependency — it says what's actually needed instead of just that something's wrong.
-   Reserve `description` for the one extra sentence of detail (which dependency is missing, why
-   it's not ready, etc.) — someone who only reads labels should still know the state of everything
-   at a glance. For Atlassian specifically when `org_connector.connected` is `true`, this "covered
-   by org connector" tag plus a one-sentence description is the *whole* explanation — don't also
-   list the six bundled skill names here; mention those only if the user asks what the plugin would
-   add on top.
-3. If more than 4 services remain after step 1, name the overflow ones directly in the
-   `question` text itself (e.g. "...also want LogRocket or LaunchDarkly? Just type the name.") —
-   the question text is what actually gets read, unlike a 5th option you can't create anyway.
-   If 4 or fewer remain, there's no overflow to mention, and if 3 or fewer remain, use the
-   trailing slot(s) for something like "Nothing right now" instead of leaving them empty.
+| # | Service | Status | Detail |
+|---|---|---|---|
+| 1 | Grafana (gcx) | Not installed | Also needs the gcx CLI — not found on PATH |
+| 2 | LogRocket | Not installed | — |
+| 3 | Atlassian | Covered by org connector | `claude.ai Atlassian` already connected |
+| 4 | Salesforce prod | Needs dependencies | sf CLI installed, not logged into 'prod' |
+| 5 | Salesforce UAT | Not installed | Needs the sf CLI |
+| 6 | LaunchDarkly | Not installed | — |
 
-If every service is already installed and ready, there's nothing to ask — say so, backed by a
-status table (below) rather than a bare sentence, since "everything's fine" is exactly the kind
-of claim someone will want to glance over and verify rather than take on faith. Atlassian being
-covered by an `org_connector` doesn't count toward this on its own — installing the plugin itself
-for its bundled skills is still a live, standing option, so mention that rather than treating
-Atlassian as settled.
+Use "Needs dependencies" (not "not ready") for anything installed but blocked on an unmet
+dependency — it says what's actually needed rather than just that something's wrong. For
+Atlassian, when `org_connector.connected` is `true`, "Covered by org connector" plus that one
+detail cell is the *whole* explanation — don't also list the six bundled skill names in the
+table; mention those only if the user asks what the plugin would add on top. **Atlassian stays in
+the table as a real, pickable row even when covered** — it isn't actually installed via this
+plugin in that case, so installing it anyway for the bundled skills is still a live option, not
+something to hide or grey out.
 
-**Whenever status needs to stand on its own** — the "nothing to ask" case above, or the user
-explicitly asking to just see status without picking anything ("what's installed", "show me
-companion tools status") — render it as a markdown table, not prose and not the old checkbox/tree
-style. A table is visually distinct enough to actually get read on its own, which a paragraph
-sitting by itself (with no menu to draw the eye) is not. One row per service — name, status, one
-line of detail:
+After the table, ask in plain text: "Which one would you like to work on? Reply with a number, or
+let me know if you're done." — handle exactly one pick at a time (matches the loop below: after
+handling one pick, re-run status and show a fresh table, rather than batching several installs
+from one answer).
 
-| Service | Status | Detail |
-|---|---|---|
-| Grafana (gcx) | Not installed | Also needs the gcx CLI — not found on PATH |
-| LogRocket | Not installed | — |
-| Atlassian | Covered by org connector | `claude.ai Atlassian` already connected |
-| Salesforce prod | Needs dependencies | sf CLI installed, not logged into 'prod' |
-| Salesforce UAT | Not installed | Needs the sf CLI |
-| LaunchDarkly | Not installed | — |
+If every service is already installed and ready, skip the question — just show the table and say
+there's nothing left to do. Atlassian being covered by an `org_connector` doesn't count toward
+this on its own, since installing it anyway is still a standing option.
 
-Once they answer (whether a listed option or free text), handle exactly that one pick (step 2/3),
-then loop back to step 1 for a fresh status check and a fresh single-pick menu — never show a
-menu again before that reply comes back.
+Once they answer with a number or a name, handle exactly that one pick (step 2/3), then loop back
+to step 1 for a fresh status table and a fresh question — never show the table or ask again
+before that reply comes back.
 
 ### 2. Handle an install pick
 
