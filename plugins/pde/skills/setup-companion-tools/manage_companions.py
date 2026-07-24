@@ -137,9 +137,17 @@ def sf_connected_aliases():
 def sf_dependency_status(alias):
     """Status of the `sf` CLI dependency, scoped to one org alias (prod/uat) —
     each Salesforce service needs its own alias logged in, even though the
-    CLI binary itself is shared. `blocking: True` — registering the MCP entry
-    before the CLI can actually authenticate would just leave a broken-looking
-    install sitting there, so `install` refuses until this is ready."""
+    CLI binary itself is shared.
+
+    `blocking` only when the CLI isn't installed at all — there'd be no way
+    to ever log in without it. Not logged into `alias` yet is non-blocking:
+    verified directly that `npx -y @salesforce/mcp --orgs <alias>` starts up
+    and registers all its tools cleanly even against a nonexistent/never-
+    authenticated alias (no crash, no broken half-registered state) — the
+    actual auth failure only surfaces if a tool like `run_soql_query` is
+    called before logging in, the same lazy-auth pattern as
+    atlassian/logrocket/launch-darkly, not the "broken install" this used to
+    assume."""
     if not sf_installed():
         return {
             "name": "sf CLI",
@@ -158,7 +166,7 @@ def sf_dependency_status(alias):
             if ready
             else f"sf CLI installed but not logged into '{alias}'"
         ),
-        "blocking": True,
+        "blocking": False,
     }
 
 
@@ -179,11 +187,16 @@ def gcx_configured():
 
 
 def gcx_dependency_status():
-    """Status of the `gcx` CLI dependency. `blocking: True` — the Grafana
-    plugin's MCP server shells out to this binary directly (this isn't the
-    hosted HTTP Grafana MCP), so registering the plugin before it's present
-    would leave the same kind of broken-looking install as sf would for
-    salesforce-prod — treat it the same way."""
+    """Status of the `gcx` CLI dependency.
+
+    `blocking` only when the CLI isn't installed at all — there'd be no way
+    to ever authenticate without it. Installed-but-not-authenticated is
+    non-blocking: the `gcx` plugin has no MCP server of its own (just skills
+    and agents that shell out to the `gcx` binary directly when actually
+    invoked), so installing it has zero runtime footprint — there's nothing
+    that can be left "broken" by installing ahead of authentication, same
+    reasoning verified directly for salesforce-prod/uat's MCP server in
+    sf_dependency_status."""
     if not gcx_installed():
         return {
             "name": "gcx CLI",
@@ -204,7 +217,7 @@ def gcx_dependency_status():
             "https://chg.grafana.net` (or this plugin's own setup-gcx skill) to connect it to "
             "this org's stack"
         ),
-        "blocking": True,
+        "blocking": False,
     }
 
 
@@ -358,6 +371,14 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("prod")],
         "org_alias": "prod",
+        "ready_hint": (
+            "Registered, but the sf CLI isn't logged into 'prod' yet — run `sf org login web "
+            "--alias prod` to connect it."
+        ),
+        "post_install": (
+            "Registers regardless of `sf` login state (its tools just error if called before "
+            "you're logged in) — run `sf org login web --alias prod` if you haven't already."
+        ),
     },
     "salesforce-uat": {
         "label": "Salesforce UAT — SOQL queries against the UAT org",
@@ -366,6 +387,14 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("uat")],
         "org_alias": "uat",
+        "ready_hint": (
+            "Registered, but the sf CLI isn't logged into 'uat' yet — run `sf org login web "
+            "--alias uat` to connect it."
+        ),
+        "post_install": (
+            "Registers regardless of `sf` login state (its tools just error if called before "
+            "you're logged in) — run `sf org login web --alias uat` if you haven't already."
+        ),
     },
 }
 

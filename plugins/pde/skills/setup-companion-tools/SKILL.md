@@ -81,13 +81,16 @@ follow-up step the way the picker rows do.
 **not** `ready`:
 - **Installed** (`installed: true`): `"Installed"`, regardless of `ready` — whether it actually
   works lives entirely in the `Connected` column now, not folded into this word.
-- **Not installed, and its `dependencies` entry isn't ready yet** (`grafana`, `salesforce-prod`,
-  `salesforce-uat` — check the dependency's own `ready`/`installed`, since `status` always
-  includes `dependencies` even when the service itself isn't installed): `"Not installed (will
-  install dependencies)"` — this tells the user up front that picking it walks through the
-  dependency first, not just a plain install.
-- **Not installed, and either it has no dependency or the dependency is already ready**: plain
-  `"Not installed"` — nothing stands between picking it and it working.
+- **Not installed, and its `dependencies` entry has `blocking: true` and isn't ready** (`grafana`,
+  `salesforce-prod`, `salesforce-uat`, when the underlying CLI isn't installed at all — `status`
+  always includes `dependencies` even when the service itself isn't installed): `"Not installed
+  (will install dependencies)"` — this tells the user up front that picking it walks through
+  installing the CLI first, not just a plain install. **Not authenticated is not the same as
+  blocking** — if the CLI is installed but just not logged in yet (`blocking: false`), that no
+  longer prevents install, so this doesn't apply; see plain `"Not installed"` below instead.
+- **Not installed, and either it has no dependency or the dependency has no unmet `blocking`
+  entry**: plain `"Not installed"` — nothing stands between picking it and it working (it may
+  still need authentication afterward, which is what the `Connected` column and step 3 are for).
 
 `Connected` for the 6 numbered rows comes from `ready`/`dependencies`/`org_connector` — **always
 resolve it to the actual concrete reason, never a vague placeholder**: if it isn't connected, say
@@ -135,15 +138,17 @@ below — nothing to install.
 
 Otherwise run `python3 manage_companions.py install <service> --cli <claude|copilot>`.
 
-**`install` will refuse to run for a service with an unmet blocking dependency** (currently: `sf`
-for salesforce-prod/uat, `gcx` for grafana — both work the same way; see step 3). Neither the
-Grafana plugin's MCP server nor salesforce-prod's is a hosted/HTTP server — both shell out to a
-local CLI directly, so registering either before its CLI is installed and authenticated would
-leave the same kind of broken-looking, half-working install sitting there. The result comes back
-as `{"success": false, "blocked": true, "unmet_dependencies": [...], ...}`
-instead of actually registering anything. When you see `blocked: true`, don't treat it as a
-generic failure — go straight to step 3 for each entry in `unmet_dependencies`, and once the user
-tells you they've fixed it, **retry the same `install` call** (don't just re-check status and
+**`install` only refuses to run when the underlying CLI isn't installed at all** (`sf` for
+salesforce-prod/uat, `gcx` for grafana) — there'd be no way to ever authenticate without it
+present. It does **not** wait for that CLI to be authenticated first: verified directly that the
+Salesforce MCP server starts up and registers all its tools cleanly even against a
+nonexistent/never-authenticated alias (no crash, no broken half-registered state), and the `gcx`
+plugin has no MCP server of its own to begin with (just skills/agents that shell out to `gcx` when
+actually invoked) — so in both cases, installing ahead of authentication is safe, same lazy-auth
+pattern as the OAuth-based services. When `install` *does* refuse (CLI missing), the result comes
+back as `{"success": false, "blocked": true, "unmet_dependencies": [...], ...}` instead of actually
+registering anything — go straight to step 3 for each entry in `unmet_dependencies`, and once the
+user tells you they've fixed it, **retry the same `install` call** (don't just re-check status and
 stop) — that's what actually registers the MCP/plugin once the dependency clears.
 
 Otherwise relay the result (`success`, what got installed, or the `error` if it failed for some
@@ -153,10 +158,11 @@ other reason).
 needed to actually finish setup:
 
 - If the result has a non-null `post_install` field (grafana, logrocket, atlassian,
-  launch-darkly): relay it verbatim, and be explicit that a **session restart** is required first
-  — the newly installed server/plugin isn't connected in the *current* session. Tell the user
-  plainly: "restart your session now; when you're back, just ask me to check companion tools
-  status again (or re-run this skill) and I'll pick up exactly where we left off."
+  launch-darkly, salesforce-prod, salesforce-uat): relay it verbatim, and be explicit that a
+  **session restart** is required first — the newly installed server/plugin isn't connected in the
+  *current* session. Tell the user plainly: "restart your session now; when you're back, just ask
+  me to check companion tools status again (or re-run this skill) and I'll pick up exactly where
+  we left off."
 - For any service with unmet dependencies (see step 3), handle those too before considering the
   service done.
 
@@ -256,17 +262,20 @@ yourself:
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream. No `org_connector` check either — that's a Claude Code-only concept.
-- **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management.
-  Same install mechanism on both CLIs. Its MCP server shells out to the local `gcx` CLI directly
-  (not a hosted HTTP MCP), so it needs the `gcx` CLI installed *and* authenticated to a stack
-  first — `install` refuses to register it otherwise, exactly like Salesforce below. This org's
-  stack is `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
+- **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management. No
+  bundled MCP server of its own — the skills/agent shell out to the local `gcx` CLI directly when
+  actually invoked. Same install mechanism on both CLIs. Needs the `gcx` CLI *installed* first —
+  `install` refuses otherwise, since there'd be no way to ever authenticate without it — but not
+  necessarily authenticated yet; installing the plugin has zero runtime footprint (no server to
+  leave in a broken state), so it's fine to install ahead of `gcx login`. This org's stack is
+  `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
 - **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
-- **Salesforce prod** — SOQL queries against the prod org. Needs the `sf` CLI authenticated to the
-  `prod` alias (see step 3 above). **`install` refuses to register this MCP until that's true** —
-  there's no point registering an entry that can't work yet.
-- **Salesforce UAT** — SOQL queries against the UAT org. Needs the `sf` CLI authenticated to the
-  `uat` alias (see step 3 above); `install` is gated the same way.
+- **Salesforce prod** — SOQL queries against the prod org, via `npx @salesforce/mcp`. Needs the
+  `sf` CLI *installed* first — `install` refuses otherwise — but not necessarily logged into the
+  `prod` alias yet: verified directly that the MCP server starts up and registers its tools
+  cleanly even against a never-authenticated alias, only erroring if a tool is actually called
+  before `sf org login web --alias prod` (see step 3 above).
+- **Salesforce UAT** — SOQL queries against the UAT org. Same as prod, scoped to the `uat` alias.
