@@ -113,13 +113,23 @@ def sf_installed():
     return rc == 0
 
 
-def sf_aliases():
-    rc, out, _ = run(["sf", "alias", "list", "--json"])
+def sf_connected_aliases():
+    """Aliases whose org is actually live-connected right now — `sf alias
+    list` (used previously) only proves an alias mapping was created at some
+    point, not that the session behind it is still valid: a revoked or
+    expired refresh token leaves the alias in place but the org unusable,
+    the same class of false-positive `gcx_configured()` had before it was
+    fixed to stop trusting an always-0 exit code. `sf org list --json`'s
+    per-org `connectedStatus` (checked across every org group it returns:
+    sandboxes, nonScratchOrgs, devHubs, scratchOrgs, other) is the live
+    signal instead."""
+    rc, out, _ = run(["sf", "org", "list", "--json"])
     if rc != 0:
         return set()
     try:
         d = json.loads(out)
-        return {a.get("alias") for a in d.get("result", [])}
+        orgs = [o for group in d.get("result", {}).values() if isinstance(group, list) for o in group]
+        return {o.get("alias") for o in orgs if o.get("connectedStatus") == "Connected"}
     except Exception:
         return set()
 
@@ -138,7 +148,7 @@ def sf_dependency_status(alias):
             "detail": "sf CLI not found on PATH",
             "blocking": True,
         }
-    ready = alias in sf_aliases()
+    ready = alias in sf_connected_aliases()
     return {
         "name": "sf CLI",
         "installed": True,
@@ -158,10 +168,14 @@ def gcx_installed():
 
 
 def gcx_configured():
-    # `gcx config check` verifies the current context is actually authenticated
-    # and connected to a Grafana Cloud stack, not just that the binary exists.
-    rc, _, _ = run(["gcx", "config", "check"])
-    return rc == 0
+    # `gcx config check` exits 0 unconditionally — verified this returns rc==0
+    # even against an empty/invalid config dir with no context at all — so the
+    # exit code carries no signal. "Connectivity: online" in its text output is
+    # the actual proof the current context is valid, authenticated, and
+    # reachable; anything else (invalid config, connectivity skipped/offline)
+    # means it isn't ready.
+    _, out, _ = run(["gcx", "config", "check"])
+    return "connectivity: online" in out.lower()
 
 
 def gcx_dependency_status():
@@ -186,10 +200,65 @@ def gcx_dependency_status():
         "detail": (
             "gcx CLI installed and authenticated to a Grafana Cloud stack"
             if ready
-            else "gcx CLI installed but not authenticated — run `gcx login` (or this plugin's "
-            "own setup-gcx skill) to connect it to a stack"
+            else "gcx CLI installed but not authenticated — run `gcx login --server "
+            "https://chg.grafana.net` (or this plugin's own setup-gcx skill) to connect it to "
+            "this org's stack"
         ),
         "blocking": True,
+    }
+
+
+def claude_mcp_entry_connected(name_prefix):
+    """Live connection health for one of this skill's own MCP registrations —
+    logrocket/launch-darkly/atlassian authenticate lazily via OAuth on first
+    real tool call, so there's no local CLI to ask ahead of time the way gcx
+    or sf have; `claude mcp list`'s own per-entry health probe (read-only, no
+    side effects, doesn't itself trigger a login) is the only live signal.
+    `name_prefix` is the exact bare MCP name (e.g. "launch-darkly") or a
+    "plugin:<plugin_name>:" prefix for plugin-bundled servers (e.g.
+    "plugin:logrocket:"). Returns True/False, or None if no matching entry is
+    registered at all (shouldn't happen once `installed` is true, but the
+    caller should treat None as "unknown" rather than assuming either way)."""
+    rc, out, _ = run(["claude", "mcp", "list"])
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        if ": " not in line:
+            continue
+        name = line.split(": ", 1)[0].strip()
+        if name == name_prefix or name.startswith(name_prefix):
+            return "✔" in line
+    return None
+
+
+def oauth_session_status(name_prefix):
+    """Synthetic non-blocking 'dependency' entry (reusing the same
+    dependencies/ready machinery cmd_status already applies to gcx/sf) that
+    represents whether a lazily-OAuth'd entry has actually completed its
+    browser handshake yet. `blocking: False` — unlike gcx/sf, this never
+    blocks `install`, since the MCP entry is already registered regardless;
+    it only affects whether the numbered row shows "Installed" plain or
+    "Installed — check dependency" per SKILL.md's status mapping."""
+    connected = claude_mcp_entry_connected(name_prefix)
+    if connected is None:
+        return {
+            "name": "OAuth session",
+            "installed": True,
+            "ready": None,
+            "detail": "couldn't determine — `claude mcp list` didn't show this entry",
+            "blocking": False,
+        }
+    return {
+        "name": "OAuth session",
+        "installed": True,
+        "ready": connected,
+        "detail": (
+            "authenticated"
+            if connected
+            else "registered but not yet authenticated — the first real tool call will "
+            "trigger an interactive OAuth prompt (or call one proactively to trigger it now)"
+        ),
+        "blocking": False,
     }
 
 
@@ -224,6 +293,7 @@ SERVICES = {
         "plugin_name": "atlassian",
         "mcp_name": "chg-atlassian",
         "mcp_url": "https://mcp.atlassian.com/v1/mcp",
+        "oauth_session_match": "plugin:atlassian:",
         "org_connector_check": lambda: claude_org_connector_status("atlassian"),
         "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
@@ -241,7 +311,8 @@ SERVICES = {
         "dependencies": lambda: [gcx_dependency_status()],
         "ready_hint": (
             "Registered, but the gcx CLI dependency isn't authenticated right now — run "
-            "`gcx login` (or this plugin's own setup-gcx skill) to reconnect it to a stack."
+            "`gcx login --server https://chg.grafana.net` (or this plugin's own setup-gcx skill) "
+            "to reconnect it to this org's stack."
         ),
         "post_install": (
             "install only succeeds once the gcx CLI dependency is already installed and "
@@ -256,6 +327,7 @@ SERVICES = {
         "kind": "mcp",
         "mcp_name": "launch-darkly",
         "mcp_url": "https://mcp.launchdarkly.com/mcp/launchdarkly",
+        "oauth_session_match": "launch-darkly",
         "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
@@ -270,6 +342,7 @@ SERVICES = {
         "marketplace_source": "logrocket/logrocket-claude-plugin",
         "marketplace_name": "logrocket",
         "plugin_name": "logrocket",
+        "oauth_session_match": "plugin:logrocket:",
         "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
         "post_install": (
             "Authenticates via an interactive OAuth prompt automatically the first time one of "
@@ -370,6 +443,8 @@ def cmd_status(cli):
     for key, svc in SERVICES.items():
         installed = is_installed(key, cli)
         dependencies = svc["dependencies"]() if "dependencies" in svc else []
+        if installed and cli == "claude" and svc.get("oauth_session_match"):
+            dependencies = dependencies + [oauth_session_status(svc["oauth_session_match"])]
 
         ready = None
         if installed:

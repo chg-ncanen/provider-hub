@@ -61,7 +61,7 @@ just explain it isn't installable here rather than trying to do anything with it
 | # | Service | Status | Description |
 |---|---|---|---|
 | — | pde-mcp | Ready | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
-| 1 | Atlassian MCP | Covered by org connector | Jira/Confluence search, issue creation, sprint management |
+| 1 | Atlassian MCP | Covered by org connector, ready | Jira/Confluence search, issue creation, sprint management |
 | 2 | Grafana (gcx) MCP | Not installed (will install dependencies) | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | Not installed | Feature flag management |
 | 4 | LogRocket MCP | Not installed | Session replay, metrics, issue search |
@@ -86,16 +86,20 @@ picker rows do.
   dependency first, not just a plain install.
 - **Not installed, and either it has no dependency or the dependency is already ready**: plain
   `"Not installed"` — nothing stands between picking it and it working.
-- **Installed but `ready: false`** (the dependency regressed after install — e.g. someone logged
-  out of `sf` later): `"Installed — check dependency"`, a distinct tag from the not-installed
-  case since re-registering isn't what's needed here, just re-authenticating.
-- **Atlassian, when `org_connector.connected` is `true`**: `"Covered by org connector"`, same as
-  before.
+- **Installed but `ready: false`**: `"Installed — check dependency"`, a distinct tag from the
+  not-installed case since re-registering isn't what's needed here, just re-authenticating. Covers
+  two different situations that render the same way: a CLI dependency regressing after install
+  (e.g. someone logged out of `sf` later), and a lazily-OAuth'd entry (atlassian, launch-darkly,
+  logrocket) that's never been authenticated yet — `status` checks the latter's live connection
+  state via `claude mcp list` (Claude Code only; not checked on Copilot CLI), surfaced as a
+  synthetic `"OAuth session"` entry in `dependencies` the same way `gcx`/`sf` appear.
+- **Atlassian, when `org_connector.connected` is `true`**: `"Covered by org connector, ready"` —
+  the `, ready` makes explicit that the connector is actually authenticated, not merely present.
 
 Keep `Description` to what the service generally does — **don't fold dependency specifics in
 there** (e.g. don't write "sf CLI not logged into 'prod'" in this column); `Status` already flags
 that something needs doing, and once the user actually picks the row, step 2/3 explains exactly
-what and how. For Atlassian, `Status` saying "Covered by org connector" is sufficient on its own —
+what and how. For Atlassian, `Status` saying "Covered by org connector, ready" is sufficient on its own —
 don't also list the six bundled skill names anywhere in the table; mention those only if the user
 asks what the plugin would add on top. **Atlassian stays in the table as a real, pickable row
 even when covered** — it isn't actually installed via this plugin in that case, so installing it
@@ -194,11 +198,14 @@ needs to do both.
   isn't logged in, or `gcx` CLI present but `gcx config check` fails: both are always something
   only the human can do (interactive browser login) — same box format, headed e.g. "MANUAL STEP
   NEEDED — Step 2 of 2: log into Salesforce" with the exact command (`sf org login web --alias
-  prod`/`--alias uat`, or `gcx login` for Grafana).
-- **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): after
-  a restart, you can proactively call one of that service's tools right away (e.g. "list my
-  feature flags") to trigger the login immediately instead of leaving the user to stumble into it
-  later — ask first, since it'll pop an auth prompt.
+  prod`/`--alias uat`, or `gcx login --server https://chg.grafana.net` for Grafana — that's this
+  org's Grafana Cloud stack; don't let the user log into a different one).
+- **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): `status`
+  shows these as `"Installed — check dependency"` (not plain `"Installed"`) until the entry's own
+  live connection state — read from `claude mcp list`, not just "the plugin is registered" — comes
+  back connected. While it's not: after a restart, you can proactively call one of that service's
+  tools right away (e.g. "list my feature flags") to trigger the login immediately instead of
+  leaving the user to stumble into it later — ask first, since it'll pop an auth prompt.
 - **Atlassian specifically**: check `org_connector` from `status` first. If it's present and
   `connected: true`, say so plainly before pushing OAuth on the plugin's own entry — a connected
   `claude.ai`-configured connector already provides the same Jira/Confluence tools, so
@@ -244,7 +251,8 @@ yourself:
 - **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management.
   Same install mechanism on both CLIs. Its MCP server shells out to the local `gcx` CLI directly
   (not a hosted HTTP MCP), so it needs the `gcx` CLI installed *and* authenticated to a stack
-  first — `install` refuses to register it otherwise, exactly like Salesforce below.
+  first — `install` refuses to register it otherwise, exactly like Salesforce below. This org's
+  stack is `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
