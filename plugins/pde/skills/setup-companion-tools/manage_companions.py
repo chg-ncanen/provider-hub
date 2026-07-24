@@ -34,7 +34,16 @@ def find_plugin_root(plugin_name, cli):
     MCP server); a plain shell invocation of this script (which is how it's
     actually run) never has them. Mirrors how claude_plugin_installed/
     copilot_plugin_installed already detect installation, but also captures
-    the install path those helpers only use internally."""
+    the install path those helpers only use internally.
+
+    cwd-sensitive for project-scoped plugins: `claude plugin list --json`
+    reports `enabled: false` and omits `mcpServers` for a project-scoped
+    entry whenever the invoking process's cwd doesn't match the `projectPath`
+    it was installed for (confirmed in a sandboxed `--scope project` install
+    — the entry itself always appears, only `enabled`/`mcpServers` change).
+    This function inherits whatever cwd this script was launched from, so the
+    caller must not `cd` away from the user's real project directory first —
+    see setup-companion-tools/SKILL.md's note on this."""
     if cli == "claude":
         rc, out, _ = run(["claude", "plugin", "list", "--json"])
         if rc != 0:
@@ -293,7 +302,11 @@ def claude_plugin_installed(plugin_name):
     full name@marketplace id — a plugin installed from a differently-named or
     re-added marketplace should still count as installed. Also require
     `enabled` (defaulting true if the field is ever absent), since a disabled
-    plugin's MCP server won't actually be reachable."""
+    plugin's MCP server won't actually be reachable.
+
+    Same cwd-sensitivity as find_plugin_root() above applies here for any
+    project-scoped install of atlassian/grafana/logrocket — this must be run
+    without the caller having `cd`-ed away from the user's real project dir."""
     rc, out, _ = run(["claude", "plugin", "list", "--json"])
     if rc != 0:
         return False

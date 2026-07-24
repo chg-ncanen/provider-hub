@@ -35,8 +35,13 @@ later in a brand new conversation, re-running `status` picks up the real current
 
 ### 1. Show a numbered status table, then ask which one
 
-Run `python3 manage_companions.py status --cli <claude|copilot>` (from this skill's own
-directory) and render **all six companion services, plus `pde_mcp` itself**, as one markdown
+Run `python3 <this skill's own directory>/manage_companions.py status --cli <claude|copilot>`
+**using its full path — do not `cd` into the skill's directory first.** The script shells out to
+`claude plugin list --json`, which reports a project-scoped plugin's `enabled`/`mcpServers` fields
+relative to the caller's cwd (`enabled: false` and no `mcpServers` when cwd doesn't match the
+project it was installed for) — `cd`-ing away from the user's actual project before running this
+would make `pde_mcp_status()` misreport `pde` as not found even when it's installed and enabled.
+Render the result as **all six companion services, plus `pde_mcp` itself**, as one markdown
 table — a plain numbered pick, not an interactive tool prompt. (An earlier version of this skill
 used `AskUserQuestion`, but that tool caps at 4 options, which meant 2 of the 6 services always
 had to be demoted to "type the name yourself" — worse than just listing all 6 up front.) A table
