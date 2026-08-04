@@ -23,6 +23,14 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
   `pde` is installed). Installing `pde` shouldn't silently pull in other teams'/vendors' plugins
   without you choosing to; whether a particular skill in this plugin needs one of these installed
   is that skill's own concern to check.
+- **`skills/dependabot-triage/`** — Skill that triages GitHub Dependabot alerts by whether each
+  flagged package is actually reachable at runtime, dismisses confirmed non-actionable alerts on
+  GitHub, and files one Jira ticket per repo with the full report. Needs `gh` (GitHub CLI)
+  authenticated with write access to the target repo's security alerts, plus an Atlassian/Jira
+  MCP connector — not bundled here, see that skill's README (`setup-companion-tools`'s Atlassian
+  option is the easiest way to get one registered). Ships two companion batch scripts
+  (`list_target_repos.py`, `run_batch.py`) for triaging many repos in parallel — see that skill's
+  README for usage.
 
 ## Installing
 
@@ -116,11 +124,14 @@ update.
   and guide you through both — ask to set up `salesforce-prod`, or run its `dep-guidance sf`
   subcommand directly, which tests this machine and returns one decisive, sudo-safe install
   command rather than a menu of options.
+- For `dependabot-triage`: `gh`, `git`, and `npm` on `PATH`, `gh auth status` passing with write
+  access to the target repo's Dependabot alerts, and an Atlassian/Jira MCP connector registered
+  (again, `setup-companion-tools` can help — pick Atlassian).
 
 ## After installing: what to actually do
 
-Both skills are `user-invocable`, so you can either ask for them in natural language or invoke them
-directly by name:
+All three skills are `user-invocable`, so you can either ask for them in natural language or
+invoke them directly by name:
 
 - **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
   are available?") — a guided wizard for installing Atlassian, Grafana, LaunchDarkly, LogRocket,
@@ -145,5 +156,11 @@ directly by name:
   `skills/resolve-duplicate-contact-alerts/run.py` for you; running it yourself directly
   (`python run.py` from that directory) works the same way and is useful for debugging — it checks
   its own dependencies up front and reports exactly what's missing.
+- **`/pde:dependabot-triage`** (or ask: "triage the dependabot alerts for this repo") — runs the
+  reachability-based triage workflow against the current repo, then dismisses confirmed
+  non-actionable alerts and files one Jira ticket per repo. For triaging many repos at once, use
+  the two companion scripts directly: `python3 skills/dependabot-triage/list_target_repos.py` to
+  find which repos are in scope, then `python3 skills/dependabot-triage/run_batch.py <base-path>`
+  to clone/install/triage them in parallel (report-only — see that skill's README for details).
 - Anything else — `list_alerts`, `get_alert`, `find_emails`, etc. — is available as soon as
   `pde-mcp` is connected; just ask for what you want (e.g. "show me open P1 alerts").
