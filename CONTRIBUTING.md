@@ -4,134 +4,62 @@ Thank you for contributing! This guide explains where things go and how the revi
 
 ## Content Types & Where They Live
 
-### AI Skills
-**Directory:** `ai-skills/team/<area>/` or `ai-skills/user/<username>/`
+### Plugins
+**Directory:** `plugins/<plugin-name>/`
 
-AI skills extend Copilot and autonomous agents. Each skill needs:
-- `SKILL.md` — Metadata file (name, description, capabilities)
-- Supporting files (Python scripts, configs, data)
-- `README.md` — Usage and integration guide
+A plugin bundles everything needed to install and use a skill (or set of skills) from *any*
+project — skill(s), the MCP server(s) they need, hooks, and setup scripts. Both Claude Code and
+GitHub Copilot CLI install from the same `.claude-plugin/` layout, no forking needed.
 
-**Naming:** Prefix with team/area and function, e.g., `pde-ai-ticket-discovery`
+**Include:**
+- `.claude-plugin/plugin.json` — plugin metadata (`name` is the actual install/namespace identity,
+  used for `claude plugin install <name>@provider-hub` and skill invocation as
+  `/<name>:<skill-name>` — it does not need to match the folder name, but keep them in sync to avoid
+  confusion)
+- `skills/<skill-name>/` — each with a `SKILL.md` (see [Skill Metadata Format](#skill-metadata-format-skillmd))
+- `.mcp.json` / `mcp-servers/` — any MCP server(s) the skills depend on
+- `README.md` — what it provides, required credentials, how to install and use it
 
 **Example:**
 ```
-ai-skills/team/pde/
-  pde-ai-ticket-discovery/
-    ├── SKILL.md
-    ├── discovery.py
-    └── README.md
+plugins/pde-ops-tools/
+  ├── .claude-plugin/plugin.json
+  ├── .mcp.json
+  ├── mcp-servers/pde-mcp/
+  ├── skills/
+  │   ├── resolve-duplicate-contact-alerts/
+  │   └── dependabot-triage/
+  └── README.md
 ```
 
-### APIs
-**Directory:** `apis/team/<area>/` or `apis/user/<username>/`
+- A plugin can't reference files outside its own directory once installed — anything it needs must
+  either live inside `plugins/<plugin-name>/` or be a real package dependency (see Shared below).
 
-Share API specs, SDKs, and integrations.
+### Shared
+**Directory:** `shared/<name>/`
 
-**Include:**
-- OpenAPI spec (YAML or JSON)
-- SDK examples (if applicable)
-- Integration guide
-- `README.md`
-
-### MCP Servers
-**Directory:** `mcp/team/<area>/` or `mcp/user/<username>/`
-
-Model Context Protocol server configs and definitions.
-
-**Include:**
-- MCP server config/definition
-- Tools exposed by the server
-- Setup instructions
-- `README.md`
-
-**If this needs to be usable outside this repo** (most team MCP servers/skills do — see
-[Distributing as a plugin](#distributing-as-a-plugin) below), the actual server code and the skill(s)
-that use it move into `plugins/<area>/` instead of staying split across `ai-skills/`/`mcp/`. Shared
-library code it depends on (`tools/team/<area>/...`) stays put and becomes a normal pip/package
-dependency — don't duplicate that source into the plugin.
-
-### Scripts
-**Directory:** `scripts/team/<area>/` or `scripts/user/<username>/`
-
-Automation scripts and CLI tools (local use only, not deployed).
-
-**Include:**
-- Script files (Python, Bash, Node, etc.)
-- `requirements.txt` / `package.json` / dependencies
-- Usage examples
-- `README.md`
-
-### Services
-**Directory:** `services/team/<area>/` or `services/user/<username>/`
-
-Deployable services: REST APIs, agent schedulers, MCP servers, autonomous agents.
-
-**Include:**
-- Source code (`src/`, `main.py`, etc.)
-- `Dockerfile` — required for all services
-- `docker-compose.yml` (optional, for local dev)
-- Kubernetes manifests or infra files (if applicable)
-- Deployment guide in `README.md`
-
-**Example:**
-```
-services/team/pde/agent-scheduler/
-  ├── src/
-  │   ├── __init__.py
-  │   └── scheduler.py
-  ├── Dockerfile
-  ├── docker-compose.yml
-  ├── requirements.txt
-  └── README.md (deployment instructions)
-```
-
-### Tools
-**Directory:** `tools/team/<area>/` or `tools/user/<username>/`
-
-Reusable utilities and libraries (local use, not deployed).
+Library code that a plugin depends on but that isn't itself installable — e.g. a Python package
+pulled in via `requirements.txt` rather than bundled as a copy. Not reachable from outside this
+repo; only useful as a dependency of something under `plugins/`.
 
 **Include:**
 - Source files
-- Dependency specs
-- Documentation
+- Dependency/package metadata (`pyproject.toml`, etc.)
 - `README.md`
 
-## Distributing as a plugin
+**Example:** `shared/pde-ops-api` — depended on by `plugins/pde-ops-tools/mcp-servers/pde-mcp` via
+`requirements.txt` (`pde-ops-api @ git+https://github.com/chg-ncanen/provider-hub.git#subdirectory=shared/pde-ops-api`),
+not copied in.
 
-`ai-skills/`, `mcp/`, and `tools/` are organized by content type for authoring and review, but they
-aren't reachable from someone else's session unless `provider-hub` happens to be their cwd. If a
-skill (and the MCP server(s) it needs) should work from *any* project, package it as a plugin — both
-Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layout, no forking needed:
-
-- Create `plugins/<area>/` with a self-contained `.claude-plugin/plugin.json`, `skills/`, and
-  `.mcp.json`/`mcp-servers/` — see `plugins/pde/` for a working example.
-- List it in the root `.claude-plugin/marketplace.json`.
-- Keep genuinely reusable library code (not glue/wrapper code) under `tools/team/<area>/` as an
-  independently pip-installable package, and have the plugin's MCP server depend on it via
-  `requirements.txt` instead of copying its source in — a plugin can't reference files outside its
-  own directory once installed, so anything it needs must either live inside `plugins/<area>/` or be
-  a real package dependency.
-- Content that doesn't need standalone distribution (experiments, scripts, services, user-scoped
-  tools) has no reason to move — it stays under its existing content-type directory.
-- Avoid Claude-Code-only mechanisms where a cross-CLI equivalent matters: e.g. `${CLAUDE_PLUGIN_ROOT}`
-  resolves on both CLIs, but `${CLAUDE_PLUGIN_DATA}` and `userConfig`-based credential prompts don't
-  exist on Copilot CLI — see `plugins/pde/scripts/bootstrap-deps.sh` for the pattern that works on
-  both.
+If something doesn't need standalone distribution and isn't depended on by a plugin, it likely
+doesn't belong in this repo at all — keep experiments and one-off scripts in their own project until
+they're ready to become a real plugin or shared dependency.
 
 ## Ownership Model
 
-### Team Areas (`team/provider/`, `team/pde/`, `team/web/`)
-- Shared across the team
-- Require review from CODEOWNERS before merge
-- Should be well-documented and maintained
-- Best for widely-used, stable code
-
-### User Areas (`user/<username>/`)
-- Individual contributions
-- Self-reviewed (PRs just need author approval)
-- Opt-in for team adoption
-- Good for experiments and personal tools
+`plugins/` and `shared/` are team-owned — changes require review from CODEOWNERS (see
+`.github/CODEOWNERS`). As new areas/teams contribute, add a line per top-level plugin or shared
+package rather than reintroducing a team/user directory split.
 
 ## How to Contribute
 
@@ -140,12 +68,11 @@ Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layou
    git checkout -b feat/my-skill-name
    ```
 
-2. **Add your content** in the appropriate directory following the structure above
+2. **Add your content** under `plugins/<plugin-name>/` or `shared/<name>/`
 
 3. **Include documentation**
    - README.md explaining what it is and how to use it
    - For skills: SKILL.md with metadata
-   - For services: deployment guide
 
 4. **No secrets!**
    - Never commit credentials, API keys, or sensitive data
@@ -153,12 +80,10 @@ Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layou
 
 5. **Submit a PR**
    - Use the PR template (auto-loaded)
-   - Specify content type and ownership area
    - Fill out the checklist
 
 6. **Get reviewed**
-   - Team areas: CODEOWNERS will review
-   - User areas: self-reviewed
+   - CODEOWNERS will review
    - Feedback? Update and re-request review
 
 7. **Merge & celebrate**
@@ -169,7 +94,7 @@ Claude Code and GitHub Copilot CLI install from the same `.claude-plugin/` layou
 
 - **Directories:** lowercase with hyphens (`my-skill-name`, NOT `my_skill_name` or `MySkillName`)
 - **Files:** lowercase with extensions (`.py`, `.sh`, `.md`)
-- **Special:** `.gitkeep` in empty directories to preserve structure
+- **Plugins & skills:** prefix with team/area (e.g., `pde-ops-tools`, `pde-ai-ticket-discovery`)
 
 ## Skill Metadata Format (SKILL.md)
 
@@ -208,21 +133,15 @@ Brief usage example or link to README.md
 
 ## Review Checklist (for CODEOWNERS)
 
-- [ ] Content is in the correct directory (team/ vs user/)
+- [ ] Content is in the correct directory (`plugins/` vs `shared/`)
 - [ ] README.md is present and clear
 - [ ] No hardcoded secrets or credentials
 - [ ] Naming conventions followed
 - [ ] For skills: SKILL.md has valid YAML frontmatter (`name` matches directory, `description` states the trigger condition)
-- [ ] For services: Dockerfile and deployment docs included
-- [ ] Code is well-commented where needed
 - [ ] Dependencies are documented
 
 ## Questions?
 
-- Check the README in the relevant content-type directory
+- Check the README in the relevant `plugins/<name>/` or `shared/<name>/` directory
 - Review existing examples in the same area
 - Open an issue for clarification
-
----
-
-**Last updated:** Repository initialization

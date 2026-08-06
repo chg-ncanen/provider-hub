@@ -2,24 +2,16 @@
 
 ## Overview
 
-`provider-hub` is a shared team repository for AI skills, MCP server configs, APIs, scripts,
-services, and tools — a central location for team-shared and individual contributions:
-- **AI Skills** — Copilot and autonomous agent extensions
-- **MCP Servers** — Model Context Protocol server configs
-- **APIs** — OpenAPI specs, SDKs, integrations
-- **Scripts** — Automation and CLI tools
-- **Services** — Deployable applications (schedulers, agents, REST APIs)
-- **Tools** — Reusable utilities and libraries
+`provider-hub` is a shared team repository for two kinds of content:
+- **`plugins/`** — installable units (skills + the MCP server(s) they need), installable via Claude
+  Code or GitHub Copilot CLI from any project, regardless of your working directory (see
+  [Installing & Using](#installing--using) below).
+- **`shared/`** — library code that plugins depend on but that isn't itself installable (e.g. a
+  Python package pulled in via `requirements.txt`). Not reachable from outside this repo.
 
-Most of this content (`ai-skills/`, `mcp/`, `apis/`, `scripts/`, `services/`, `tools/`) is organized
-for authoring and review, and isn't reachable from outside this repo. Anything meant to be
-*installed and used* from any other project — a skill plus the MCP server(s) it needs — ships as a
-**plugin** under `plugins/`, installable via Claude Code or GitHub Copilot CLI regardless of your
-working directory (see [Installing & Using](#installing--using) below).
-
-Right now the only working example is the `pde` plugin (JSM alert management + the
-`resolve-duplicate-contact-alerts` skill). Everything else is scaffolding awaiting contributions —
-see [Repository Structure](#repository-structure).
+Right now the only working example is the `pde-ops-tools` plugin (JSM alert management + the
+`resolve-duplicate-contact-alerts` and `dependabot-triage` skills), plus `shared/pde-ops-api`, the
+library it depends on. See [Repository Structure](#repository-structure).
 
 ## Installing & Using
 
@@ -38,14 +30,14 @@ marketplace has first:
 
 ```bash
 # Claude Code — direct install
-/plugin install pde@provider-hub
+/plugin install pde-ops-tools@provider-hub
 
 # Claude Code — browse instead: run /plugin with no arguments, open the "Discover" tab
 # (lists plugins from every marketplace you've added, provider-hub included), and select
-# pde from there. Functionally identical to the direct command above.
+# pde-ops-tools from there. Functionally identical to the direct command above.
 
 # Copilot CLI — direct install
-copilot plugin install pde@provider-hub
+copilot plugin install pde-ops-tools@provider-hub
 
 # Copilot CLI — browse instead:
 copilot plugin marketplace browse provider-hub
@@ -55,24 +47,20 @@ Plugins register globally on install, independent of your working directory — 
 `.claude-plugin/` manifest works for both CLIs, since both recognize that layout.
 
 **Then start a new session** (close and reopen) before using it — installing alone isn't enough for
-plugins with a dependency-setup hook. See `plugins/pde/README.md` for what it provides, required
-credentials, dependency setup (handled automatically), how to pull in optional companion MCPs
-(Grafana, LogRocket, Atlassian, Salesforce, LaunchDarkly), and how to actually use it once installed.
+plugins with a dependency-setup hook. See `plugins/pde-ops-tools/README.md` for what it provides,
+required credentials, dependency setup (handled automatically), how to pull in optional companion
+MCPs (Grafana, LogRocket, Atlassian, Salesforce, LaunchDarkly), and how to actually use it once
+installed.
 
-As more plugins are added under `plugins/`, install any of them the same way, swapping `pde` for the
-plugin's name.
+As more plugins are added under `plugins/`, install any of them the same way, swapping
+`pde-ops-tools` for the plugin's name.
 
 ## Repository Structure
 
 ```
 provider-hub/
-├── ai-skills/       Team & user AI skills
-├── apis/            API specs and integrations
-├── mcp/             MCP server configs
-├── scripts/         Automation scripts
-├── services/        Deployable services
-├── tools/           Reusable utilities
 ├── plugins/         Installable plugins (see "Installing & Using" above)
+├── shared/          Library code plugins depend on, not itself installable
 │
 ├── .claude-plugin/
 │   └── marketplace.json              # Lists the plugins under plugins/
@@ -85,45 +73,38 @@ provider-hub/
 └── .gitignore
 ```
 
-Each content type has:
-- `team/` — shared across the team (organized by area: provider, pde, web)
-- `user/` — individual contributions (organized by username)
-
 ## Packaging something as a plugin
 
 If you're contributing a skill (and the MCP server(s) it needs) that should work from *any* project,
-package it as a plugin under `plugins/<team>/`, listed in `.claude-plugin/marketplace.json` — see
-`plugins/pde/` for a working example, and [CONTRIBUTING.md](CONTRIBUTING.md) for the full pattern.
+package it as a plugin under `plugins/<name>/`, listed in `.claude-plugin/marketplace.json` — see
+`plugins/pde-ops-tools/` for a working example, and [CONTRIBUTING.md](CONTRIBUTING.md) for the full
+pattern.
 
-`ai-skills/`, `mcp/`, `tools/`, etc. remain the right home for reusable libraries, scripts, services,
-and anything that doesn't need standalone distribution — a plugin assembles the pieces it needs from
-there (e.g. `plugins/pde/mcp-servers/pde-mcp` depends on `tools/team/pde/pde-ops-api` as a normal pip
-dependency, not a copy).
+`shared/` remains the right home for library code that doesn't need standalone distribution — a
+plugin depends on it as a normal package dependency rather than copying it in (e.g.
+`plugins/pde-ops-tools/mcp-servers/pde-mcp` depends on `shared/pde-ops-api` via `requirements.txt`).
 
 ## How to Contribute
 
 1. **Identify the right place:** See [CONTRIBUTING.md](CONTRIBUTING.md) for details
-2. **Create your content:** Add files under the appropriate path
+2. **Create your content:** Add files under `plugins/` or `shared/`
 3. **Write documentation:** Include a README explaining what it is and how to use it
 4. **Submit a PR:** Follow the checklist in the PR template
-5. **Get reviewed:** CODEOWNERS will review based on content type and area
+5. **Get reviewed:** CODEOWNERS will review
 
 ## Governance
 
 - **CODEOWNERS** enforces review requirements (see `.github/CODEOWNERS`)
-- **Team areas** require team member approval
-- **User areas** are self-reviewed but should follow conventions
-- **Services** must include deployment docs and Dockerfile
+- **`plugins/` and `shared/`** are team-owned and require review before merge
 
 ## Naming & Conventions
 
+- **Plugins:** Prefix with team/area (e.g., `pde-ops-tools`)
 - **Skills:** Prefix with team/area (e.g., `pde-ai-ticket-discovery`)
-- **Services:** Clear, descriptive name (e.g., `agent-scheduler`, `pde-mcp`)
-- **Scripts:** Lowercase with hyphens (e.g., `sync-contacts`, `deploy-worker`)
 - **Directories:** Lowercase with hyphens (no spaces or special chars)
 
 ## Support
 
-- Questions? Check the README in the relevant content-type directory
+- Questions? Check the README in `plugins/<name>/` or `shared/<name>/`
 - Issues? Open a GitHub issue
 - PRs welcome! Follow [CONTRIBUTING.md](CONTRIBUTING.md)

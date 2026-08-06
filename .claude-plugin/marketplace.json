@@ -7,8 +7,8 @@
   "description": "Team-shared Claude Code plugins from provider-hub.",
   "plugins": [
     {
-      "name": "pde",
-      "source": "./plugins/pde",
+      "name": "pde-ops-tools",
+      "source": "./plugins/pde-ops-tools",
       "description": "JSM alert management (pde-mcp MCP server), the resolve-duplicate-contact-alerts skill, and the dependabot-triage skill."
     }
   ]
