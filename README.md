@@ -30,14 +30,14 @@ marketplace has first:
 
 ```bash
 # Claude Code — direct install
-/plugin install pde-ops-tools@provider-hub
+/plugin install pde@provider-hub
 
 # Claude Code — browse instead: run /plugin with no arguments, open the "Discover" tab
 # (lists plugins from every marketplace you've added, provider-hub included), and select
-# pde-ops-tools from there. Functionally identical to the direct command above.
+# pde from there. Functionally identical to the direct command above.
 
 # Copilot CLI — direct install
-copilot plugin install pde-ops-tools@provider-hub
+copilot plugin install pde@provider-hub
 
 # Copilot CLI — browse instead:
 copilot plugin marketplace browse provider-hub
@@ -52,8 +52,8 @@ required credentials, dependency setup (handled automatically), how to pull in o
 MCPs (Grafana, LogRocket, Atlassian, Salesforce, LaunchDarkly), and how to actually use it once
 installed.
 
-As more plugins are added under `plugins/`, install any of them the same way, swapping
-`pde-ops-tools` for the plugin's name.
+As more plugins are added under `plugins/`, install any of them the same way, swapping `pde` for
+the plugin's name.
 
 ## Repository Structure
 
@@ -99,7 +99,9 @@ plugin depends on it as a normal package dependency rather than copying it in (e
 
 ## Naming & Conventions
 
-- **Plugins:** Prefix with team/area (e.g., `pde-ops-tools`)
+- **Plugins:** `plugin.json`'s `name` field is the install/namespace identity (`pde@provider-hub`,
+  `/pde:skill-name`) — keep it short and stable. The folder under `plugins/` can be more descriptive
+  (e.g. `plugins/pde-ops-tools/` for the plugin named `pde`) since it's never user-facing.
 - **Skills:** Prefix with team/area (e.g., `pde-ai-ticket-discovery`)
 - **Directories:** Lowercase with hyphens (no spaces or special chars)
 

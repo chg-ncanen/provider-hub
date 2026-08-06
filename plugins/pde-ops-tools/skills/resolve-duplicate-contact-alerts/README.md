@@ -37,7 +37,7 @@ This skill processes open JSM "More than one contact found..." alerts and automa
   invoked directly, not through `.mcp.json`, so it never receives Claude Code's `userConfig`
   substitution the way the `pde-mcp` MCP server process does. On Claude Code, the plugin's
   `SessionStart` hook mirrors `userConfig` into this `.env` for exactly this reason, so it should
-  already be there after `/plugin configure pde-ops-tools@provider-hub` + a session restart. On Copilot CLI
+  already be there after `/plugin configure pde@provider-hub` + a session restart. On Copilot CLI
   (no `userConfig`), create it by hand. If `run.py` still reports missing credentials, fall back to
   manual `pde-mcp` MCP tool calls instead, which get credentials straight from `userConfig`.
 - Optional: `EMAIL_USERNAME` / `EMAIL_PASSWORD` for email validation

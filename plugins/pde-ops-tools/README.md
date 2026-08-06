@@ -36,23 +36,23 @@ Claude Code and GitHub Copilot CLI, which both install from the same `.claude-pl
 
 **A note on Claude Code's `/plugin` slash command**: typed inside an interactive session,
 `/plugin` always opens the picker menu — it doesn't parse anything typed after it (`/plugin
-install pde-ops-tools@provider-hub` opens the same menu as bare `/plugin`, ignoring the argument). To
+install pde@provider-hub` opens the same menu as bare `/plugin`, ignoring the argument). To
 actually run these as one-liners instead of navigating the menu, either use the `!` prefix to run
-a literal shell command from inside the chat (`!claude plugin install pde-ops-tools@provider-hub`), or run
+a literal shell command from inside the chat (`!claude plugin install pde@provider-hub`), or run
 `claude` directly in a plain terminal outside the session — both invoke the real CLI, which does
 take arguments normally.
 
 ```bash
 # Claude Code — add marketplace, then install directly (via `!` prefix in-chat, or a plain terminal)
 claude plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-claude plugin install pde-ops-tools@provider-hub
+claude plugin install pde@provider-hub
 
 # Claude Code — or browse instead: run /plugin with no arguments, open the "Discover" tab,
 # and select pde from the provider-hub marketplace listed there
 
 # Copilot CLI — add marketplace, then install directly
 copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-copilot plugin install pde-ops-tools@provider-hub
+copilot plugin install pde@provider-hub
 
 # Copilot CLI — or browse instead:
 copilot plugin marketplace browse provider-hub
@@ -83,7 +83,7 @@ reinstalling when that file changes), and mirrors Claude Code's `userConfig` cre
   nothing to mirror) and won't overwrite a `.env` you created by hand there.
 - **Rotating a credential later**: unlike `install`/`update`, "configure" has no plain CLI
   subcommand at all (`claude plugin --help` doesn't list one) — the interactive `/plugin` menu is
-  the only way. Run `/plugin`, find `pde-ops-tools@provider-hub`, and choose the configure option. Then
+  the only way. Run `/plugin`, find `pde@provider-hub`, and choose the configure option. Then
   restart the session — the hook re-mirrors the updated value into `.env` on that restart, and
   `.mcp.json`'s substitution picks it up for `pde-mcp` directly too.
 - **Copilot CLI** has no `userConfig` equivalent — copy `mcp-servers/pde-mcp/.env.example` to
@@ -97,18 +97,18 @@ Pull the marketplace's latest commit, then update the plugin to it. How you do t
 where you're running the command:
 
 - **In a plain terminal, or via the `!` prefix from inside a Claude Code chat** (`!claude plugin
-  update pde-ops-tools@provider-hub` runs the literal shell command in-session instead of going through
+  update pde@provider-hub` runs the literal shell command in-session instead of going through
   slash-command parsing): the CLI commands work directly with arguments —
   ```bash
   claude plugin marketplace update provider-hub
-  claude plugin update pde-ops-tools@provider-hub
+  claude plugin update pde@provider-hub
   ```
-- **Typing `/plugin update pde-ops-tools@provider-hub` as a slash command**: doesn't work — `/plugin` always
+- **Typing `/plugin update pde@provider-hub` as a slash command**: doesn't work — `/plugin` always
   opens the menu UI regardless of what follows it, the same as bare `/plugin`. Use the `!` prefix
-  above instead, or run `/plugin` with no arguments, find `pde-ops-tools@provider-hub` in the list, and
+  above instead, or run `/plugin` with no arguments, find `pde@provider-hub` in the list, and
   choose the update option from the menu.
 - **Copilot CLI**: `copilot plugin marketplace update provider-hub` then
-  `copilot plugin update pde-ops-tools@provider-hub`.
+  `copilot plugin update pde@provider-hub`.
 
 **Then start a new session** — same requirement as a fresh install (see above); updating doesn't
 take effect in the session you ran it from. If `pde` isn't installed yet at all, use the
@@ -133,7 +133,7 @@ update.
 All three skills are `user-invocable`, so you can either ask for them in natural language or
 invoke them directly by name:
 
-- **`/pde-ops-tools:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
+- **`/pde:setup-companion-tools`** (or just ask: "set up companion tools" / "what companion tools
   are available?") — a guided wizard for installing Atlassian, Grafana, LaunchDarkly, LogRocket,
   `salesforce-prod`, and `salesforce-uat`, one at a time. Before every pick it shows a numbered
   status table (install/ready state, plus nested dependency state — e.g. whether the `sf` CLI is
@@ -151,12 +151,12 @@ invoke them directly by name:
   - Direct/scriptable equivalent, if you'd rather not go through the agent:
     `python skills/setup-companion-tools/manage_companions.py status --cli claude` (or `copilot`),
     `... install <service> --cli claude`, or `... dep-guidance sf`.
-- **`/pde-ops-tools:resolve-duplicate-contact-alerts`** (or ask: "resolve duplicate contact alerts" — dry run
+- **`/pde:resolve-duplicate-contact-alerts`** (or ask: "resolve duplicate contact alerts" — dry run
   by default) — runs the alert-resolution workflow. The agent runs
   `skills/resolve-duplicate-contact-alerts/run.py` for you; running it yourself directly
   (`python run.py` from that directory) works the same way and is useful for debugging — it checks
   its own dependencies up front and reports exactly what's missing.
-- **`/pde-ops-tools:dependabot-triage`** (or ask: "triage the dependabot alerts for this repo") — runs the
+- **`/pde:dependabot-triage`** (or ask: "triage the dependabot alerts for this repo") — runs the
   reachability-based triage workflow against the current repo, then dismisses confirmed
   non-actionable alerts and files one Jira ticket per repo. For triaging many repos at once, use
   the two companion scripts directly: `python3 skills/dependabot-triage/list_target_repos.py` to

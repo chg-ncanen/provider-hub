@@ -58,8 +58,8 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 
 ### As part of the `pde` plugin (recommended)
 
-Install via `/plugin install pde-ops-tools@provider-hub` (Claude Code) or `copilot plugin install
-pde-ops-tools@provider-hub` (Copilot CLI) — see `../../README.md` (the plugin root). Both CLIs handle the venv
+Install via `/plugin install pde@provider-hub` (Claude Code) or `copilot plugin install
+pde@provider-hub` (Copilot CLI) — see `../../README.md` (the plugin root). Both CLIs handle the venv
 and `${CLAUDE_PLUGIN_ROOT}`-relative paths for you via the `SessionStart` hook; Claude Code also
 prompts for credentials via `userConfig`, Copilot CLI does not (see that README for the manual
 alternative).

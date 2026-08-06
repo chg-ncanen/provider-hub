@@ -12,10 +12,11 @@ project — skill(s), the MCP server(s) they need, hooks, and setup scripts. Bot
 GitHub Copilot CLI install from the same `.claude-plugin/` layout, no forking needed.
 
 **Include:**
-- `.claude-plugin/plugin.json` — plugin metadata (`name` is the actual install/namespace identity,
+- `.claude-plugin/plugin.json` — plugin metadata. `name` is the actual install/namespace identity,
   used for `claude plugin install <name>@provider-hub` and skill invocation as
-  `/<name>:<skill-name>` — it does not need to match the folder name, but keep them in sync to avoid
-  confusion)
+  `/<name>:<skill-name>` — keep it short and stable, since renaming it changes those user-facing
+  commands. It does not need to match the folder name; the folder under `plugins/` can be more
+  descriptive (e.g. `plugins/pde-ops-tools/` for the plugin named `pde`).
 - `skills/<skill-name>/` — each with a `SKILL.md` (see [Skill Metadata Format](#skill-metadata-format-skillmd))
 - `.mcp.json` / `mcp-servers/` — any MCP server(s) the skills depend on
 - `README.md` — what it provides, required credentials, how to install and use it
@@ -94,7 +95,7 @@ package rather than reintroducing a team/user directory split.
 
 - **Directories:** lowercase with hyphens (`my-skill-name`, NOT `my_skill_name` or `MySkillName`)
 - **Files:** lowercase with extensions (`.py`, `.sh`, `.md`)
-- **Plugins & skills:** prefix with team/area (e.g., `pde-ops-tools`, `pde-ai-ticket-discovery`)
+- **Plugin `name` field & skills:** prefix with team/area (e.g., `pde`, `pde-ai-ticket-discovery`)
 
 ## Skill Metadata Format (SKILL.md)
 

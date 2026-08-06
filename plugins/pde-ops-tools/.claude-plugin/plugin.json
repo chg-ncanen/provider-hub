@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
-  "name": "pde-ops-tools",
+  "name": "pde",
   "displayName": "PDE Ops Tools",
   "description": "JSM alert management (pde-mcp MCP server), the resolve-duplicate-contact-alerts skill, and the dependabot-triage skill.",
   "author": {

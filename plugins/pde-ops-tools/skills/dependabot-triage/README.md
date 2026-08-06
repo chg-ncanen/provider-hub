@@ -42,13 +42,13 @@ Windows, Linux, or macOS.
 From inside any repo, in a live Claude Code session:
 
 ```
-/pde-ops-tools:dependabot-triage
+/pde:dependabot-triage
 ```
 
 or hand it a scope directly:
 
 ```
-/pde-ops-tools:dependabot-triage triage all open critical and high severity alerts for this repo
+/pde:dependabot-triage triage all open critical and high severity alerts for this repo
 ```
 
 It checks `gh auth status` and Jira access up front, asks for scope if you didn't give one, then
