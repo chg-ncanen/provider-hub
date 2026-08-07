@@ -113,9 +113,17 @@ fi
 # against a real broken venv: python/python3 present, pip entirely absent).
 # Self-heal via get-pip.py first — it downloads pip/setuptools straight from
 # PyPI instead of needing the system's bundled wheel data, so it needs no root.
+# `|| true` is required here, not cosmetic: this line sits in the if-BODY, not
+# an if/while condition, so under `set -e` a nonzero exit (curl failing, no
+# network reaching bootstrap.pypa.io, etc.) would otherwise kill the whole
+# script right here — skipping the `rm -f` below *and* the failure-detection
+# block that follows, permanently stranding a half-built venv (python present,
+# pip absent) that the `[ ! -d "$VENV_DIR" ]` check above never retries
+# (verified: this exact failure silently bricked a real venv for a full day).
 if [ ! -x "$VENV_DIR/bin/pip" ]; then
   curl -fsSL https://bootstrap.pypa.io/get-pip.py -o "$VENV_DIR/get-pip.py" 2>/dev/null \
-    && "$VENV_DIR/bin/python" "$VENV_DIR/get-pip.py" --quiet 2>/dev/null
+    && "$VENV_DIR/bin/python" "$VENV_DIR/get-pip.py" --quiet 2>/dev/null \
+    || true
   rm -f "$VENV_DIR/get-pip.py"
 fi
 
