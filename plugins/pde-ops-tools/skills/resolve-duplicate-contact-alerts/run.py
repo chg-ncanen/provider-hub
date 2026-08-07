@@ -7,11 +7,14 @@ still exist in Salesforce prod, then closes resolved alerts and reports on
 the rest.
 
 Usage:
-    python run.py [--dry-run|--live]
+    "$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py [--dry-run|--live]
+
+    Must run via the plugin's own venv, not a bare `python`/`python3` — that
+    venv is what actually has pde-ops-api and python-dotenv installed (the
+    SessionStart hook provisions it automatically from the pde-mcp MCP
+    server's requirements.txt, which depends on shared/pde-ops-api).
 
 Requires:
-    - pde-ops-api installed (pip install -e tools/team/pde/pde-ops-api, or via
-      the pde-mcp MCP server's requirements.txt, which depends on it)
     - ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN in .env (or environment)
     - EMAIL_USERNAME / EMAIL_PASSWORD in .env for email checks (optional)
     - `sf` CLI authenticated to the 'prod' org alias
@@ -23,20 +26,27 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # .env and app_config.json are shared with the pde-mcp MCP server this skill uses.
-# __file__ is plugins/pde/skills/resolve-duplicate-contact-alerts/run.py, so
-# parents[2] is plugins/pde — parents[1] (skills/) was one level too shallow.
-_MCP_SERVER_DIR = Path(__file__).resolve().parents[2] / "mcp-servers" / "pde-mcp"
+# __file__ is plugins/pde-ops-tools/skills/resolve-duplicate-contact-alerts/run.py,
+# so parents[2] is plugins/pde-ops-tools — parents[1] (skills/) was one level too shallow.
+_PLUGIN_ROOT = Path(__file__).resolve().parents[2]
+_MCP_SERVER_DIR = _PLUGIN_ROOT / "mcp-servers" / "pde-mcp"
 
 try:
     from dotenv import load_dotenv
     load_dotenv(_MCP_SERVER_DIR / ".env")
-except Exception:
-    pass
+except ImportError:
+    print(
+        f"run.py: python-dotenv not installed in {sys.executable} — .env won't be "
+        f"loaded. Run this script via the plugin's own venv "
+        f"({_PLUGIN_ROOT / '.venv' / 'bin' / 'python'}), not a bare python/python3.",
+        file=sys.stderr,
+    )
 
 from api.jsm.client import JSMOpsAPI
 from api.jsm.config import AppConfig

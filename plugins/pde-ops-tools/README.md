@@ -154,8 +154,9 @@ invoke them directly by name:
 - **`/pde:resolve-duplicate-contact-alerts`** (or ask: "resolve duplicate contact alerts" — dry run
   by default) — runs the alert-resolution workflow. The agent runs
   `skills/resolve-duplicate-contact-alerts/run.py` for you; running it yourself directly
-  (`python run.py` from that directory) works the same way and is useful for debugging — it checks
-  its own dependencies up front and reports exactly what's missing.
+  (`"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py` from that directory — not a bare `python`/
+  `python3`, which won't have `pde-ops-api`/`python-dotenv` installed) works the same way and is
+  useful for debugging — it checks its own dependencies up front and reports exactly what's missing.
 - **`/pde:dependabot-triage`** (or ask: "triage the dependabot alerts for this repo") — runs the
   reachability-based triage workflow against the current repo, then dismisses confirmed
   non-actionable alerts and files one Jira ticket per repo. For triaging many repos at once, use

@@ -58,14 +58,17 @@ exactly what's missing and exits cleanly rather than failing partway through.
 Fastest approach—run the Python script:
 
 ```bash
-# From this skill's own directory (or the equivalent path once installed as a plugin):
-python run.py
+# From this skill's own directory (or the equivalent path once installed as a plugin).
+# Use the plugin's own venv, not a bare `python`/`python3` — pde-ops-api and
+# python-dotenv are only installed there (provisioned automatically by the
+# SessionStart hook), not in whatever "python" happens to be on PATH.
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py
 
 # Dry run (default — no changes):
-python run.py --dry-run
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py --dry-run
 
 # Live mode (add notes and close resolved alerts):
-python run.py --live
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py --live
 ```
 
 ### Manual Workflow

@@ -27,13 +27,16 @@ A Python script at `run.py` in this directory automates all steps. **Use this in
 `run.py` checks all of the above itself before doing any real work — it prints exactly what's missing (credentials, `sf` CLI not installed, or not authenticated to `prod`) and exits, rather than failing partway through with a traceback. If it reports missing credentials, fall back to manual `pde-mcp` MCP tool calls instead (those get credentials straight from `userConfig` on Claude Code regardless of this script) — that fallback can't cover a missing `sf` CLI, though, since that's this script's own direct dependency for the Salesforce query.
 
 ```bash
-# from this skill's own directory (its "Base directory" shown when invoked)
+# from this skill's own directory (its "Base directory" shown when invoked).
+# Use the plugin's own venv, not a bare `python`/`python3` — pde-ops-api and
+# python-dotenv are only installed there (provisioned automatically by the
+# SessionStart hook), not in whatever "python" happens to be on PATH.
 
 # dry run (default — no changes, just report)
-python run.py
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py
 
 # live — add notes and close resolved alerts
-python run.py --live
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" run.py --live
 ```
 
 After the script runs, review the printed summary table and share it with the user. Only fall back to manual MCP tool calls when the script fails or needs debugging.
