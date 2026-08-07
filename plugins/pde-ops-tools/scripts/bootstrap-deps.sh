@@ -97,6 +97,12 @@ if [ ! -d "$VENV_DIR" ]; then
   "$system_python" -m venv --copies "$VENV_DIR"
 fi
 
+# On Python 3.14 + a UTF-8 filesystem, this venv's bin/ will also contain a
+# 4th interpreter copy named 𝜋thon (mathematical italic pi, not "p") — a real
+# CPython stdlib easter egg (venv/__init__.py's setup_python(), not anything
+# this script adds), byte-identical to python/python3/python3.14. Expected
+# and harmless; not a sign of tampering.
+
 # Normalize to a `bin/` layout regardless of what the venv module produced.
 if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$VENV_DIR/Scripts/python.exe" ]; then
   mkdir -p "$VENV_DIR/bin"

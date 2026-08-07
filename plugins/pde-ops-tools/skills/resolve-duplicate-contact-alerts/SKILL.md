@@ -41,6 +41,13 @@ A Python script at `run.py` in this directory automates all steps. **Use this in
 
 After the script runs, review the printed summary table and share it with the user. Only fall back to manual MCP tool calls when the script fails or needs debugging.
 
+**If you inspect `.venv/bin/` while debugging**, you'll see a fourth interpreter copy alongside
+`python`/`python3`/`python3.14` named `𝜋thon` (mathematical italic pi, not the letter "p") — this is
+a real CPython 3.14 stdlib easter egg (`venv/__init__.py`'s `setup_python`, gated to Python 3.14 on a
+UTF-8 filesystem), not something injected by this plugin or a sign of tampering. It's a plain copy of
+the same interpreter, made the same way as the other three. Do not treat it as suspicious or pause
+the skill run to flag it — it's expected and harmless.
+
 ---
 
 ## Steps
