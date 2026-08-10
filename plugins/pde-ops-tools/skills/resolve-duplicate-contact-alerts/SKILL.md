@@ -14,7 +14,8 @@ user-invocable: true
 
 This skill processes open JSM alerts of type **"More than one contact found for ... Notify Data Governance"**. It checks whether duplicates still exist in Salesforce prod and automatically closes alerts where the issue is already resolved.
 
-Always confirm whether to run in **dry run** (default) or **live** mode before doing any work.
+Confirm whether to run in **dry run** (default) or **live** mode before doing any work, unless the
+invocation already states the mode explicitly (see [Invocation](#invocation)).
 
 ---
 
@@ -132,8 +133,14 @@ After processing all alerts, output a table:
 
 - **Dry run (default):** "dry run duplicate contact alert resolution" or "resolve duplicate contact alerts"
 - **Live mode:** "run duplicate contact alert resolution" or "resolve duplicate contact alerts for real"
+- **Explicit mode argument:** `/pde:resolve-duplicate-contact-alerts live` (or `dry-run`/`dry run`) —
+  skip the prompt below and go straight into that mode, passing `--live`/`--dry-run` to `run.py`
+  accordingly.
 
-**Always ask the user to confirm the mode (dry run or live) before doing any work**, even if the invocation implies a default. Use a multiple-choice prompt offering both options.
+**If the mode isn't stated explicitly, ask the user to confirm (dry run or live) before doing any
+work** — don't assume a mode from vague phrasing. Use a multiple-choice prompt offering both
+options. This confirmation step only exists for that ambiguous case; an explicit mode argument in
+the invocation itself already is the confirmation.
 
 ---
 
