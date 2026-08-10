@@ -468,6 +468,9 @@ class JSMOpsAPI:
     def close(self, alert_id: str, note: Optional[str] = None) -> Dict[str, Any]:
         return self.tool.close_alert(alert_id=alert_id, note=note)
 
+    def assign(self, alert_id: str, owner: str) -> Dict[str, Any]:
+        return self.tool.assign_alert(alert_id=alert_id, owner=owner)
+
     def build_alert_query(
         self,
         base_query: Optional[str] = None,

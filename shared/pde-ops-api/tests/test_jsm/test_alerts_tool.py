@@ -56,6 +56,7 @@ class TestJSMOpsAlertsTool(unittest.TestCase):
             "add_alert_note",
             "acknowledge_alert",
             "close_alert",
+            "assign_alert",
         }
         self.assertEqual(names, expected)
 

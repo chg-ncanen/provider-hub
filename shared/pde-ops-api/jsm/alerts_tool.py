@@ -212,6 +212,19 @@ class JSMOpsAlertsTool:
                     "additionalProperties": False,
                 },
             },
+            {
+                "name": "assign_alert",
+                "description": "Assign an alert to a user or team.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "alert_id": {"type": "string"},
+                        "owner": {"type": "string", "description": "Email or name of the owner (user or team)"},
+                    },
+                    "required": ["alert_id", "owner"],
+                    "additionalProperties": False,
+                },
+            },
         ]
 
     def execute_tool(self, name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
@@ -236,6 +249,8 @@ class JSMOpsAlertsTool:
                 return self.acknowledge_alert(alert_id=tool_input["alert_id"], note=tool_input.get("note"))
             if name == "close_alert":
                 return self.close_alert(alert_id=tool_input["alert_id"], note=tool_input.get("note"))
+            if name == "assign_alert":
+                return self.assign_alert(alert_id=tool_input["alert_id"], owner=tool_input["owner"])
             return {
                 "success": False,
                 "error": f"Unknown tool: {name}",
@@ -362,6 +377,16 @@ class JSMOpsAlertsTool:
             "result": payload,
         }
 
+    def assign_alert(self, alert_id: str, owner: str) -> Dict[str, Any]:
+        payload = self._request("POST", f"/{alert_id}/assign", payload={"owner": owner})
+        return {
+            "success": True,
+            "operation": "assign_alert",
+            "alert_id": alert_id,
+            "owner": owner,
+            "result": payload,
+        }
+
     def _mock_response(
         self,
         method: str,
@@ -414,7 +439,7 @@ class JSMOpsAlertsTool:
             return {
                 "id": "note-1",
                 "alert_id": alert_id,
-                "content": (payload or {}).get("content", ""),
+                "note": (payload or {}).get("note", ""),
             }
         if method == "POST" and path.endswith("/acknowledge"):
             alert_id = path.split("/")[1]
@@ -422,4 +447,7 @@ class JSMOpsAlertsTool:
         if method == "POST" and (path.endswith("/close") or path.endswith("/status")):
             alert_id = path.split("/")[1]
             return {"id": alert_id, "status": "closed"}
+        if method == "POST" and path.endswith("/assign"):
+            alert_id = path.split("/")[1]
+            return {"id": alert_id, "owner": (payload or {}).get("owner", "")}
         return {"ok": True}

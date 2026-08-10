@@ -114,8 +114,9 @@ def _parse_args() -> argparse.Namespace:
             "  python -m cli list\n"
             "  python -m cli list --profile pde --status open --priority P1\n"
             "  python -m cli list-closed --profile pde --since-days 2\n"
-            "  python -m cli export-csv --output ./out/alerts.csv --start 2026-06-08T09:00 --end 2026-07-02T09:00\n"
-            "  python -m cli export-csv --output ./out/subset.csv --start 2026-06-08T09:00 --end 2026-07-02T09:00 --columns alert_id,status,priority"
+            "  python -m cli ack alert-123\n"
+            "  python -m cli assign alert-123 --owner user@example.com\n"
+            "  python -m cli export-csv --output ./out/alerts.csv --start 2026-06-08T09:00 --end 2026-07-02T09:00"
         ),
     )
     parser.add_argument(
@@ -230,6 +231,14 @@ def _parse_args() -> argparse.Namespace:
     close_parser.add_argument("alert_id", help="Alert ID.")
     close_parser.add_argument("--note", help="Optional close note.")
 
+    assign_parser = subparsers.add_parser(
+        "assign",
+        help="Assign an alert to a user or team.",
+        description="Assign an alert to a specific user or team.",
+    )
+    assign_parser.add_argument("alert_id", help="Alert ID.")
+    assign_parser.add_argument("--owner", required=True, help="Email or name of the owner (user or team).")
+
     export_parser = subparsers.add_parser(
         "export-csv",
         help="Export alerts to CSV for downstream analysis.",
@@ -309,8 +318,11 @@ def _print_human(command: str, result: Dict[str, Any]) -> None:
         print(json.dumps(alert, indent=2, sort_keys=True))
         return
 
-    if command in {"note", "ack", "close"}:
-        print(f"{command} succeeded for alert: {result.get('alert_id')}")
+    if command in {"note", "ack", "close", "assign"}:
+        if command == "assign":
+            print(f"Assigned alert {result.get('alert_id')} to {result.get('owner')}")
+        else:
+            print(f"{command} succeeded for alert: {result.get('alert_id')}")
         print(json.dumps(result, indent=2, sort_keys=True))
         return
 
@@ -374,6 +386,8 @@ def main() -> int:
             result = api.acknowledge(args.alert_id, note=args.note)
         elif args.command == "close":
             result = api.close(args.alert_id, note=args.note)
+        elif args.command == "assign":
+            result = api.assign(args.alert_id, args.owner)
         elif args.command == "export-csv":
             profile = _resolve_profile(args.profile, cfg.default_profile)
             base_query = _resolve_query(args.query, profile, cfg.alert_filter)

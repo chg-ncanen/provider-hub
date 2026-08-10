@@ -11,6 +11,7 @@ This MCP exposes JSM (Jira Service Management) alert operations as tools for aut
 - `acknowledge_alert` — Acknowledge an alert as being actively worked
 - `add_alert_note` — Add operator notes to an alert
 - `close_alert` — Resolve and close an alert
+- `assign_alert` — Assign an alert to a user or team
 - `find_emails` — Search email archive for notification evidence
 
 ## Setup
@@ -133,6 +134,13 @@ Resolve and close an alert.
 
 ```python
 close_alert(alert_id="abc123def456-1234567890", note="Verified resolved in prod.")
+```
+
+### assign_alert
+Assign an alert to a user or team.
+
+```python
+assign_alert(alert_id="abc123def456-1234567890", owner="user@example.com")
 ```
 
 ### find_emails

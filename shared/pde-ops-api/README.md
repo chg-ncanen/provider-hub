@@ -73,6 +73,9 @@ alert = api.get_alert("alert-id-here")
 # Acknowledge alert
 api.acknowledge("alert-id-here", note="Working on it")
 
+# Assign alert
+api.assign("alert-id-here", owner="user@example.com")
+
 # Close alert
 api.close("alert-id-here", note="Resolved")
 ```
@@ -106,6 +109,8 @@ The library reads `app_config.json` for JSM settings:
 ```bash
 python -m cli list --profile pde --status open
 python -m cli list-closed --profile pde --since-days 2
+python -m cli ack alert-id-here
+python -m cli assign alert-id-here --owner user@example.com
 python -m cli export-csv --output ./out/alerts.csv --start 2026-06-08T09:00 --end 2026-07-02T09:00
 ```
 

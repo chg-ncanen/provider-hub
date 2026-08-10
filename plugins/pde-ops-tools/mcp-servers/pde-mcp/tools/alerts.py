@@ -12,6 +12,7 @@ _ALERT_TOOL_NAMES = {
     "acknowledge_alert",
     "close_alert",
     "add_alert_note",
+    "assign_alert",
 }
 
 
@@ -185,6 +186,21 @@ def definitions() -> list[types.Tool]:
                 "required": ["alert_id", "note"],
             },
         ),
+        types.Tool(
+            name="assign_alert",
+            description=(
+                "Assign a PDE JSM Ops alert to a user or team. "
+                "Use this when you want to assign responsibility for an alert to a specific person."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "alert_id": {"type": "string", "description": "The alert UUID."},
+                    "owner": {"type": "string", "description": "Email or name of the owner (user or team)."},
+                },
+                "required": ["alert_id", "owner"],
+            },
+        ),
     ]
 
 
@@ -255,6 +271,9 @@ def handle(name: str, arguments: dict[str, Any], api: Any) -> dict[str, Any]:
 
     if name == "add_alert_note":
         return api.add_note(arguments["alert_id"], arguments["note"])
+
+    if name == "assign_alert":
+        return api.assign(arguments["alert_id"], arguments["owner"])
 
     raise ValueError(f"Unknown alert tool: {name}")
 
