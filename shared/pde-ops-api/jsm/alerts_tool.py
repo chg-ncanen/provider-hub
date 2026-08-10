@@ -378,7 +378,10 @@ class JSMOpsAlertsTool:
         }
 
     def assign_alert(self, alert_id: str, owner: str) -> Dict[str, Any]:
-        payload = self._request("POST", f"/{alert_id}/assign", payload={"owner": owner})
+        # The Alerts API (Opsgenie-based) requires owner as a nested object
+        # ({"username": ...} or {"id": ...}), not a flat string — a flat
+        # string 422s with a blank-field validation error.
+        payload = self._request("POST", f"/{alert_id}/assign", payload={"owner": {"username": owner}})
         return {
             "success": True,
             "operation": "assign_alert",
@@ -449,5 +452,5 @@ class JSMOpsAlertsTool:
             return {"id": alert_id, "status": "closed"}
         if method == "POST" and path.endswith("/assign"):
             alert_id = path.split("/")[1]
-            return {"id": alert_id, "owner": (payload or {}).get("owner", "")}
+            return {"id": alert_id, "owner": (payload or {}).get("owner", {}).get("username", "")}
         return {"ok": True}
