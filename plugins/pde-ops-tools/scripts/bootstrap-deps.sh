@@ -150,6 +150,78 @@ if [ ! -f "$INSTALLED_MARKER" ] || [ "$(cat "$REQ_FILE")" != "$(cat "$INSTALLED_
   "$VENV_DIR/bin/pip" install --quiet --upgrade pip
   "$VENV_DIR/bin/pip" install --quiet -r "$REQ_FILE"
   cp "$REQ_FILE" "$INSTALLED_MARKER"
+else
+  # requirements.txt's *text* is unchanged, but a `pkg @ git+URL` line with no
+  # pinned commit (tracking a branch, e.g. pde-ops-api tracking main) can still
+  # have new commits upstream that this venv has never picked up — pip only
+  # ever resolves a git ref at install time, so the marker-equality check above
+  # can never detect that kind of drift on its own. (Verified the hard way:
+  # two separate pde-ops-api fixes were committed and pushed, and neither ever
+  # reached this venv, because this file's text never changed to trigger a
+  # reinstall — they were silently running the commit that was HEAD the very
+  # first time this venv was provisioned.) Compare each such dependency's
+  # current remote commit against what's actually installed (from pip's own
+  # direct_url.json record) and re-fetch just the ones that drifted. This is
+  # one `git ls-remote` per git+ dependency (no full clone) — cheap enough to
+  # run every session, and it's the only way to actually detect this.
+  stale_specs="$("$VENV_DIR/bin/python" - "$REQ_FILE" "$VENV_DIR" <<'PYEOF'
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+
+req_file, venv_dir = sys.argv[1], sys.argv[2]
+site_packages = glob.glob(os.path.join(venv_dir, "lib", "python3.*", "site-packages")) + \
+    glob.glob(os.path.join(venv_dir, "Lib", "site-packages"))
+
+# name @ git+URL[@ref]  (an optional #subdirectory=... fragment is part of URL)
+pattern = re.compile(r"^([A-Za-z0-9_.-]+)\s*@\s*git\+([^\s@#]+(?:#[^\s@]+)?)(?:@([^\s#]+))?\s*$")
+
+for line in open(req_file):
+    spec = line.strip()
+    match = pattern.match(spec)
+    if not match:
+        continue
+    name, url, ref = match.group(1), match.group(2), match.group(3)
+    base_url = url.split("#", 1)[0]
+    # A full 40-char commit hash is a real pin — nothing can drift under it.
+    if ref and re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+        continue
+    try:
+        remote_out = subprocess.run(
+            ["git", "ls-remote", base_url, ref or "HEAD"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout
+        remote_commit = remote_out.split()[0] if remote_out.strip() else None
+    except Exception:
+        continue  # best-effort — a network hiccup here should never block the session
+    if not remote_commit:
+        continue
+
+    installed_commit = None
+    for site_dir in site_packages:
+        for direct_url_path in glob.glob(
+            os.path.join(site_dir, f"{name.replace('-', '_')}-*.dist-info", "direct_url.json")
+        ):
+            try:
+                installed_commit = json.load(open(direct_url_path)).get("vcs_info", {}).get("commit_id")
+            except Exception:
+                pass
+            break
+        if installed_commit:
+            break
+
+    if installed_commit != remote_commit:
+        print(spec)
+PYEOF
+  )"
+  if [ -n "$stale_specs" ]; then
+    while IFS= read -r spec; do
+      [ -n "$spec" ] && "$VENV_DIR/bin/pip" install --quiet --force-reinstall --no-deps "$spec"
+    done <<< "$stale_specs"
+  fi
 fi
 
 # Mirror userConfig credentials into pde-mcp/.env for run.py's benefit (see
