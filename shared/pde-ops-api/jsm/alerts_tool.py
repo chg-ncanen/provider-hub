@@ -378,21 +378,44 @@ class JSMOpsAlertsTool:
         }
 
     def assign_alert(self, alert_id: str, owner: str) -> Dict[str, Any]:
-        # The Alerts API (Opsgenie-based) requires owner as a nested object,
-        # not a flat string — a flat string 422s with a blank-field
-        # validation error. Include "type" alongside the identifier, matching
-        # the {"type": ..., "id"/"username": ...} shape this same API uses
-        # for the alert's own "responders" entries.
-        payload = self._request(
-            "POST", f"/{alert_id}/assign", payload={"owner": {"type": "user", "username": owner}}
-        )
+        # Confirmed against the live JSM Ops OpenAPI spec (AssignAlertRequest
+        # schema): the assign endpoint takes a flat {"accountId": ...} body —
+        # not a nested user/owner object, and not a username/email. It only
+        # supports assigning to a user; assigning a team needs the separate
+        # /responders endpoint instead, which this method doesn't cover.
+        account_id = self._resolve_account_id(owner)
+        payload = self._request("POST", f"/{alert_id}/assign", payload={"accountId": account_id})
         return {
             "success": True,
             "operation": "assign_alert",
             "alert_id": alert_id,
             "owner": owner,
+            "account_id": account_id,
             "result": payload,
         }
+
+    def _resolve_account_id(self, owner: str) -> str:
+        # Callers pass an email (per this tool's own input_schema), but the
+        # assign endpoint requires an Atlassian accountId — resolve via the
+        # Jira Cloud user-search API. Skip resolution if `owner` already
+        # looks like an accountId (no "@"), so passing one directly still works.
+        if self.mock_mode or "@" not in owner:
+            return owner
+        jira_base_url = f"https://api.atlassian.com/ex/jira/{self.cloud_id}/rest/api/3"
+        response = self.session.get(
+            f"{jira_base_url}/user/search",
+            headers=self._headers(),
+            params={"query": owner},
+            timeout=self.timeout_seconds,
+        )
+        if response.status_code >= 400:
+            raise _PermanentAPIError(
+                f"Jira user search failed for {owner!r}: {response.status_code} {response.text[:300]}"
+            )
+        matches = response.json()
+        if not matches:
+            raise _PermanentAPIError(f"No Atlassian account found for {owner!r}")
+        return matches[0]["accountId"]
 
     def _mock_response(
         self,
@@ -456,5 +479,5 @@ class JSMOpsAlertsTool:
             return {"id": alert_id, "status": "closed"}
         if method == "POST" and path.endswith("/assign"):
             alert_id = path.split("/")[1]
-            return {"id": alert_id, "owner": (payload or {}).get("owner", {}).get("username", "")}
+            return {"id": alert_id, "accountId": (payload or {}).get("accountId", "")}
         return {"ok": True}
