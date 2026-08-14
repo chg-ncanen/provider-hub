@@ -49,7 +49,9 @@ is also what actually gets read; a plain status paragraph followed by something 
 and gets skipped.
 
 One row per service, alphabetical, numbered so the user can reply with just a digit. Name each
-one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed.
+one with "MCP" in it (e.g. "Atlassian MCP") so it's clear these are MCP servers being installed —
+**except Grafana, which isn't one** (see below); call that row "Grafana (gcx CLI plugin)" instead,
+so it doesn't imply an MCP server exists where there isn't one.
 **Add one more row above all of them, unnumbered, for `pde_mcp`** — the core MCP server bundled
 with the PDE Ops Tools plugin (`pde`) itself, not something this wizard installs (that's the
 `SessionStart` hook's job). It's still worth surfacing here since every companion tool sits
@@ -62,7 +64,7 @@ just explain it isn't installable here rather than trying to do anything with it
 |---|---|---|---|---|
 | — | pde-mcp | Ready | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
 | 1 | Atlassian MCP | Installed | Yes (org connector) | Jira/Confluence search, issue creation, sprint management |
-| 2 | Grafana (gcx) MCP | Not installed (will install dependencies) | — | Dashboards, alerts, SLOs, incident analysis |
+| 2 | Grafana (gcx CLI plugin) | Not installed (will install dependencies) | — | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | Installed | No — not authenticated yet | Feature flag management |
 | 4 | LogRocket MCP | Not installed | — | Session replay, metrics, issue search |
 | 5 | Salesforce prod MCP | Installed | Yes | SOQL queries against the prod org |
@@ -138,9 +140,9 @@ below — nothing to install.
 
 Otherwise run `python3 manage_companions.py install <service> --cli <claude|copilot>`.
 
-**`install` only refuses to run when the underlying CLI dependency isn't usable yet** — for `sf`
-(salesforce-prod/uat) that means either not installed at all, *or* installed but below the minimum
-version this MCP server needs (see step 3); for `gcx` (grafana) it just means not installed. It
+**`install` only refuses to run when the underlying CLI dependency isn't usable yet** — for both
+`sf` (salesforce-prod/uat) and `gcx` (grafana) that means either not installed at all, *or*
+installed but below the minimum version that MCP server/plugin needs (see step 3). It
 does **not** wait for that CLI to be authenticated first: verified directly that the Salesforce MCP
 server starts up and registers all its tools cleanly even against a nonexistent/never-authenticated
 alias (no crash, no broken half-registered state), and the `gcx` plugin has no MCP server of its
@@ -194,12 +196,13 @@ currently outstanding for the same service (e.g. install a missing prerequisite,
 show every outstanding one in the same message — don't drip-feed them one at a time when the user
 already needs to do both.
 
-- **A dependency is missing, or installed but below the minimum version this MCP server needs**
-  (currently: `sf` for salesforce-prod/uat — including machines with a leftover pre-unification
-  `sf`/legacy `sfdx-cli` from a while back, which looks "installed" but flat-out lacks the
-  `--orgs`/`--toolsets` flags this MCP server needs; and `gcx` for grafana, which is always a fresh
-  install since there's no legacy version of it to be stuck on). **Default to just installing (or
-  upgrading) it yourself, without asking permission first** — run
+- **A dependency is missing, or installed but below the minimum version this MCP server/plugin
+  needs** (currently: `sf` for salesforce-prod/uat — including machines with a leftover
+  pre-unification `sf`/legacy `sfdx-cli` from a while back, which looks "installed" but flat-out
+  lacks the `--orgs`/`--toolsets` flags this MCP server needs; and `gcx` for grafana — including
+  machines with a `gcx` from before its verb-first subcommand renames, which looks "installed" but
+  answers to different command names than this plugin's skills expect). **Default to just
+  installing (or upgrading) it yourself, without asking permission first** — run
   `python3 manage_companions.py dep-install <dependency>` (e.g. `dep-install sf` or
   `dep-install gcx`) directly. **Root is never actually required for either of these, so don't
   present it as a permission question or a blocker** — confirmed by actually running the fix
@@ -287,13 +290,27 @@ yourself:
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream. No `org_connector` check either — that's a Claude Code-only concept.
-- **Grafana (`gcx`)** — 16+ skills, a `grafana-debugger` agent, dashboard/alert/SLO management. No
-  bundled MCP server of its own — the skills/agent shell out to the local `gcx` CLI directly when
-  actually invoked. Same install mechanism on both CLIs. Needs the `gcx` CLI *installed* first —
-  `install` refuses otherwise, since there'd be no way to ever authenticate without it — but not
-  necessarily authenticated yet; installing the plugin has zero runtime footprint (no server to
-  leave in a broken state), so it's fine to install ahead of `gcx login`. This org's stack is
-  `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
+- **Grafana** — there are two genuinely different ways to reach it, and only one is actually usable
+  here:
+  - **A native Grafana MCP server** — this org hasn't enabled it, so it isn't a real option right
+    now. Don't suggest connecting to it or troubleshoot it as if it should exist; if the user asks
+    for "the Grafana MCP" specifically, tell them plainly that it isn't enabled for this org rather
+    than trying to install or configure anything.
+  - **The `gcx` CLI plugin (what this wizard actually installs)** — 16+ skills, a
+    `grafana-debugger` agent, dashboard/alert/SLO management. No MCP server of its own — the
+    skills/agent shell out to the local `gcx` CLI directly when actually invoked. Same install
+    mechanism on both CLIs.
+  - Needs the `gcx` CLI *installed and at least GCX_MIN_VERSION* first (`manage_companions.py`'s
+    constant, currently `0.6.0` — the release that renamed `gcx`'s subcommands to a verb-first
+    convention across every provider; older CLIs answer to different command names than this
+    plugin's skills expect) — `install` refuses otherwise, whether `gcx` is missing entirely or
+    just too old. Confirmed root is never required either way: `dep-install gcx` installs to
+    `~/.local/bin` via the official install script (or the user's Go bin dir via `go install` on
+    Windows) — no root, no sudo, ever — and this same command re-run also handles the upgrade case,
+    since `gcx` has no separate self-update subcommand. Not necessarily authenticated yet after
+    installing; installing the plugin has zero runtime footprint (no server to leave in a broken
+    state), so it's fine to install ahead of `gcx login`. This org's stack is
+    `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.

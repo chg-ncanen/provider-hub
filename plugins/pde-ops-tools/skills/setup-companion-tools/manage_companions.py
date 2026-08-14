@@ -272,9 +272,37 @@ def sf_dependency_status(alias):
     }
 
 
+# Floor for the gcx CLI's own bundled Claude Code plugin — v0.6.0 is the release that renamed
+# gcx's subcommands to a verb-first convention across every provider (see gcx's own CHANGELOG.md,
+# "Naming convergence: verb-first subcommand renames across all providers"); the plugin's skills
+# invoke the post-rename command names, so a CLI older than this answers to different commands
+# than the plugin expects. Raise this if a stricter minimum is ever documented upstream.
+GCX_MIN_VERSION = (0, 6, 0)
+_GCX_VERSION_RE = re.compile(r"gcx version (\d+)\.(\d+)\.(\d+)")
+
+
+def gcx_version_info():
+    """None if `gcx` isn't runnable at all. Otherwise a dict with the raw
+    `--version` text and, when it matches the expected `gcx version x.y.z`
+    format, a (major, minor, patch) tuple."""
+    rc, out, err = run(["gcx", "--version"])
+    if rc != 0:
+        return None
+    text = (out or err).strip()
+    m = _GCX_VERSION_RE.search(text)
+    return {"raw": text, "parsed": tuple(int(x) for x in m.groups()) if m else None}
+
+
 def gcx_installed():
-    rc, _, _ = run(["gcx", "--version"])
-    return rc == 0
+    return gcx_version_info() is not None
+
+
+def gcx_meets_min_version():
+    """True/False once `gcx` is confirmed installed; None if it isn't installed at all."""
+    info = gcx_version_info()
+    if info is None:
+        return None
+    return info["parsed"] is not None and info["parsed"] >= GCX_MIN_VERSION
 
 
 def gcx_configured():
@@ -291,13 +319,14 @@ def gcx_configured():
 def gcx_dependency_status():
     """Status of the `gcx` CLI dependency.
 
-    `blocking` only when the CLI isn't installed at all — there'd be no way
-    to ever authenticate without it. Installed-but-not-authenticated is
-    non-blocking: the `gcx` plugin has no MCP server of its own (just skills
-    and agents that shell out to the `gcx` binary directly when actually
-    invoked), so installing it has zero runtime footprint — there's nothing
-    that can be left "broken" by installing ahead of authentication, same
-    reasoning verified directly for salesforce-prod/uat's MCP server in
+    `blocking` when the CLI isn't installed at all, or is installed but below
+    GCX_MIN_VERSION — there'd be no way to use the plugin's skills reliably in
+    either case. Installed-and-current-but-not-authenticated is non-blocking:
+    the `gcx` plugin has no MCP server of its own (just skills and agents that
+    shell out to the `gcx` binary directly when actually invoked), so
+    installing it has zero runtime footprint — there's nothing that can be
+    left "broken" by installing ahead of authentication, same reasoning
+    verified directly for salesforce-prod/uat's MCP server in
     sf_dependency_status."""
     if not gcx_installed():
         return {
@@ -305,6 +334,22 @@ def gcx_dependency_status():
             "installed": False,
             "ready": False,
             "detail": "gcx CLI not found on PATH",
+            "blocking": True,
+        }
+    if not gcx_meets_min_version():
+        info = gcx_version_info()
+        current = info["raw"] if info["parsed"] is None else "v" + ".".join(map(str, info["parsed"]))
+        min_str = "v" + ".".join(map(str, GCX_MIN_VERSION))
+        return {
+            "name": "gcx CLI",
+            "installed": True,
+            "ready": False,
+            "detail": (
+                f"gcx CLI installed but too old ({current}, need {min_str}+) — this plugin's "
+                "skills use post-rename subcommands; run `dep-install gcx` to upgrade (re-running "
+                "the same install command overwrites it with the latest release, gcx has no "
+                "separate self-update)"
+            ),
             "blocking": True,
         }
     ready = gcx_configured()
@@ -868,11 +913,24 @@ def _resolve_gcx_guidance():
     # Sourced from https://github.com/grafana/gcx (docs/installation.md): the
     # official install script defaults to ~/.local/bin, never needs root.
     system = platform.system()
+    action = "upgrade" if gcx_installed() and not gcx_meets_min_version() else "install"
+
+    version_note = None
+    if action == "upgrade":
+        info = gcx_version_info()
+        current = info["raw"] if info["parsed"] is None else "v" + ".".join(map(str, info["parsed"]))
+        version_note = (
+            f"Currently installed: {current} — below the minimum this plugin needs "
+            f"(v{'.'.join(map(str, GCX_MIN_VERSION))}+, the verb-first command renames). Re-running "
+            "the same install command overwrites it with the latest release — gcx has no separate "
+            "self-update subcommand."
+        )
 
     if system in ("Linux", "Darwin"):
         result = {
             "dependency": "gcx",
             "system": system,
+            "action": action,
             "root_required": False,
             "command": "curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/install.sh | sh",
             "reason": "Installs to ~/.local/bin by default — no root needed.",
@@ -882,6 +940,8 @@ def _resolve_gcx_guidance():
                 "--version` isn't found right after installing."
             ),
         }
+        if version_note:
+            result["version_note"] = version_note
         if shutil.which("brew"):
             result["alternative"] = "brew install grafana/grafana/gcx (macOS/Linux, also no root)."
             result["alternative_command"] = ["brew", "install", "grafana/grafana/gcx"]
@@ -890,9 +950,10 @@ def _resolve_gcx_guidance():
     # Windows: no official install script exists for gcx.
     rc, _, _ = run(["go", "version"])
     if rc == 0:
-        return {
+        result = {
             "dependency": "gcx",
             "system": system,
+            "action": action,
             "root_required": False,
             "command": "go install github.com/grafana/gcx/cmd/gcx@latest",
             "reason": (
@@ -904,10 +965,14 @@ def _resolve_gcx_guidance():
                 "that's on PATH."
             ),
         }
+        if version_note:
+            result["version_note"] = version_note
+        return result
 
     return {
         "dependency": "gcx",
         "system": system,
+        "action": action,
         "root_required": None,
         "command": None,
         "reason": "No official Windows install script for gcx, and Go isn't on PATH either.",
@@ -927,10 +992,25 @@ def _dep_install_gcx():
             "success": False,
             "blocked": True,
             "dependency": "gcx",
+            "action": guidance["action"],
             "reason": guidance["reason"],
             "prerequisite": guidance["prerequisite"],
         }, indent=2))
         return
+
+    if guidance.get("alternative_command"):
+        rc, out, err = run(guidance["alternative_command"], timeout=180)
+        if rc == 0:
+            print(json.dumps({
+                "success": True,
+                "dependency": "gcx",
+                "action": guidance["action"],
+                "method": "brew",
+                "command": " ".join(guidance["alternative_command"]),
+            }, indent=2))
+            return
+        # Brew attempt itself failed — fall through to the official install script below rather
+        # than silently giving up on a workable route.
 
     # root_required is always False for gcx once we get here (curl script installs to
     # ~/.local/bin, go install to the user's Go bin dir) — no sudo path exists to fall back to.
@@ -945,9 +1025,11 @@ def _dep_install_gcx():
     print(json.dumps({
         "success": rc == 0,
         "dependency": "gcx",
+        "action": guidance["action"],
         "method": method,
         "command": guidance["command"],
         "note": guidance.get("note"),
+        "version_note": guidance.get("version_note"),
         "error": None if rc == 0 else (err or out).strip(),
     }, indent=2))
 
