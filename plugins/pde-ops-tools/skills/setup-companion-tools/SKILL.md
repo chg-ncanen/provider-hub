@@ -413,17 +413,3 @@ yourself:
   generic login page either), and the current URL for each lives in exactly one place,
   `manage_companions.py`'s `SF_LOGIN_INSTANCE_URLS`/`sf_login_command()` — not restated here, so a
   future domain change only needs to happen in that one file.
-
-## Considered and declined
-
-- **Okta** — a real, official, GA MCP server exists (`github.com/okta/okta-mcp-server`, Apache
-  2.0, actively maintained) — but deliberately **not** added here, and shouldn't be without a fresh
-  conversation about scope. Unlike everything above, it isn't self-serve: someone with Okta admin
-  rights has to create an OIDC app integration in the Okta admin console first and choose scopes
-  (there's no "just run a command and OAuth as yourself" path), and the tools it exposes include
-  real writes — create/delete users, group membership, policies, apps, device assurance rules —
-  not just "a Jira ticket" or "a Grafana dashboard" levels of blast radius. If this ever comes up
-  again, don't just re-add it the way Figma/Playwright were added; have the same conversation about
-  who owns Okta admin at CHG and what scope (ideally read-only: `okta.users.read`,
-  `okta.groups.read`, `okta.logs.read`) actually gets granted, rather than defaulting to whatever
-  scope is easiest to set up.
