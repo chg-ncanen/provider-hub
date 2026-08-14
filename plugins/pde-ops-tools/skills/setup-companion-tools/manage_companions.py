@@ -272,12 +272,11 @@ def sf_dependency_status(alias):
     }
 
 
-# Floor for the gcx CLI's own bundled Claude Code plugin — v0.6.0 is the release that renamed
-# gcx's subcommands to a verb-first convention across every provider (see gcx's own CHANGELOG.md,
-# "Naming convergence: verb-first subcommand renames across all providers"); the plugin's skills
-# invoke the post-rename command names, so a CLI older than this answers to different commands
-# than the plugin expects. Raise this if a stricter minimum is ever documented upstream.
-GCX_MIN_VERSION = (0, 6, 0)
+# Floor for the gcx CLI's own bundled Claude Code plugin. gcx has no vendor-declared minimum CLI
+# version for the plugin — the CLI and plugin ship from the same repo at matching version tags
+# (e.g. both currently 1.0.0), so this is pinned to the actual installed/confirmed-working version
+# rather than an inferred one. Bump this whenever you deliberately move to a newer gcx release.
+GCX_MIN_VERSION = (1, 0, 0)
 _GCX_VERSION_RE = re.compile(r"gcx version (\d+)\.(\d+)\.(\d+)")
 
 
@@ -345,10 +344,9 @@ def gcx_dependency_status():
             "installed": True,
             "ready": False,
             "detail": (
-                f"gcx CLI installed but too old ({current}, need {min_str}+) — this plugin's "
-                "skills use post-rename subcommands; run `dep-install gcx` to upgrade (re-running "
-                "the same install command overwrites it with the latest release, gcx has no "
-                "separate self-update)"
+                f"gcx CLI installed but older than the confirmed-working version ({current}, need "
+                f"{min_str}+); run `dep-install gcx` to upgrade (re-running the same install "
+                "command overwrites it with the latest release, gcx has no separate self-update)"
             ),
             "blocking": True,
         }
@@ -920,10 +918,9 @@ def _resolve_gcx_guidance():
         info = gcx_version_info()
         current = info["raw"] if info["parsed"] is None else "v" + ".".join(map(str, info["parsed"]))
         version_note = (
-            f"Currently installed: {current} — below the minimum this plugin needs "
-            f"(v{'.'.join(map(str, GCX_MIN_VERSION))}+, the verb-first command renames). Re-running "
-            "the same install command overwrites it with the latest release — gcx has no separate "
-            "self-update subcommand."
+            f"Currently installed: {current} — below the confirmed-working minimum this plugin "
+            f"needs (v{'.'.join(map(str, GCX_MIN_VERSION))}+). Re-running the same install command "
+            "overwrites it with the latest release — gcx has no separate self-update subcommand."
         )
 
     if system in ("Linux", "Darwin"):

@@ -199,9 +199,8 @@ already needs to do both.
 - **A dependency is missing, or installed but below the minimum version this MCP server/plugin
   needs** (currently: `sf` for salesforce-prod/uat — including machines with a leftover
   pre-unification `sf`/legacy `sfdx-cli` from a while back, which looks "installed" but flat-out
-  lacks the `--orgs`/`--toolsets` flags this MCP server needs; and `gcx` for grafana — including
-  machines with a `gcx` from before its verb-first subcommand renames, which looks "installed" but
-  answers to different command names than this plugin's skills expect). **Default to just
+  lacks the `--orgs`/`--toolsets` flags this MCP server needs; and `gcx` for grafana — pinned to
+  the actual confirmed-working version, since gcx has no vendor-declared minimum). **Default to just
   installing (or upgrading) it yourself, without asking permission first** — run
   `python3 manage_companions.py dep-install <dependency>` (e.g. `dep-install sf` or
   `dep-install gcx`) directly. **Root is never actually required for either of these, so don't
@@ -301,10 +300,11 @@ yourself:
     skills/agent shell out to the local `gcx` CLI directly when actually invoked. Same install
     mechanism on both CLIs.
   - Needs the `gcx` CLI *installed and at least GCX_MIN_VERSION* first (`manage_companions.py`'s
-    constant, currently `0.6.0` — the release that renamed `gcx`'s subcommands to a verb-first
-    convention across every provider; older CLIs answer to different command names than this
-    plugin's skills expect) — `install` refuses otherwise, whether `gcx` is missing entirely or
-    just too old. Confirmed root is never required either way: `dep-install gcx` installs to
+    constant, currently `1.0.0` — gcx has no vendor-declared minimum CLI version for the plugin, so
+    this is pinned to the actual confirmed-working version rather than inferred from anything;
+    bump it deliberately when moving to a newer gcx release) — `install` refuses otherwise, whether
+    `gcx` is missing entirely or just too old. Confirmed root is never required either way:
+    `dep-install gcx` installs to
     `~/.local/bin` via the official install script (or the user's Go bin dir via `go install` on
     Windows) — no root, no sudo, ever — and this same command re-run also handles the upgrade case,
     since `gcx` has no separate self-update subcommand. Not necessarily authenticated yet after
