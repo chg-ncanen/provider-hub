@@ -1,14 +1,15 @@
 ---
 name: setup-companion-tools
-description: Interactively install optional companion MCPs/plugins for PDE work (Atlassian, Grafana, LaunchDarkly, LogRocket, Salesforce prod/UAT) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
+description: Interactively install optional companion MCPs/plugins for PDE work (Atlassian, Figma, Grafana, LaunchDarkly, LogRocket, Playwright, Salesforce prod/UAT) that aren't bundled in the pde plugin. Use when the user asks to set up, connect, install, or configure additional PDE tools/MCPs, or asks what companion tools are available.
 user-invocable: true
 ---
 
 # Setup Companion Tools
 
 A guided wizard for optionally installing MCP servers/plugins commonly used alongside PDE
-tooling, that aren't bundled in the `pde` plugin itself: Atlassian (Jira/Confluence), Grafana
-(`gcx`), LaunchDarkly, LogRocket, Salesforce prod, and Salesforce UAT. None of these are called
+tooling, that aren't bundled in the `pde` plugin itself: Atlassian (Jira/Confluence), Figma,
+Grafana (`gcx`), LaunchDarkly, LogRocket, Playwright, Salesforce prod, and Salesforce UAT. None
+of these are called
 automatically by any code in the `pde` plugin — nothing here runs on its own, only when a
 developer explicitly invokes this skill, and only for whichever service(s) they pick. Whether a
 particular downstream skill needs one of these installed is that skill's own concern to check,
@@ -41,10 +42,10 @@ Run `python3 <this skill's own directory>/manage_companions.py status --cli <cla
 relative to the caller's cwd (`enabled: false` and no `mcpServers` when cwd doesn't match the
 project it was installed for) — `cd`-ing away from the user's actual project before running this
 would make `pde_mcp_status()` misreport `pde` as not found even when it's installed and enabled.
-Render the result as **all six companion services, plus `pde_mcp` itself**, as one markdown
+Render the result as **all eight companion services, plus `pde_mcp` itself**, as one markdown
 table — a plain numbered pick, not an interactive tool prompt. (An earlier version of this skill
-used `AskUserQuestion`, but that tool caps at 4 options, which meant 2 of the 6 services always
-had to be demoted to "type the name yourself" — worse than just listing all 6 up front.) A table
+used `AskUserQuestion`, but that tool caps at 4 options, which meant several of the 8 services
+always had to be demoted to "type the name yourself" — worse than just listing all 8 up front.) A table
 is also what actually gets read; a plain status paragraph followed by something else blends in
 and gets skipped.
 
@@ -64,11 +65,13 @@ just explain it isn't installable here rather than trying to do anything with it
 |---|---|---|---|---|---|---|
 | — | pde-mcp | — | ✅ | ✅ | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
 | 1 | Atlassian MCP | — | ✅ | — | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
-| 2 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
-| 3 | LaunchDarkly MCP | — | ✅ | — | ❌ not authenticated yet | Feature flag management |
-| 4 | LogRocket MCP | — | ❌ | — | — | Session replay, metrics, issue search |
-| 5 | Salesforce prod MCP | ✅ | ✅ | ✅ | ✅ | SOQL queries against the prod org |
-| 6 | Salesforce UAT MCP | ❌ sf CLI too old (v1.5.0, need v2.0.0+) | ❌ | ❌ | — | SOQL queries against the UAT org |
+| 2 | Figma MCP | — | ❌ | — | — | Design files, styles, components, layout for design-to-code |
+| 3 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
+| 4 | LaunchDarkly MCP | — | ✅ | — | ❌ not authenticated yet | Feature flag management |
+| 5 | LogRocket MCP | — | ❌ | — | — | Session replay, metrics, issue search |
+| 6 | Playwright MCP | — | ✅ | — | — | Browser automation: navigate, fill forms, screenshots, run JS |
+| 7 | Salesforce prod MCP | ✅ | ✅ | ✅ | ✅ | SOQL queries against the prod org |
+| 8 | Salesforce UAT MCP | ❌ sf CLI too old (v1.5.0, need v2.0.0+) | ❌ | ❌ | — | SOQL queries against the UAT org |
 
 Four checkmark-style columns instead of one prose "Status" column — each answers one yes/no
 question on its own, so a row's overall state is scannable at a glance instead of buried in a
@@ -117,8 +120,14 @@ sentence:
   - **Installed, `ready: true`**: `"✅"`.
   - **Installed, `ready: false`**: `"❌ "` + the shortest accurate paraphrase of the relevant
     `dependencies[].detail` (there's always exactly one dependency entry driving `ready` for each of
-    these six today — the blocking CLI dependency for `grafana`/`salesforce-prod`/`salesforce-uat`,
-    or the synthetic `"OAuth session"` entry for `atlassian`/`launch-darkly`/`logrocket`).
+    these services — the blocking CLI dependency for `grafana`/`salesforce-prod`/`salesforce-uat`,
+    or the synthetic `"OAuth session"` entry for `atlassian`/`figma`/`launch-darkly`/`logrocket`).
+  - **Installed, `ready: null` and it has no `dependencies` entry at all** (currently: `playwright`
+    only): `"—"` — not a vague "unknown", a genuine "there's no live-connection signal to check for
+    this service at all": no CLI to authenticate, no OAuth session, nothing that can be
+    connected/disconnected. Don't render this as `"❌"` (that would imply something's actually
+    wrong) or invent a status word — once `Installed` is `"✅"` for a service with no dependency and
+    no OAuth session match, it just works.
   - **Atlassian specifically, when `org_connector.connected` is `true`**: `"✅ (org connector)"`,
     regardless of the plugin's own `ready` — a connected org-wide connector already covers the
     bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
@@ -162,8 +171,9 @@ let me know if you're done." — handle exactly one pick at a time (matches the 
 handling one pick, re-run status and show a fresh table, rather than batching several installs
 from one answer).
 
-If every one of the 6 numbered companion services is already installed and ready, skip the
-question — just show the table (`pde_mcp` row included) and say there's nothing left to do.
+If every one of the 8 numbered companion services is already installed and ready — or, for a
+service with no live-connection signal at all (currently: `playwright`), simply installed — skip
+the question — just show the table (`pde_mcp` row included) and say there's nothing left to do.
 Atlassian being covered by an `org_connector` doesn't count toward this on its own, since
 installing it anyway is still a standing option. `pde_mcp`'s own readiness never affects whether
 there's "nothing to do" — it's informational only, not part of what this wizard can act on.
@@ -200,8 +210,8 @@ other reason).
 **Installed is not the same as ready to use.** For every successful install, also do whatever's
 needed to actually finish setup:
 
-- If the result has a non-null `post_install` field (grafana, logrocket, atlassian,
-  launch-darkly, salesforce-prod, salesforce-uat): relay it verbatim, and be explicit that a
+- If the result has a non-null `post_install` field (all eight services currently have one):
+  relay it verbatim, and be explicit that a
   **session restart** is required first — the newly installed server/plugin isn't connected in the
   *current* session. Tell the user plainly: "restart your session now; when you're back, just ask
   me to check companion tools status again (or re-run this skill) and I'll pick up exactly where
@@ -280,12 +290,17 @@ already needs to do both.
   ever changes, that's the only place that needs updating, so don't duplicate the URLs into this
   file too. For Grafana: `gcx login --server https://chg.grafana.net` — that's this org's Grafana
   Cloud stack; don't let the user log into a different one.
-- **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): `status`
-  shows `Connected: "❌ ..."` in the table (not just `"—"`) until the entry's own live connection
-  state — read from `claude mcp list`, not just "the plugin is registered" — comes back connected.
-  While it's not: after a restart, you can proactively call one of that service's tools right away
-  (e.g. "list my feature flags") to trigger the login immediately instead of leaving the user to
-  stumble into it later — ask first, since it'll pop an auth prompt.
+- **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly, figma):
+  `status` shows `Connected: "❌ ..."` in the table (not just `"—"`) until the entry's own live
+  connection state — read from `claude mcp list`, not just "the plugin is registered" — comes back
+  connected. While it's not: after a restart, you can proactively call one of that service's tools
+  right away (e.g. "list my feature flags", "get the layout for this Figma frame") to trigger the
+  login immediately instead of leaving the user to stumble into it later — ask first, since it'll
+  pop an auth prompt.
+- **Playwright specifically**: has no OAuth session and no CLI dependency either — nothing to
+  authenticate, ever. Its `post_install` covers the one real first-use gap (browser binaries not
+  yet downloaded) — relay that if a browser tool call actually fails with a missing-browser error,
+  don't treat it as a readiness gap to check for proactively the way OAuth services get one.
 - **Atlassian specifically**: check `org_connector` from `status` first. If it's present and
   `connected: true`, say so plainly before pushing OAuth on the plugin's own entry — a connected
   `claude.ai`-configured connector already provides the same Jira/Confluence tools, so
@@ -328,6 +343,25 @@ yourself:
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
     upstream. No `org_connector` check either — that's a Claude Code-only concept.
+- **Figma** — read design files, styles, components, layout for design-to-code work. Three real
+  ways to reach Figma exist; this installs the one that fits every plan/seat with no extra
+  credential to manage:
+  - **This wizard installs Figma's official *remote* MCP server** (`https://mcp.figma.com/mcp`) —
+    remote HTTP, authenticates via an interactive OAuth prompt the first time it connects, works on
+    any Figma plan/seat. Same install mechanism and lazy-auth pattern as `launch-darkly`.
+  - **Figma's official *desktop* Dev Mode MCP server** (`localhost:3845/mcp`) is a different,
+    higher-fidelity option (live variables, Code Connect mappings) that this wizard does *not*
+    install — it needs a paid Dev/Full seat (Starter/View/Collab seats get capped at 6 calls/month)
+    *and* the Figma desktop app actually running locally with Dev Mode on, neither of which this
+    script can check or start. If the user specifically wants this one, point them at Figma's own
+    setup docs rather than trying to wire it up here.
+  - **Framelink (`figma-developer-mcp`)**, a popular community alternative that works on any
+    account/plan via a personal Figma access token instead of OAuth, isn't installed by this wizard
+    either — the remote MCP server was chosen instead since it needs no per-user token to manage
+    and matches this skill's existing OAuth-based services. Don't run both Figma MCP servers at
+    once if a user already has
+    Framelink configured some other way — two servers touching the same Figma data confuses tool
+    selection more than it helps.
 - **Grafana** — there are two genuinely different ways to reach it, and only one is actually usable
   here:
   - **A native Grafana MCP server** — this org hasn't enabled it, so it isn't a real option right
@@ -354,6 +388,16 @@ yourself:
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
 - **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
+- **Playwright** — browser automation: navigate, fill forms, run JS, capture screenshots and
+  structured page data. Microsoft's official `@playwright/mcp`, via `npx @playwright/mcp@latest` —
+  local stdio, same install mechanism on both CLIs. No local CLI dependency to check, no OAuth
+  session either, so `status` never has anything to say about this one beyond `installed` — it
+  just works once registered. The one real first-use gap: browser binaries (and, on Linux, system
+  libs) download lazily on first real use, not at install time — if a browser tool call fails with
+  a missing-browser error, `npx -y playwright install --with-deps` fixes it. This can't be checked
+  or fixed ahead of time the way `sf`/`gcx`'s dependencies can (there's no way to know it's missing
+  until a tool actually tries to launch a browser), so don't try to proactively verify it during
+  install — only mention it if a real failure with that shape actually happens.
 - **Salesforce prod and UAT** — SOQL queries against the prod/UAT orgs, via `npx @salesforce/mcp`,
   scoped to the `prod`/`uat` alias respectively. Identical mechanics for both — one shared `sf` CLI
   dependency, checked and installed/upgraded the same way regardless of which alias you're setting

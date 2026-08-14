@@ -575,6 +575,22 @@ SERVICES = {
             "your session, the first Atlassian request (e.g. 'search Jira for...') will trigger it."
         ),
     },
+    "figma": {
+        "label": "Figma — read design files, styles, components, layout for design-to-code work",
+        "kind": "mcp",
+        "mcp_name": "figma",
+        "mcp_url": "https://mcp.figma.com/mcp",
+        "oauth_session_match": "figma",
+        "ready_hint": "Authenticates via OAuth automatically on the first real tool call.",
+        "post_install": (
+            "Authenticates via an interactive OAuth prompt automatically the first time one of "
+            "its tools is actually called — nothing to configure ahead of time. After restarting "
+            "your session, the first Figma request (e.g. 'get the layout for this Figma frame') "
+            "will trigger it. Works on any Figma plan/seat — this is Figma's official *remote* MCP "
+            "server, distinct from the desktop Dev Mode MCP server (localhost:3845), which needs a "
+            "paid Dev/Full seat and the Figma desktop app running locally; not what this installs."
+        ),
+    },
     "grafana": {
         "label": "Grafana (gcx plugin) — dashboards, alerts, SLOs, incident analysis",
         "kind": "plugin",
@@ -622,6 +638,21 @@ SERVICES = {
             "its tools is actually called — nothing to configure ahead of time. After restarting "
             "your session, the first LogRocket request (e.g. 'show me recent LogRocket sessions') "
             "will trigger it."
+        ),
+    },
+    "playwright": {
+        "label": "Playwright — browser automation: navigate, fill forms, screenshots, run JS",
+        "kind": "mcp",
+        "mcp_name": "playwright",
+        "mcp_command": ["npx", "-y", "@playwright/mcp@latest"],
+        "post_install": (
+            "Runs entirely locally via npx — no login/auth step, no OAuth session, nothing to "
+            "connect (this is why it has no `dependencies` entry and no `ready_hint`: there's no "
+            "live-connection signal to check at all, unlike the OAuth-based or sf/gcx-backed "
+            "services). If a browser tool call fails the first time with a missing-browser error, "
+            "run `npx -y playwright install --with-deps` once to download the browser binaries "
+            "(and Linux system libs) — this can't be checked ahead of time the way sf/gcx's "
+            "dependencies are, since Playwright downloads them lazily on first real use."
         ),
     },
     "salesforce-prod": {
