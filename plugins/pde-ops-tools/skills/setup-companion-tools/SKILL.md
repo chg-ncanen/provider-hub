@@ -62,7 +62,7 @@ just explain it isn't installable here rather than trying to do anything with it
 
 | # | Service | Deps | Installed | Configured | Connected | Description |
 |---|---|---|---|---|---|---|
-| — | pde-mcp | — | ✅ | — | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
+| — | pde-mcp | — | ✅ | ✅ | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
 | 1 | Atlassian MCP | — | ✅ | — | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
 | 2 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
 | 3 | LaunchDarkly MCP | — | ✅ | — | ❌ not authenticated yet | Feature flag management |
@@ -91,20 +91,22 @@ sentence:
   `false`. This is pure registration state — whether it actually works belongs in `Configured`/
   `Connected`, not folded in here. A `"❌"` here with `Deps` also `"❌"` tells the user in one glance
   that picking this row walks through a dependency install first, not just a plain install.
-- **`Configured`** — for `grafana`/`salesforce-prod`/`salesforce-uat` only (`"—"` for the other
-  three, same as `Deps` — there's no local CLI to point at anything): has the CLI actually been
-  pointed at the right target at some point, *regardless of whether that session is still live*?
-  `sf` — the alias exists in `sf org list --json` at all, any `connectedStatus`. `gcx` — the current
-  context (`gcx config list-contexts --output json`, the entry with `current: true`) has a `server`
-  set. This is the field `dependencies[].configured` feeds — `"✅"` if `true`, `"❌"` if `false`,
-  same bare-checkmark style as `Installed` (the reason, if any, already showed up in `Deps` or will
-  show up in `Connected`). **This is what actually distinguishes "never logged in" from "logged in
-  once, but the session died"** — the case `Connected` alone would otherwise flatten into an
-  identical-looking `"❌"`: a revoked/expired `sf` refresh token, or a `gcx` context whose OAuth
-  session expired, both read as `Configured: ✅, Connected: ❌` instead of looking like nothing was
-  ever set up (`dependencies[].detail` says exactly this — "configured for '<alias>' but the session
-  isn't live", "current context is set but the session isn't live" — reuse that text rather than
-  re-deriving it).
+- **`Configured`** — for `grafana`/`salesforce-prod`/`salesforce-uat` (`"—"` for `atlassian`,
+  `launch-darkly`, `logrocket` — same as `Deps`, there's no local CLI to point at anything for those
+  three): has the CLI actually been pointed at the right target at some point, *regardless of
+  whether that session is still live*? `sf` — the alias exists in `sf org list --json` at all, any
+  `connectedStatus`. `gcx` — the current context (`gcx config list-contexts --output json`, the
+  entry with `current: true`) has a `server` set. This is the field `dependencies[].configured`
+  feeds — `"✅"` if `true`, `"❌"` if `false`, same bare-checkmark style as `Installed` (the reason,
+  if any, already showed up in `Deps` or will show up in `Connected`). **This is what actually
+  distinguishes "never logged in" from "logged in once, but the session died"** — the case
+  `Connected` alone would otherwise flatten into an identical-looking `"❌"`: a revoked/expired `sf`
+  refresh token, or a `gcx` context whose OAuth session expired, both read as `Configured: ✅,
+  Connected: ❌` instead of looking like nothing was ever set up (`dependencies[].detail` says
+  exactly this — "configured for '<alias>' but the session isn't live", "current context is set but
+  the session isn't live" — reuse that text rather than re-deriving it). `pde_mcp` also gets a real
+  `Configured` value (see below) — it's the one row where this column isn't `"—"` despite having no
+  `dependencies` entry, since its userConfig check works differently (see `pde_mcp_configured()`).
 - **`Connected`** — comes from `ready`/`dependencies`/`org_connector` — **always resolve it to the
   actual concrete reason, never a vague placeholder**: if it isn't connected, say why, in the same
   terms the dependency's own `detail` field already gives you (e.g. "not logged into 'prod'", "gcx
@@ -122,14 +124,21 @@ sentence:
     bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
     connected" from the user's point of view.
 
-For the `pde_mcp` row, `Deps`, `Configured`, and `Connected` are always `"—"` (it isn't something
-this wizard installs, and isn't a service you connect to a login/OAuth session — it's the plugin's
-own bundled server). `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found
-installed — genuinely unusual, since this skill is bundled inside it, so seeing this likely means
-something's off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed`
-cell rather than a checkmark in that case. `ready: false` means something's actually wrong with an
-install that *was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but
-put `detail` in the Description column too so it's visible without the user having to ask, since
+For the `pde_mcp` row, `Deps` and `Connected` are always `"—"` (it isn't something this wizard
+installs, and isn't a service you connect to a login/OAuth session — it's the plugin's own bundled
+server). `Configured`, though, is a real check here (see above) — `pde_mcp_configured()` reads
+whether the plugin's required userConfig (`ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`) is actually set,
+straight from Claude Code's own on-disk plugin config (`~/.claude/settings.json`'s `pluginConfigs`
+for the non-sensitive fields, `~/.claude/.credentials.json`'s `pluginSecrets` for the ones marked
+`"sensitive": true` in `plugin.json` — checked for presence only, never for the actual value, which
+this skill should never print, log, or ask the user to paste). Claude Code-only and best-effort: it
+returns `None` (render as `"—"`, not a false `"❌"`) on Copilot CLI, or whenever either file can't be
+read at all. `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found installed —
+genuinely unusual, since this skill is bundled inside it, so seeing this likely means something's
+off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed` cell rather
+than a checkmark in that case. `ready: false` means something's actually wrong with an install that
+*was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but put `detail` in
+the Description column too so it's visible without the user having to ask, since
 this row never leads to a follow-up step the way the picker rows do.
 
 Keep `Description` to what the service generally does — the concrete not-connected/not-configured

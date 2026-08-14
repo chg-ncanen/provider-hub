@@ -69,6 +69,63 @@ def find_plugin_root(plugin_name, cli):
     return None
 
 
+def _claude_plugin_full_id(plugin_name):
+    """Full 'name@marketplace' id for an installed plugin — find_plugin_root()
+    above matches on the plugin name alone, but pluginConfigs/pluginSecrets in
+    Claude Code's own settings/.credentials files key by the full id."""
+    rc, out, _ = run(["claude", "plugin", "list", "--json"])
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(out)
+    except Exception:
+        return None
+    for p in data:
+        if p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True):
+            return p.get("id")
+    return None
+
+
+def pde_mcp_configured(cli):
+    """Whether pde-mcp's required userConfig credentials (ATLASSIAN_EMAIL,
+    ATLASSIAN_API_TOKEN) are actually set — read directly from Claude Code's
+    own on-disk plugin config, since these get substituted into the MCP
+    server's spawned process via .mcp.json's `${user_config.*}` syntax and
+    aren't visible in this script's own environment any other way. Confirmed
+    directly where each half lives: non-sensitive fields (ATLASSIAN_EMAIL,
+    EMAIL_USERNAME) sit in ~/.claude/settings.json's `pluginConfigs`; fields
+    marked `"sensitive": true` in plugin.json's userConfig schema (the API
+    token, the email app password) sit in ~/.claude/.credentials.json's
+    `pluginSecrets` instead — checked here for presence/non-empty only, the
+    actual value is never read into anything that gets printed or logged.
+
+    Claude Code-only concept (Copilot CLI has its own separate, unexplored
+    plugin-config storage) — returns `None`, genuinely unknown, rather than a
+    false "not configured", whenever `cli != "claude"`, the plugin isn't
+    found, or either file can't be read (e.g. a different OS keeping secrets
+    in a real OS keychain instead of this file)."""
+    if cli != "claude":
+        return None
+    plugin_id = _claude_plugin_full_id("pde")
+    if not plugin_id:
+        return None
+
+    options = {}
+    try:
+        with open(os.path.expanduser("~/.claude/settings.json")) as f:
+            options = json.load(f).get("pluginConfigs", {}).get(plugin_id, {}).get("options", {})
+    except Exception:
+        pass
+
+    try:
+        with open(os.path.expanduser("~/.claude/.credentials.json")) as f:
+            secrets = json.load(f).get("pluginSecrets", {}).get(plugin_id, {})
+    except Exception:
+        return None
+
+    return bool(options.get("ATLASSIAN_EMAIL")) and bool(secrets.get("ATLASSIAN_API_TOKEN"))
+
+
 def pde_mcp_status(cli):
     """Read-only health check for pde-mcp itself — not a companion service (it's
     bundled with the PDE Ops Tools plugin, set up by the SessionStart hook, not
@@ -77,10 +134,12 @@ def pde_mcp_status(cli):
     real broken-venv bug: locate the plugin root, check the venv's python
     exists, then actually try importing pde-mcp's dependencies rather than
     inferring from a marker file."""
+    configured = pde_mcp_configured(cli)
     plugin_root = find_plugin_root("pde", cli)
     if not plugin_root:
         return {
             "ready": None,
+            "configured": configured,
             "detail": "Not installed — the PDE Ops Tools plugin (`pde`) wasn't found",
         }
 
@@ -88,6 +147,7 @@ def pde_mcp_status(cli):
     if not os.path.exists(venv_python):
         return {
             "ready": False,
+            "configured": configured,
             "detail": "venv not found yet — restart your session so the SessionStart hook can build it",
         }
 
@@ -102,10 +162,14 @@ def pde_mcp_status(cli):
         timeout=15,
     )
     if rc == 0:
-        return {"ready": True, "detail": "Bundled with the PDE Ops Tools plugin — venv and dependencies OK"}
+        detail = "Bundled with the PDE Ops Tools plugin — venv and dependencies OK"
+        if configured is False:
+            detail += "; missing required userConfig (Atlassian email and/or API token) — JSM tools will fail until that's filled in"
+        return {"ready": True, "configured": configured, "detail": detail}
     reason = (err or out).strip().splitlines()[-1] if (err or out).strip() else "unknown import error"
     return {
         "ready": False,
+        "configured": configured,
         "detail": f"dependencies broken — {reason} (restart your session to let the hook reinstall)",
     }
 
