@@ -996,9 +996,11 @@ def _resolve_sf_guidance():
                 f"own ({NPM_USER_PREFIX}) avoids it entirely. npm's own documented fix, not sudo."
             ),
             "note": (
-                f"After this, `sf` installs to {NPM_USER_PREFIX}/bin — add "
-                f"`export PATH=\"$HOME/.npm-global/bin:$PATH\"` to your shell profile if `sf "
-                "--version` isn't found right away."
+                f"After this, `sf` installs to {NPM_USER_PREFIX}/bin, which isn't on PATH by "
+                f"default — add `export PATH=\"$HOME/.npm-global/bin:$PATH\"` to your shell "
+                "profile, then open a genuinely new terminal window/tab/SSH session before `sf` "
+                "resolves. Restarting Claude Code alone won't do it — that reuses the current "
+                "terminal's shell, which already read its profile once and won't re-read it."
             ),
         }
 
@@ -1115,9 +1117,12 @@ def _resolve_gcx_guidance():
             "command": "curl -fsSL https://raw.githubusercontent.com/grafana/gcx/main/scripts/install.sh | sh",
             "reason": "Installs to ~/.local/bin by default — no root needed.",
             "note": (
-                "Make sure ~/.local/bin is on PATH afterward — add "
-                "`export PATH=\"$HOME/.local/bin:$PATH\"` to your shell profile if `gcx "
-                "--version` isn't found right after installing."
+                "~/.local/bin is already on PATH by default on most Linux/macOS setups (check "
+                "with `which gcx` right after this finishes) — if it isn't here, add `export "
+                "PATH=\"$HOME/.local/bin:$PATH\"` to your shell profile, then open a genuinely new "
+                "terminal window/tab/SSH session before `gcx` resolves. Restarting Claude Code "
+                "alone won't do it — that reuses the current terminal's shell, which already read "
+                "its profile once and won't re-read it."
             ),
         }
         if version_note:

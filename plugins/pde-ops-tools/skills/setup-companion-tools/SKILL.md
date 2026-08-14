@@ -265,11 +265,20 @@ already needs to do both.
   the npm path. State what you're about to run in one short sentence first (transparency, not a
   yes/no question — e.g. "Installing the sf CLI now — no root needed."), then relay the actual
   result from `dep-install`'s JSON (`success`, `method`, `command`, `note`, or `error`) — verify
-  from that, don't assume it worked just because you ran it. If `dep-install` reports a `note` about
-  PATH (the npm-user-prefix and both gcx paths install outside the usual system directories), pass
-  it along — the user may need to open a new shell or update their profile before the plain command
-  name resolves. Once a dependency install/upgrade succeeds, retry the service's own `install` call
-  (step 2) — that's what actually registers the MCP/plugin now that the dependency is clear.
+  from that, don't assume it worked just because you ran it. **If `dep-install` reports a `note`
+  about PATH** (the npm-user-prefix and both gcx paths install outside the usual system
+  directories): this is two sequential steps, not two alternatives — update the shell profile
+  *first* (the `note` gives the exact `export PATH=...` line), *then* a genuinely new terminal
+  window/tab/SSH session (one that hasn't started yet) picks it up. **Restarting the Claude Code
+  session by itself never fixes this**, even after the profile is updated — that just spawns a new
+  `claude` process inside the *same already-running terminal shell*, which already read its
+  profile once at its own startup and won't re-read it just because a child process restarts.
+  Verified directly: `sf` stayed unresolvable via plain `which sf` even after the profile was
+  updated, until a genuinely new shell was started. Tell the user this plainly rather than letting
+  "restart your session" imply the same fix as the MCP/plugin case above — they're different
+  restarts. Once a dependency install/upgrade succeeds (and PATH is sorted if needed), retry the
+  service's own `install` call (step 2) — that's what actually registers the MCP/plugin now that
+  the dependency is clear.
   - **Only fall back to a manual step when `dep-install` itself reports `{"success": false,
     "blocked": true, ...}` with `command: null`** — in practice this means Node.js is missing for
     `sf`, or Go/git is missing for `gcx` on Windows (see `prerequisite`): there's a real prerequisite
