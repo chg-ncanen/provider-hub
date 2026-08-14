@@ -164,6 +164,17 @@ def sf_installed_via_brew():
     return rc == 0
 
 
+def _sf_known_orgs():
+    rc, out, _ = run(["sf", "org", "list", "--json"])
+    if rc != 0:
+        return []
+    try:
+        d = json.loads(out)
+        return [o for group in d.get("result", {}).values() if isinstance(group, list) for o in group]
+    except Exception:
+        return []
+
+
 def sf_connected_aliases():
     """Aliases whose org is actually live-connected right now — `sf alias
     list` (used previously) only proves an alias mapping was created at some
@@ -174,15 +185,17 @@ def sf_connected_aliases():
     per-org `connectedStatus` (checked across every org group it returns:
     sandboxes, nonScratchOrgs, devHubs, scratchOrgs, other) is the live
     signal instead."""
-    rc, out, _ = run(["sf", "org", "list", "--json"])
-    if rc != 0:
-        return set()
-    try:
-        d = json.loads(out)
-        orgs = [o for group in d.get("result", {}).values() if isinstance(group, list) for o in group]
-        return {o.get("alias") for o in orgs if o.get("connectedStatus") == "Connected"}
-    except Exception:
-        return set()
+    return {o.get("alias") for o in _sf_known_orgs() if o.get("connectedStatus") == "Connected"}
+
+
+def sf_known_aliases():
+    """Aliases sf knows about at all, regardless of whether their session is
+    currently valid — i.e. whether `sf org login web --alias <alias>` has
+    ever been run for it, as distinct from sf_connected_aliases()'s live
+    connectedStatus check. An alias can be known (mapped, shows up here) but
+    not connected (revoked/expired refresh token) — that gap is exactly what
+    the Configured vs Connected columns in the status table distinguish."""
+    return {o.get("alias") for o in _sf_known_orgs() if o.get("alias")}
 
 
 # Org login endpoints — the one real difference between prod and uat, everything else about the
@@ -239,6 +252,7 @@ def sf_dependency_status(alias):
         return {
             "name": "sf CLI",
             "installed": False,
+            "configured": False,
             "ready": False,
             "detail": "sf CLI not found on PATH",
             "blocking": True,
@@ -250,6 +264,7 @@ def sf_dependency_status(alias):
         return {
             "name": "sf CLI",
             "installed": True,
+            "configured": False,
             "ready": False,
             "detail": (
                 f"sf CLI installed but too old ({current}, need {min_str}+) — @salesforce/mcp "
@@ -258,15 +273,20 @@ def sf_dependency_status(alias):
             ),
             "blocking": True,
         }
-    ready = alias in sf_connected_aliases()
+    configured = alias in sf_known_aliases()
+    ready = configured and alias in sf_connected_aliases()
     return {
         "name": "sf CLI",
         "installed": True,
+        "configured": configured,
         "ready": ready,
         "detail": (
             f"sf CLI installed, logged into '{alias}'"
             if ready
             else f"sf CLI installed but not logged into '{alias}'"
+            if not configured
+            else f"sf CLI configured for '{alias}' but the session isn't live — run "
+            f"`{sf_login_command(alias)}` again to reconnect it"
         ),
         "blocking": False,
     }
@@ -304,13 +324,37 @@ def gcx_meets_min_version():
     return info["parsed"] is not None and info["parsed"] >= GCX_MIN_VERSION
 
 
+def gcx_context_configured():
+    """Whether gcx's *current* context is actually pointed at a target
+    (has a `server` set) — distinct from gcx_configured()'s live connectivity
+    check below, so a context that exists but whose login session died reads
+    as 'configured but not connected' rather than 'not configured at all'.
+    `gcx config list-contexts --output json` lists every context (e.g. a
+    leftover empty `default` alongside a real one) with `current: true` on
+    whichever one is active; a context with no `server` key at all has never
+    been pointed anywhere (`gcx login` was never run for it)."""
+    rc, out, _ = run(["gcx", "config", "list-contexts", "--output", "json"])
+    if rc != 0:
+        return False
+    try:
+        data = json.loads(out)
+    except Exception:
+        return False
+    for ctx in data.get("contexts", []):
+        if ctx.get("current"):
+            return bool(ctx.get("server"))
+    return False
+
+
 def gcx_configured():
-    # `gcx config check` exits 0 unconditionally — verified this returns rc==0
-    # even against an empty/invalid config dir with no context at all — so the
-    # exit code carries no signal. "Connectivity: online" in its text output is
-    # the actual proof the current context is valid, authenticated, and
-    # reachable; anything else (invalid config, connectivity skipped/offline)
-    # means it isn't ready.
+    # `gcx config check`'s exit code carries no signal either way — verified
+    # both that it returns rc==0 against an empty/invalid config dir with no
+    # context at all, AND rc==1 here with a perfectly fine *current* context
+    # just because an unrelated, unused context (e.g. a leftover empty
+    # `default`) happened to be broken. "Connectivity: online" in its text
+    # output is the actual proof the current context is valid, authenticated,
+    # and reachable; anything else (invalid config, connectivity
+    # skipped/offline) means it isn't ready.
     _, out, _ = run(["gcx", "config", "check"])
     return "connectivity: online" in out.lower()
 
@@ -331,6 +375,7 @@ def gcx_dependency_status():
         return {
             "name": "gcx CLI",
             "installed": False,
+            "configured": False,
             "ready": False,
             "detail": "gcx CLI not found on PATH",
             "blocking": True,
@@ -342,6 +387,7 @@ def gcx_dependency_status():
         return {
             "name": "gcx CLI",
             "installed": True,
+            "configured": False,
             "ready": False,
             "detail": (
                 f"gcx CLI installed but older than the confirmed-working version ({current}, need "
@@ -350,10 +396,12 @@ def gcx_dependency_status():
             ),
             "blocking": True,
         }
-    ready = gcx_configured()
+    configured = gcx_context_configured()
+    ready = configured and gcx_configured()
     return {
         "name": "gcx CLI",
         "installed": True,
+        "configured": configured,
         "ready": ready,
         "detail": (
             "gcx CLI installed and authenticated to a Grafana Cloud stack"
@@ -361,6 +409,9 @@ def gcx_dependency_status():
             else "gcx CLI installed but not authenticated — run `gcx login --server "
             "https://chg.grafana.net` (or this plugin's own setup-gcx skill) to connect it to "
             "this org's stack"
+            if not configured
+            else "gcx CLI's current context is set but the session isn't live — run `gcx login "
+            "--server https://chg.grafana.net` again to reconnect it"
         ),
         "blocking": False,
     }
@@ -614,7 +665,15 @@ def cmd_status(cli):
             if dep_ready_values:
                 ready = all(dep_ready_values)
 
-        entry = {"label": svc["label"], "installed": installed, "ready": ready}
+        # Unlike `ready`, `configured` isn't gated on `installed` — it's purely a property of the
+        # local CLI dependency (sf/gcx), which can already be logged in before the MCP/plugin is
+        # ever registered. Services with no such dependency (the synthetic OAuth-session entry
+        # included, which has no "configured" key at all) leave this None — rendered as "—", not
+        # applicable, in the status table.
+        dep_configured_values = [d.get("configured") for d in dependencies if d.get("configured") is not None]
+        configured = all(dep_configured_values) if dep_configured_values else None
+
+        entry = {"label": svc["label"], "installed": installed, "configured": configured, "ready": ready}
         if installed and ready is not True and svc.get("ready_hint"):
             entry["note"] = svc["ready_hint"]
         if dependencies:

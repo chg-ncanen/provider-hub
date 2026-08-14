@@ -60,17 +60,17 @@ alongside it, and its
 it's visibly not a pickable option, and if the user replies with that dash or its name anyway,
 just explain it isn't installable here rather than trying to do anything with it.
 
-| # | Service | Deps | Installed | Connected | Description |
-|---|---|---|---|---|---|
-| — | pde-mcp | — | ✅ | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
-| 1 | Atlassian MCP | — | ✅ | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
-| 2 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
-| 3 | LaunchDarkly MCP | — | ✅ | ❌ not authenticated yet | Feature flag management |
-| 4 | LogRocket MCP | — | ❌ | — | Session replay, metrics, issue search |
-| 5 | Salesforce prod MCP | ✅ | ✅ | ✅ | SOQL queries against the prod org |
-| 6 | Salesforce UAT MCP | ❌ sf CLI too old (v1.5.0, need v2.0.0+) | ❌ | — | SOQL queries against the UAT org |
+| # | Service | Deps | Installed | Configured | Connected | Description |
+|---|---|---|---|---|---|---|
+| — | pde-mcp | — | ✅ | — | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
+| 1 | Atlassian MCP | — | ✅ | — | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
+| 2 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
+| 3 | LaunchDarkly MCP | — | ✅ | — | ❌ not authenticated yet | Feature flag management |
+| 4 | LogRocket MCP | — | ❌ | — | — | Session replay, metrics, issue search |
+| 5 | Salesforce prod MCP | ✅ | ✅ | ✅ | ✅ | SOQL queries against the prod org |
+| 6 | Salesforce UAT MCP | ❌ sf CLI too old (v1.5.0, need v2.0.0+) | ❌ | ❌ | — | SOQL queries against the UAT org |
 
-Three checkmark-style columns instead of one prose "Status" column — each answers one yes/no
+Four checkmark-style columns instead of one prose "Status" column — each answers one yes/no
 question on its own, so a row's overall state is scannable at a glance instead of buried in a
 sentence:
 
@@ -80,17 +80,31 @@ sentence:
   local dependency at all.
   - **No `dependencies` entry on this service at all**: `"—"` — not applicable, nothing to check.
   - **Has a `dependencies` entry, and none of them have `blocking: true` with `ready: false`**:
-    `"✅"` — clear to install, regardless of whether it's actually authenticated yet (that's a
-    `Connected` question, not a `Deps` one). This includes the CLI being installed but just not
-    logged in yet — not-authenticated is never blocking (see step 3).
+    `"✅"` — clear to install, regardless of whether it's actually configured/authenticated yet
+    (that's what `Configured`/`Connected` are for). This includes the CLI being installed but just
+    not logged in yet — not-authenticated is never blocking (see step 3).
   - **Has a `dependencies` entry with `blocking: true` and `ready: false`**: `"❌"` + the shortest
     accurate paraphrase of that entry's `detail` (e.g. "gcx CLI not found", "sf CLI too old (v1.5.0,
     need v2.0.0+)") — covers both "CLI missing entirely" and "CLI installed but below its version
     floor" the same way, since `install` refuses for either reason identically (see step 2).
 - **`Installed`** — the service's own `installed` field, nothing else: `"✅"` if `true`, `"❌"` if
-  `false`. This is pure registration state — whether it actually works belongs in `Connected`, not
-  folded in here. A `"❌"` here with `Deps` also `"❌"` tells the user in one glance that picking
-  this row walks through a dependency install first, not just a plain install.
+  `false`. This is pure registration state — whether it actually works belongs in `Configured`/
+  `Connected`, not folded in here. A `"❌"` here with `Deps` also `"❌"` tells the user in one glance
+  that picking this row walks through a dependency install first, not just a plain install.
+- **`Configured`** — for `grafana`/`salesforce-prod`/`salesforce-uat` only (`"—"` for the other
+  three, same as `Deps` — there's no local CLI to point at anything): has the CLI actually been
+  pointed at the right target at some point, *regardless of whether that session is still live*?
+  `sf` — the alias exists in `sf org list --json` at all, any `connectedStatus`. `gcx` — the current
+  context (`gcx config list-contexts --output json`, the entry with `current: true`) has a `server`
+  set. This is the field `dependencies[].configured` feeds — `"✅"` if `true`, `"❌"` if `false`,
+  same bare-checkmark style as `Installed` (the reason, if any, already showed up in `Deps` or will
+  show up in `Connected`). **This is what actually distinguishes "never logged in" from "logged in
+  once, but the session died"** — the case `Connected` alone would otherwise flatten into an
+  identical-looking `"❌"`: a revoked/expired `sf` refresh token, or a `gcx` context whose OAuth
+  session expired, both read as `Configured: ✅, Connected: ❌` instead of looking like nothing was
+  ever set up (`dependencies[].detail` says exactly this — "configured for '<alias>' but the session
+  isn't live", "current context is set but the session isn't live" — reuse that text rather than
+  re-deriving it).
 - **`Connected`** — comes from `ready`/`dependencies`/`org_connector` — **always resolve it to the
   actual concrete reason, never a vague placeholder**: if it isn't connected, say why, in the same
   terms the dependency's own `detail` field already gives you (e.g. "not logged into 'prod'", "gcx
@@ -108,22 +122,31 @@ sentence:
     bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
     connected" from the user's point of view.
 
-For the `pde_mcp` row, `Deps` and `Connected` are always `"—"` (it isn't something this wizard
-installs, and isn't a service you connect to a login/OAuth session — it's the plugin's own bundled
-server). `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found installed —
-genuinely unusual, since this skill is bundled inside it, so seeing this likely means something's
-off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed` cell rather
-than a checkmark in that case. `ready: false` means something's actually wrong with an install that
-*was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but put `detail` in
-the Description column too so it's visible without the user having to ask, since this row never
-leads to a follow-up step the way the picker rows do.
+For the `pde_mcp` row, `Deps`, `Configured`, and `Connected` are always `"—"` (it isn't something
+this wizard installs, and isn't a service you connect to a login/OAuth session — it's the plugin's
+own bundled server). `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found
+installed — genuinely unusual, since this skill is bundled inside it, so seeing this likely means
+something's off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed`
+cell rather than a checkmark in that case. `ready: false` means something's actually wrong with an
+install that *was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but
+put `detail` in the Description column too so it's visible without the user having to ask, since
+this row never leads to a follow-up step the way the picker rows do.
 
-Keep `Description` to what the service generally does — the concrete not-connected/not-ready reason
-belongs in `Connected`/`Deps`, not here. Don't also list the six bundled Atlassian skill names
-anywhere in the table; mention those only if the user asks what the plugin would add on top.
-**Atlassian stays in the table as a real, pickable row even when covered** — it isn't actually
-installed via this plugin in that case, so installing it anyway for the bundled skills is still a
-live option, not something to hide or grey out.
+Keep `Description` to what the service generally does — the concrete not-connected/not-configured
+reason belongs in `Connected`/`Configured`/`Deps`, not here. Don't also list the six bundled
+Atlassian skill names anywhere in the table; mention those only if the user asks what the plugin
+would add on top. **Atlassian stays in the table as a real, pickable row even when covered** — it
+isn't actually installed via this plugin in that case, so installing it anyway for the bundled
+skills is still a live option, not something to hide or grey out.
+
+**If `Configured` is `"❌"` and it's worth showing the user *why*** — e.g. `sf` knows aliases other
+than `prod`/`uat` and one might be a typo/leftover, or `gcx` has more than one context and the
+wrong one is current — pull the raw list (`sf org list --json`, or `gcx config list-contexts
+--output json`) and show it as **a table with defined columns** (e.g. `Alias | Org URL | Connected
+Status` for `sf`, `Context | Server | Current` for `gcx`), not a prose paragraph — same reasoning as
+the main status table: a list of items is something the user scans and compares row-by-row, and a
+table is what actually gets read for that. Only do this when it's genuinely useful for
+troubleshooting the specific gap in front of you, not as a routine part of every status check.
 
 After the table, ask in plain text: "Which one would you like to work on? Reply with a number, or
 let me know if you're done." — handle exactly one pick at a time (matches the loop below: after
