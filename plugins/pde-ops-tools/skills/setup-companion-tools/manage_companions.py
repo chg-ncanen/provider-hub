@@ -19,6 +19,7 @@ import platform
 import re
 import shutil
 import subprocess
+from functools import lru_cache
 
 
 def run(cmd, timeout=30):
@@ -27,6 +28,37 @@ def run(cmd, timeout=30):
         return r.returncode, r.stdout, r.stderr
     except Exception as e:
         return 1, "", str(e)
+
+
+@lru_cache(maxsize=1)
+def _claude_plugin_list():
+    """Cached parse of `claude plugin list --json`, fetched at most once per
+    process. This is the single most-repeated external lookup in this script —
+    find_plugin_root(), claude_plugin_installed(), and _claude_plugin_full_id()
+    each used to run and re-parse it independently for every plugin name they
+    checked (pde, gcx, logrocket, atlassian, ...), multiplying subprocess calls
+    for data that can't have changed mid-run."""
+    rc, out, _ = run(["claude", "plugin", "list", "--json"])
+    if rc != 0:
+        return []
+    try:
+        return json.loads(out)
+    except Exception:
+        return []
+
+
+def _find_claude_plugin_entry(plugin_name):
+    """The matching entry from _claude_plugin_list() — matched on the plugin
+    name alone (the part of `id` before "@"), not the full name@marketplace
+    id, so a plugin installed from a differently-named or re-added
+    marketplace still matches. Also requires `enabled` (defaulting true if
+    the field is ever absent), since a disabled plugin's MCP server won't
+    actually be reachable. Shared by every Claude-Code-specific plugin lookup
+    below instead of each re-implementing this same filter."""
+    for p in _claude_plugin_list():
+        if p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True):
+            return p
+    return None
 
 
 def find_plugin_root(plugin_name, cli):
@@ -47,17 +79,8 @@ def find_plugin_root(plugin_name, cli):
     caller must not `cd` away from the user's real project directory first —
     see setup-companion-tools/SKILL.md's note on this."""
     if cli == "claude":
-        rc, out, _ = run(["claude", "plugin", "list", "--json"])
-        if rc != 0:
-            return None
-        try:
-            data = json.loads(out)
-        except Exception:
-            return None
-        for p in data:
-            if p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True):
-                return p.get("installPath")
-        return None
+        entry = _find_claude_plugin_entry(plugin_name)
+        return entry.get("installPath") if entry else None
     home = os.environ.get("COPILOT_HOME", os.path.expanduser("~/.copilot"))
     base = os.path.join(home, "installed-plugins")
     if not os.path.isdir(base):
@@ -73,17 +96,8 @@ def _claude_plugin_full_id(plugin_name):
     """Full 'name@marketplace' id for an installed plugin — find_plugin_root()
     above matches on the plugin name alone, but pluginConfigs/pluginSecrets in
     Claude Code's own settings/.credentials files key by the full id."""
-    rc, out, _ = run(["claude", "plugin", "list", "--json"])
-    if rc != 0:
-        return None
-    try:
-        data = json.loads(out)
-    except Exception:
-        return None
-    for p in data:
-        if p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True):
-            return p.get("id")
-    return None
+    entry = _find_claude_plugin_entry(plugin_name)
+    return entry.get("id") if entry else None
 
 
 def pde_mcp_configured(cli):
@@ -189,13 +203,19 @@ NPM_USER_PREFIX = "~/.npm-global"
 _SF_VERSION_RE = re.compile(r"@salesforce/cli/(\d+)\.(\d+)\.(\d+)")
 
 
+@lru_cache(maxsize=1)
 def sf_version_info():
     """None if `sf` isn't runnable at all. Otherwise a dict with the raw
     `--version` text and, when it matches the expected `@salesforce/cli/x.y.z`
     format, a (major, minor, patch) tuple. An unparseable version string
     (`parsed: None`) means something unexpected answers to `sf` — treated as
     'too old' by sf_meets_min_version() below, not as unknown, since that's
-    exactly the class of oddball/legacy install this check exists to catch."""
+    exactly the class of oddball/legacy install this check exists to catch.
+
+    Cached — `sf --version` was getting shelled out to 2-3x per single
+    sf_dependency_status() call (sf_installed(), sf_meets_min_version(), and
+    the "too old" message all called this independently), tripling per-alias
+    subprocess overhead for no benefit within one process's lifetime."""
     rc, out, err = run(["sf", "--version"])
     if rc != 0:
         return None
@@ -228,7 +248,11 @@ def sf_installed_via_brew():
     return rc == 0
 
 
+@lru_cache(maxsize=1)
 def _sf_known_orgs():
+    # Cached — sf_known_aliases() and sf_connected_aliases() each called this
+    # independently, doubling `sf org list --json` invocations (once per
+    # alias checked) for identical data within one process run.
     rc, out, _ = run(["sf", "org", "list", "--json"])
     if rc != 0:
         return []
@@ -328,7 +352,10 @@ def sf_dependency_status(alias):
         return {
             "name": "sf CLI",
             "installed": True,
-            "configured": False,
+            # Still a real (best-effort) check, not hardcoded False — a too-old `sf` can still
+            # answer `org list --json` correctly if it was logged in before it went stale, and
+            # Configured is meant to reflect that regardless of the version-floor blocker.
+            "configured": alias in sf_known_aliases(),
             "ready": False,
             "detail": (
                 f"sf CLI installed but too old ({current}, need {min_str}+) — @salesforce/mcp "
@@ -364,10 +391,14 @@ GCX_MIN_VERSION = (1, 0, 0)
 _GCX_VERSION_RE = re.compile(r"gcx version (\d+)\.(\d+)\.(\d+)")
 
 
+@lru_cache(maxsize=1)
 def gcx_version_info():
     """None if `gcx` isn't runnable at all. Otherwise a dict with the raw
     `--version` text and, when it matches the expected `gcx version x.y.z`
-    format, a (major, minor, patch) tuple."""
+    format, a (major, minor, patch) tuple.
+
+    Cached — same reasoning as sf_version_info(): gcx_installed() and
+    gcx_meets_min_version() each called this independently."""
     rc, out, err = run(["gcx", "--version"])
     if rc != 0:
         return None
@@ -451,7 +482,9 @@ def gcx_dependency_status():
         return {
             "name": "gcx CLI",
             "installed": True,
-            "configured": False,
+            # Real (best-effort) check, not hardcoded False — a too-old gcx can still answer
+            # `config list-contexts` correctly if it was logged in before it went stale.
+            "configured": gcx_context_configured(),
             "ready": False,
             "detail": (
                 f"gcx CLI installed but older than the confirmed-working version ({current}, need "
@@ -556,6 +589,11 @@ def claude_org_connector_status(keyword):
         return {"name": name, "connected": "✔" in line}
     return None
 
+
+# Computed once here rather than called twice inline (once for ready_hint, once for post_install)
+# in each SERVICES entry below — same tuple either way, no reason to derive it twice.
+_SF_PROD_HINTS = _sf_service_hints("prod")
+_SF_UAT_HINTS = _sf_service_hints("uat")
 
 SERVICES = {
     "atlassian": {
@@ -662,8 +700,8 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("prod")],
         "org_alias": "prod",
-        "ready_hint": _sf_service_hints("prod")[0],
-        "post_install": _sf_service_hints("prod")[1],
+        "ready_hint": _SF_PROD_HINTS[0],
+        "post_install": _SF_PROD_HINTS[1],
     },
     "salesforce-uat": {
         "label": "Salesforce UAT — SOQL queries against the UAT org",
@@ -672,33 +710,17 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("uat")],
         "org_alias": "uat",
-        "ready_hint": _sf_service_hints("uat")[0],
-        "post_install": _sf_service_hints("uat")[1],
+        "ready_hint": _SF_UAT_HINTS[0],
+        "post_install": _SF_UAT_HINTS[1],
     },
 }
 
 
 def claude_plugin_installed(plugin_name):
-    """Match on the plugin name alone (the part of `id` before "@"), not the
-    full name@marketplace id — a plugin installed from a differently-named or
-    re-added marketplace should still count as installed. Also require
-    `enabled` (defaulting true if the field is ever absent), since a disabled
-    plugin's MCP server won't actually be reachable.
-
-    Same cwd-sensitivity as find_plugin_root() above applies here for any
+    """Same cwd-sensitivity as find_plugin_root() above applies here for any
     project-scoped install of atlassian/grafana/logrocket — this must be run
     without the caller having `cd`-ed away from the user's real project dir."""
-    rc, out, _ = run(["claude", "plugin", "list", "--json"])
-    if rc != 0:
-        return False
-    try:
-        data = json.loads(out)
-    except Exception:
-        return False
-    return any(
-        p.get("id", "").split("@")[0] == plugin_name and p.get("enabled", True)
-        for p in data
-    )
+    return _find_claude_plugin_entry(plugin_name) is not None
 
 
 def claude_mcp_registered(name):
@@ -955,8 +977,12 @@ def _resolve_sf_guidance():
         # the default prefix (/usr/local) was root-owned: pointing npm's global prefix at a
         # user-owned directory instead installs cleanly with zero sudo. This is npm's own
         # documented fix (docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-
-        # packages-globally), not a workaround specific to this skill — so root_required is
-        # False here too, same as the writable-prefix branch above.
+        # packages-globally), a property of npm's config system rather than any OS-specific
+        # permission mechanism, so the same `npm config set prefix` approach applies unchanged on
+        # Windows too — but that combination (Windows + a genuinely root-owned/all-users npm
+        # prefix) hasn't itself been verified end-to-end the way the Linux case has; if this ever
+        # turns out wrong there, the previous Windows-specific "Run as Administrator" branch this
+        # replaced is worth resurrecting for that OS specifically.
         result = {
             "dependency": "sf",
             "system": system,
@@ -1026,6 +1052,7 @@ def _dep_install_sf():
                 "action": guidance["action"],
                 "method": "brew",
                 "command": " ".join(guidance["alternative_command"]),
+                "version_note": guidance.get("version_note"),
             }, indent=2))
             return
         # Brew attempt itself failed (e.g. the cask needs an unrelated fix) — fall through to
@@ -1046,6 +1073,7 @@ def _dep_install_sf():
             "method": "npm (user-owned prefix)",
             "command": guidance["command"],
             "note": guidance.get("note"),
+            "version_note": guidance.get("version_note"),
             "error": None if rc == 0 else (err or out).strip(),
         }, indent=2))
         return
@@ -1057,6 +1085,7 @@ def _dep_install_sf():
         "action": guidance["action"],
         "method": "brew" if guidance["command"].startswith("brew") else "npm",
         "command": guidance["command"],
+        "version_note": guidance.get("version_note"),
         "error": None if rc == 0 else (err or out).strip(),
     }, indent=2))
 
