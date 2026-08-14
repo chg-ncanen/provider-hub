@@ -60,63 +60,70 @@ alongside it, and its
 it's visibly not a pickable option, and if the user replies with that dash or its name anyway,
 just explain it isn't installable here rather than trying to do anything with it.
 
-| # | Service | Status | Connected | Description |
-|---|---|---|---|---|
-| — | pde-mcp | Ready | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
-| 1 | Atlassian MCP | Installed | Yes (org connector) | Jira/Confluence search, issue creation, sprint management |
-| 2 | Grafana (gcx CLI plugin) | Not installed (will install dependencies) | — | Dashboards, alerts, SLOs, incident analysis |
-| 3 | LaunchDarkly MCP | Installed | No — not authenticated yet | Feature flag management |
-| 4 | LogRocket MCP | Not installed | — | Session replay, metrics, issue search |
-| 5 | Salesforce prod MCP | Installed | Yes | SOQL queries against the prod org |
-| 6 | Salesforce UAT MCP | Not installed (will install dependencies) | — | SOQL queries against the UAT org |
+| # | Service | Deps | Installed | Connected | Description |
+|---|---|---|---|---|---|
+| — | pde-mcp | — | ✅ | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
+| 1 | Atlassian MCP | — | ✅ | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
+| 2 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
+| 3 | LaunchDarkly MCP | — | ✅ | ❌ not authenticated yet | Feature flag management |
+| 4 | LogRocket MCP | — | ❌ | — | Session replay, metrics, issue search |
+| 5 | Salesforce prod MCP | ✅ | ✅ | ✅ | SOQL queries against the prod org |
+| 6 | Salesforce UAT MCP | ❌ sf CLI too old (v1.5.0, need v2.0.0+) | ❌ | — | SOQL queries against the UAT org |
 
-For the `pde_mcp` row, `Connected` is always `—` (it isn't a service you connect to a login/OAuth
-session, it's the plugin's own bundled server). `ready: null` means the PDE Ops Tools plugin
-(`pde`) itself wasn't found installed — genuinely unusual, since this skill is bundled inside it,
-so seeing this likely means something's off with the CLI/marketplace lookup itself; show `detail`
-verbatim in `Status` rather than a made-up status word. `ready: false` means something's actually
-wrong with an install that *was* found (venv missing, or a broken dependency) — put `detail` in the
-Description column so it's visible without the user having to ask, since this row never leads to a
-follow-up step the way the picker rows do.
+Three checkmark-style columns instead of one prose "Status" column — each answers one yes/no
+question on its own, so a row's overall state is scannable at a glance instead of buried in a
+sentence:
 
-`Status` for the 6 numbered rows is purely about registration — from `installed`/`dependencies`,
-**not** `ready`:
-- **Installed** (`installed: true`): `"Installed"`, regardless of `ready` — whether it actually
-  works lives entirely in the `Connected` column now, not folded into this word.
-- **Not installed, and its `dependencies` entry has `blocking: true` and isn't ready** (`grafana`,
-  `salesforce-prod`, `salesforce-uat`, when the underlying CLI isn't installed at all — `status`
-  always includes `dependencies` even when the service itself isn't installed): `"Not installed
-  (will install dependencies)"` — this tells the user up front that picking it walks through
-  installing the CLI first, not just a plain install. **Not authenticated is not the same as
-  blocking** — if the CLI is installed but just not logged in yet (`blocking: false`), that no
-  longer prevents install, so this doesn't apply; see plain `"Not installed"` below instead.
-- **Not installed, and either it has no dependency or the dependency has no unmet `blocking`
-  entry**: plain `"Not installed"` — nothing stands between picking it and it working (it may
-  still need authentication afterward, which is what the `Connected` column and step 3 are for).
+- **`Deps`** — is there a local CLI dependency, and is it clear of anything that would make
+  `install` refuse? Only `grafana` (`gcx`) and `salesforce-prod`/`salesforce-uat` (`sf`) have one;
+  the other three (`atlassian`, `launch-darkly`, `logrocket`) are lazily-OAuth'd MCP servers with no
+  local dependency at all.
+  - **No `dependencies` entry on this service at all**: `"—"` — not applicable, nothing to check.
+  - **Has a `dependencies` entry, and none of them have `blocking: true` with `ready: false`**:
+    `"✅"` — clear to install, regardless of whether it's actually authenticated yet (that's a
+    `Connected` question, not a `Deps` one). This includes the CLI being installed but just not
+    logged in yet — not-authenticated is never blocking (see step 3).
+  - **Has a `dependencies` entry with `blocking: true` and `ready: false`**: `"❌"` + the shortest
+    accurate paraphrase of that entry's `detail` (e.g. "gcx CLI not found", "sf CLI too old (v1.5.0,
+    need v2.0.0+)") — covers both "CLI missing entirely" and "CLI installed but below its version
+    floor" the same way, since `install` refuses for either reason identically (see step 2).
+- **`Installed`** — the service's own `installed` field, nothing else: `"✅"` if `true`, `"❌"` if
+  `false`. This is pure registration state — whether it actually works belongs in `Connected`, not
+  folded in here. A `"❌"` here with `Deps` also `"❌"` tells the user in one glance that picking
+  this row walks through a dependency install first, not just a plain install.
+- **`Connected`** — comes from `ready`/`dependencies`/`org_connector` — **always resolve it to the
+  actual concrete reason, never a vague placeholder**: if it isn't connected, say why, in the same
+  terms the dependency's own `detail` field already gives you (e.g. "not logged into 'prod'", "gcx
+  CLI not authenticated", "not authenticated yet" for a lazily-OAuth'd entry) rather than a generic
+  tag like "check dependency" that just tells the user to go look — you already ran the check, so
+  the table should say what it found:
+  - **Not installed** (`installed: false`): `"—"` — nothing to be connected yet.
+  - **Installed, `ready: true`**: `"✅"`.
+  - **Installed, `ready: false`**: `"❌ "` + the shortest accurate paraphrase of the relevant
+    `dependencies[].detail` (there's always exactly one dependency entry driving `ready` for each of
+    these six today — the blocking CLI dependency for `grafana`/`salesforce-prod`/`salesforce-uat`,
+    or the synthetic `"OAuth session"` entry for `atlassian`/`launch-darkly`/`logrocket`).
+  - **Atlassian specifically, when `org_connector.connected` is `true`**: `"✅ (org connector)"`,
+    regardless of the plugin's own `ready` — a connected org-wide connector already covers the
+    bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
+    connected" from the user's point of view.
 
-`Connected` for the 6 numbered rows comes from `ready`/`dependencies`/`org_connector` — **always
-resolve it to the actual concrete reason, never a vague placeholder**: if it isn't connected, say
-why, in the same terms the dependency's own `detail` field already gives you (e.g. "No — not
-logged into 'prod'", "No — gcx CLI not authenticated", "No — not authenticated yet" for a
-lazily-OAuth'd entry) rather than a generic tag like "check dependency" that just tells the user to
-go look — you already ran the check, so the table should say what it found:
-- **Not installed** (`installed: false`): `"—"` — nothing to be connected yet.
-- **Installed, `ready: true`**: `"Yes"`.
-- **Installed, `ready: false`**: `"No — "` + the shortest accurate paraphrase of the relevant
-  `dependencies[].detail` (there's always exactly one dependency entry driving `ready` for each of
-  these six today — the blocking CLI dependency for `grafana`/`salesforce-prod`/`salesforce-uat`,
-  or the synthetic `"OAuth session"` entry for `atlassian`/`launch-darkly`/`logrocket`).
-- **Atlassian specifically, when `org_connector.connected` is `true`**: `"Yes (org connector)"`,
-  regardless of the plugin's own `ready` — a connected org-wide connector already covers the
-  bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
-  connected" from the user's point of view.
+For the `pde_mcp` row, `Deps` and `Connected` are always `"—"` (it isn't something this wizard
+installs, and isn't a service you connect to a login/OAuth session — it's the plugin's own bundled
+server). `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found installed —
+genuinely unusual, since this skill is bundled inside it, so seeing this likely means something's
+off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed` cell rather
+than a checkmark in that case. `ready: false` means something's actually wrong with an install that
+*was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but put `detail` in
+the Description column too so it's visible without the user having to ask, since this row never
+leads to a follow-up step the way the picker rows do.
 
-Keep `Description` to what the service generally does — the concrete not-connected reason belongs
-in `Connected`, not here. Don't also list the six bundled Atlassian skill names anywhere in the
-table; mention those only if the user asks what the plugin would add on top. **Atlassian stays in
-the table as a real, pickable row even when covered** — it isn't actually installed via this
-plugin in that case, so installing it anyway for the bundled skills is still a live option, not
-something to hide or grey out.
+Keep `Description` to what the service generally does — the concrete not-connected/not-ready reason
+belongs in `Connected`/`Deps`, not here. Don't also list the six bundled Atlassian skill names
+anywhere in the table; mention those only if the user asks what the plugin would add on top.
+**Atlassian stays in the table as a real, pickable row even when covered** — it isn't actually
+installed via this plugin in that case, so installing it anyway for the bundled skills is still a
+live option, not something to hide or grey out.
 
 After the table, ask in plain text: "Which one would you like to work on? Reply with a number, or
 let me know if you're done." — handle exactly one pick at a time (matches the loop below: after
@@ -242,7 +249,7 @@ already needs to do both.
   file too. For Grafana: `gcx login --server https://chg.grafana.net` — that's this org's Grafana
   Cloud stack; don't let the user log into a different one.
 - **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): `status`
-  shows `Connected: "No — ..."` in the table (not just `"—"`) until the entry's own live connection
+  shows `Connected: "❌ ..."` in the table (not just `"—"`) until the entry's own live connection
   state — read from `claude mcp list`, not just "the plugin is registered" — comes back connected.
   While it's not: after a restart, you can proactively call one of that service's tools right away
   (e.g. "list my feature flags") to trigger the login immediately instead of leaving the user to
