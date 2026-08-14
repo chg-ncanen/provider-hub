@@ -10,11 +10,13 @@ Usage:
     python3 manage_companions.py status --cli claude|copilot
     python3 manage_companions.py install <service> --cli claude|copilot
     python3 manage_companions.py dep-guidance <dependency>
+    python3 manage_companions.py dep-install <dependency>
 """
 import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 
@@ -108,8 +110,57 @@ def pde_mcp_status(cli):
     }
 
 
+# Floor for the unified CLI (the merged sf/sfdx architecture, published as
+# `@salesforce/cli` v2+) — @salesforce/mcp's `--orgs`/`--toolsets` flags need
+# this, and don't exist on the pre-unification `sf` v1 wrapper or the legacy
+# standalone `sfdx-cli` package. Seen in the wild: machines with an old `sf`
+# already on PATH from months/years back, which look "installed" by a plain
+# rc==0 check but don't actually work with this MCP server. Raise this if a
+# stricter minimum for @salesforce/mcp itself ever gets published.
+SF_MIN_VERSION = (2, 0, 0)
+
+# npm's own documented fix for a root-owned default global prefix — verified working end-to-end
+# (installed a real, current `sf` with zero sudo on a machine whose default prefix was root-owned).
+NPM_USER_PREFIX = "~/.npm-global"
+_SF_VERSION_RE = re.compile(r"@salesforce/cli/(\d+)\.(\d+)\.(\d+)")
+
+
+def sf_version_info():
+    """None if `sf` isn't runnable at all. Otherwise a dict with the raw
+    `--version` text and, when it matches the expected `@salesforce/cli/x.y.z`
+    format, a (major, minor, patch) tuple. An unparseable version string
+    (`parsed: None`) means something unexpected answers to `sf` — treated as
+    'too old' by sf_meets_min_version() below, not as unknown, since that's
+    exactly the class of oddball/legacy install this check exists to catch."""
+    rc, out, err = run(["sf", "--version"])
+    if rc != 0:
+        return None
+    text = (out or err).strip()
+    m = _SF_VERSION_RE.search(text)
+    return {"raw": text, "parsed": tuple(int(x) for x in m.groups()) if m else None}
+
+
 def sf_installed():
-    rc, _, _ = run(["sf", "--version"])
+    return sf_version_info() is not None
+
+
+def sf_meets_min_version():
+    """True/False once `sf` is confirmed installed; None if it isn't installed
+    at all (callers should check sf_installed() separately rather than
+    inferring 'not installed' from a False here)."""
+    info = sf_version_info()
+    if info is None:
+        return None
+    return info["parsed"] is not None and info["parsed"] >= SF_MIN_VERSION
+
+
+def sf_installed_via_brew():
+    """Whether the currently-active `sf` came from the Homebrew cask, so an
+    upgrade offer can safely use `brew upgrade` instead of colliding with a
+    binary Homebrew doesn't actually own."""
+    if not shutil.which("brew"):
+        return False
+    rc, _, _ = run(["brew", "list", "--cask", "salesforce-cli"])
     return rc == 0
 
 
@@ -139,21 +190,36 @@ def sf_dependency_status(alias):
     each Salesforce service needs its own alias logged in, even though the
     CLI binary itself is shared.
 
-    `blocking` only when the CLI isn't installed at all — there'd be no way
-    to ever log in without it. Not logged into `alias` yet is non-blocking:
-    verified directly that `npx -y @salesforce/mcp --orgs <alias>` starts up
-    and registers all its tools cleanly even against a nonexistent/never-
-    authenticated alias (no crash, no broken half-registered state) — the
-    actual auth failure only surfaces if a tool like `run_soql_query` is
-    called before logging in, the same lazy-auth pattern as
-    atlassian/logrocket/launch-darkly, not the "broken install" this used to
-    assume."""
+    `blocking` when the CLI isn't installed at all, or is installed but below
+    SF_MIN_VERSION — there'd be no way to ever log in usefully in either case.
+    Not logged into `alias` yet is non-blocking: verified directly that
+    `npx -y @salesforce/mcp --orgs <alias>` starts up and registers all its
+    tools cleanly even against a nonexistent/never-authenticated alias (no
+    crash, no broken half-registered state) — the actual auth failure only
+    surfaces if a tool like `run_soql_query` is called before logging in, the
+    same lazy-auth pattern as atlassian/logrocket/launch-darkly, not the
+    "broken install" this used to assume."""
     if not sf_installed():
         return {
             "name": "sf CLI",
             "installed": False,
             "ready": False,
             "detail": "sf CLI not found on PATH",
+            "blocking": True,
+        }
+    if not sf_meets_min_version():
+        info = sf_version_info()
+        current = info["raw"] if info["parsed"] is None else "v" + ".".join(map(str, info["parsed"]))
+        min_str = "v" + ".".join(map(str, SF_MIN_VERSION))
+        return {
+            "name": "sf CLI",
+            "installed": True,
+            "ready": False,
+            "detail": (
+                f"sf CLI installed but too old ({current}, need {min_str}+) — @salesforce/mcp "
+                "needs the unified CLI; run `dep-install sf` or see `dep-guidance sf` for the "
+                "upgrade command"
+            ),
             "blocking": True,
         }
     ready = alias in sf_connected_aliases()
@@ -389,11 +455,14 @@ SERVICES = {
         "org_alias": "uat",
         "ready_hint": (
             "Registered, but the sf CLI isn't logged into 'uat' yet — run `sf org login web "
-            "--alias uat` to connect it."
+            "--alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com` to connect "
+            "it. The `--instance-url` is required here — UAT is a sandbox, so the default "
+            "login.salesforce.com URL `sf org login web --alias prod` uses won't reach it."
         ),
         "post_install": (
             "Registers regardless of `sf` login state (its tools just error if called before "
-            "you're logged in) — run `sf org login web --alias uat` if you haven't already."
+            "you're logged in) — run `sf org login web --alias uat --instance-url "
+            "https://chg--uat.sandbox.my.salesforce.com` if you haven't already."
         ),
     },
 }
@@ -583,21 +652,58 @@ def npm_prefix_writable():
 
 def cmd_dep_guidance(dependency):
     if dependency == "sf":
-        _dep_guidance_sf()
+        print(json.dumps(_resolve_sf_guidance(), indent=2))
     elif dependency == "gcx":
-        _dep_guidance_gcx()
+        print(json.dumps(_resolve_gcx_guidance(), indent=2))
     else:
         print(json.dumps({"error": f"no guidance available for dependency '{dependency}'"}))
 
 
-def _dep_guidance_sf():
+def cmd_dep_install(dependency):
+    if dependency == "sf":
+        _dep_install_sf()
+    elif dependency == "gcx":
+        _dep_install_gcx()
+    else:
+        print(json.dumps({"success": False, "error": f"no auto-install available for dependency '{dependency}'"}))
+
+
+def _resolve_sf_guidance():
+    """Figures out what needs to happen to get a working `sf` on this machine
+    — a fresh install if it's missing, or an upgrade if it's present but below
+    SF_MIN_VERSION — and whether that needs root, without actually running
+    anything. Shared by `dep-guidance` (just prints this) and `dep-install`
+    (acts on it)."""
     system = platform.system()
+    action = "upgrade" if sf_installed() and not sf_meets_min_version() else "install"
+
+    version_note = None
+    if action == "upgrade":
+        info = sf_version_info()
+        current = info["raw"] if info["parsed"] is None else "v" + ".".join(map(str, info["parsed"]))
+        version_note = (
+            f"Currently installed: {current} — below the minimum this MCP server needs "
+            f"(v{'.'.join(map(str, SF_MIN_VERSION))}+, the unified CLI)."
+        )
+        if sf_installed_via_brew():
+            # Already came from the cask — upgrading through brew is the only path that
+            # won't leave a second, unmanaged copy fighting the brew-owned one on PATH.
+            return {
+                "dependency": "sf",
+                "system": system,
+                "action": action,
+                "root_required": False,
+                "command": "brew upgrade --cask salesforce-cli",
+                "reason": "Installed via the Homebrew cask — brew owns it, and brew never needs root.",
+                "version_note": version_note,
+            }
 
     rc, _, _ = run(["node", "--version"])
     if rc != 0:
-        print(json.dumps({
+        return {
             "dependency": "sf",
             "system": system,
+            "action": action,
             "root_required": None,
             "command": None,
             "reason": "Node.js/npm isn't on PATH, so the sf CLI can't be installed via npm yet.",
@@ -605,8 +711,8 @@ def _dep_guidance_sf():
                 "Install Node.js first (nodejs.org, or your OS package manager/nvm), then "
                 "re-run this check."
             ),
-        }, indent=2))
-        return
+            "version_note": version_note,
+        }
 
     prefix, writable = npm_prefix_writable()
     if writable is None:
@@ -614,44 +720,136 @@ def _dep_guidance_sf():
         # conservative per-OS default rather than guessing wrong.
         writable = system == "Darwin"
 
-    if system == "Windows":
-        root_required = not writable
-        command = "npm install -g @salesforce/cli"
-        reason = (
-            "This machine's npm prefix is user-writable — no elevation needed."
-            if writable
-            else "Right-click your terminal (PowerShell or cmd) and choose 'Run as "
-            "Administrator' first, then run this."
-        )
-    else:
-        root_required = not writable
-        if writable:
-            command = "npm install -g @salesforce/cli"
-            reason = f"npm's global prefix ({prefix}) is writable by your user — no sudo needed."
-        else:
-            command = "sudo npm install -g @salesforce/cli"
-            reason = (
-                f"npm's global prefix ({prefix}) isn't writable by your user (common when "
-                "Node.js came from apt/a system package manager) — this needs root."
-            )
+    npm_pkg = "@salesforce/cli" if action == "install" else "@salesforce/cli@latest"
 
+    if writable:
+        result = {
+            "dependency": "sf",
+            "system": system,
+            "action": action,
+            "root_required": False,
+            "command": f"npm install -g {npm_pkg}",
+            "reason": f"npm's global prefix ({prefix}) is writable by your user — no sudo needed.",
+        }
+    else:
+        # npm's default global prefix being root-owned does NOT mean root is actually required —
+        # confirmed by actually running this fix end-to-end on an apt-Node/Ubuntu machine where
+        # the default prefix (/usr/local) was root-owned: pointing npm's global prefix at a
+        # user-owned directory instead installs cleanly with zero sudo. This is npm's own
+        # documented fix (docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-
+        # packages-globally), not a workaround specific to this skill — so root_required is
+        # False here too, same as the writable-prefix branch above.
+        result = {
+            "dependency": "sf",
+            "system": system,
+            "action": action,
+            "root_required": False,
+            "command": f"npm config set prefix {NPM_USER_PREFIX} && npm install -g {npm_pkg}",
+            "reason": (
+                f"npm's default global prefix ({prefix}) isn't writable by your user (common when "
+                "Node.js came from apt/a system package manager or a shared machine image) — but "
+                f"that's not a root requirement: switching npm's global prefix to a directory you "
+                f"own ({NPM_USER_PREFIX}) avoids it entirely. npm's own documented fix, not sudo."
+            ),
+            "note": (
+                f"After this, `sf` installs to {NPM_USER_PREFIX}/bin — add "
+                f"`export PATH=\"$HOME/.npm-global/bin:$PATH\"` to your shell profile if `sf "
+                "--version` isn't found right away."
+            ),
+        }
+
+    if version_note:
+        result["version_note"] = version_note
+    if system == "Darwin" and action == "install" and shutil.which("brew"):
+        # Confirmed via Salesforce's own Homebrew cask (formulae.brew.sh/cask/salesforce-cli,
+        # née the "sf" token) — installs standalone, never touches npm's global prefix at all, so
+        # it's an even simpler no-root option than the npm-prefix fallback above. Surface it as an
+        # alternative, same pattern as gcx's brew fallback. Only offered for a fresh install —
+        # offering it during an upgrade when sf *wasn't* already brew-installed (handled
+        # separately above) would create a second, unmanaged copy.
+        result["alternative"] = (
+            "brew install --cask salesforce-cli (macOS only, no root ever — a single command "
+            "instead of reconfiguring npm; run `brew upgrade --cask salesforce-cli` later to "
+            "update it)."
+        )
+        result["alternative_command"] = ["brew", "install", "--cask", "salesforce-cli"]
+
+    return result
+
+
+def _run_cmd_string(command, timeout=180):
+    """Split-and-run a plain command string built by _resolve_*_guidance() —
+    every one of those is a static, hardcoded template (no user input
+    interpolated into it beyond fixed package/cask names), so a plain arg
+    split is safe here."""
+    return run(command.split(), timeout=timeout)
+
+
+def _dep_install_sf():
+    guidance = _resolve_sf_guidance()
+
+    if guidance["root_required"] is None:
+        print(json.dumps({
+            "success": False,
+            "blocked": True,
+            "dependency": "sf",
+            "action": guidance["action"],
+            "reason": guidance["reason"],
+            "prerequisite": guidance["prerequisite"],
+        }, indent=2))
+        return
+
+    if guidance.get("alternative_command"):
+        rc, out, err = run(guidance["alternative_command"], timeout=180)
+        if rc == 0:
+            print(json.dumps({
+                "success": True,
+                "dependency": "sf",
+                "action": guidance["action"],
+                "method": "brew",
+                "command": " ".join(guidance["alternative_command"]),
+            }, indent=2))
+            return
+        # Brew attempt itself failed (e.g. the cask needs an unrelated fix) — fall through to
+        # the npm path below rather than silently giving up on a workable route.
+
+    if "npm config set prefix" in guidance["command"]:
+        # Compound command (`npm config set prefix ... && npm install -g ...`) — run as discrete
+        # steps rather than through a shell, so a failure at either step is unambiguous.
+        user_prefix = os.path.expanduser(NPM_USER_PREFIX)
+        rc, out, err = run(["npm", "config", "set", "prefix", user_prefix])
+        if rc == 0:
+            npm_pkg = "@salesforce/cli" if guidance["action"] == "install" else "@salesforce/cli@latest"
+            rc, out, err = run(["npm", "install", "-g", npm_pkg], timeout=180)
+        print(json.dumps({
+            "success": rc == 0,
+            "dependency": "sf",
+            "action": guidance["action"],
+            "method": "npm (user-owned prefix)",
+            "command": guidance["command"],
+            "note": guidance.get("note"),
+            "error": None if rc == 0 else (err or out).strip(),
+        }, indent=2))
+        return
+
+    rc, out, err = _run_cmd_string(guidance["command"])
     print(json.dumps({
+        "success": rc == 0,
         "dependency": "sf",
-        "system": system,
-        "root_required": root_required,
-        "command": command,
-        "reason": reason,
+        "action": guidance["action"],
+        "method": "brew" if guidance["command"].startswith("brew") else "npm",
+        "command": guidance["command"],
+        "error": None if rc == 0 else (err or out).strip(),
     }, indent=2))
 
 
-def _dep_guidance_gcx():
+def _resolve_gcx_guidance():
     # Sourced from https://github.com/grafana/gcx (docs/installation.md): the
-    # official install script defaults to ~/.local/bin, never needs root — a
-    # different situation from sf's npm-global install, which often does.
+    # official install script defaults to ~/.local/bin, never needs root.
     system = platform.system()
 
     if system in ("Linux", "Darwin"):
-        print(json.dumps({
+        result = {
             "dependency": "gcx",
             "system": system,
             "root_required": False,
@@ -662,14 +860,16 @@ def _dep_guidance_gcx():
                 "`export PATH=\"$HOME/.local/bin:$PATH\"` to your shell profile if `gcx "
                 "--version` isn't found right after installing."
             ),
-            "alternative": "brew install grafana/grafana/gcx (macOS/Linux, also no root).",
-        }, indent=2))
-        return
+        }
+        if shutil.which("brew"):
+            result["alternative"] = "brew install grafana/grafana/gcx (macOS/Linux, also no root)."
+            result["alternative_command"] = ["brew", "install", "grafana/grafana/gcx"]
+        return result
 
     # Windows: no official install script exists for gcx.
     rc, _, _ = run(["go", "version"])
     if rc == 0:
-        print(json.dumps({
+        return {
             "dependency": "gcx",
             "system": system,
             "root_required": False,
@@ -682,10 +882,9 @@ def _dep_guidance_gcx():
                 "Installs to your Go bin directory (usually %USERPROFILE%\\go\\bin) — make sure "
                 "that's on PATH."
             ),
-        }, indent=2))
-        return
+        }
 
-    print(json.dumps({
+    return {
         "dependency": "gcx",
         "system": system,
         "root_required": None,
@@ -696,6 +895,39 @@ def _dep_guidance_gcx():
             "`go install github.com/grafana/gcx/cmd/gcx@latest` — or download a prebuilt binary "
             "from https://github.com/grafana/gcx/releases and add it to PATH manually."
         ),
+    }
+
+
+def _dep_install_gcx():
+    guidance = _resolve_gcx_guidance()
+
+    if guidance["root_required"] is None:
+        print(json.dumps({
+            "success": False,
+            "blocked": True,
+            "dependency": "gcx",
+            "reason": guidance["reason"],
+            "prerequisite": guidance["prerequisite"],
+        }, indent=2))
+        return
+
+    # root_required is always False for gcx once we get here (curl script installs to
+    # ~/.local/bin, go install to the user's Go bin dir) — no sudo path exists to fall back to.
+    system = platform.system()
+    if system in ("Linux", "Darwin"):
+        rc, out, err = run(["sh", "-c", guidance["command"]], timeout=180)
+        method = "curl"
+    else:
+        rc, out, err = _run_cmd_string(guidance["command"])
+        method = "go"
+
+    print(json.dumps({
+        "success": rc == 0,
+        "dependency": "gcx",
+        "method": method,
+        "command": guidance["command"],
+        "note": guidance.get("note"),
+        "error": None if rc == 0 else (err or out).strip(),
     }, indent=2))
 
 
@@ -713,6 +945,9 @@ def main():
     p_dep = sub.add_parser("dep-guidance")
     p_dep.add_argument("dependency")
 
+    p_dep_install = sub.add_parser("dep-install")
+    p_dep_install.add_argument("dependency")
+
     args = parser.parse_args()
     if args.cmd == "status":
         cmd_status(args.cli)
@@ -720,6 +955,8 @@ def main():
         cmd_install(args.service, args.cli)
     elif args.cmd == "dep-guidance":
         cmd_dep_guidance(args.dependency)
+    elif args.cmd == "dep-install":
+        cmd_dep_install(args.dependency)
 
 
 if __name__ == "__main__":

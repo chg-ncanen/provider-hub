@@ -138,18 +138,20 @@ below — nothing to install.
 
 Otherwise run `python3 manage_companions.py install <service> --cli <claude|copilot>`.
 
-**`install` only refuses to run when the underlying CLI isn't installed at all** (`sf` for
-salesforce-prod/uat, `gcx` for grafana) — there'd be no way to ever authenticate without it
-present. It does **not** wait for that CLI to be authenticated first: verified directly that the
-Salesforce MCP server starts up and registers all its tools cleanly even against a
-nonexistent/never-authenticated alias (no crash, no broken half-registered state), and the `gcx`
-plugin has no MCP server of its own to begin with (just skills/agents that shell out to `gcx` when
-actually invoked) — so in both cases, installing ahead of authentication is safe, same lazy-auth
-pattern as the OAuth-based services. When `install` *does* refuse (CLI missing), the result comes
-back as `{"success": false, "blocked": true, "unmet_dependencies": [...], ...}` instead of actually
-registering anything — go straight to step 3 for each entry in `unmet_dependencies`, and once the
-user tells you they've fixed it, **retry the same `install` call** (don't just re-check status and
-stop) — that's what actually registers the MCP/plugin once the dependency clears.
+**`install` only refuses to run when the underlying CLI dependency isn't usable yet** — for `sf`
+(salesforce-prod/uat) that means either not installed at all, *or* installed but below the minimum
+version this MCP server needs (see step 3); for `gcx` (grafana) it just means not installed. It
+does **not** wait for that CLI to be authenticated first: verified directly that the Salesforce MCP
+server starts up and registers all its tools cleanly even against a nonexistent/never-authenticated
+alias (no crash, no broken half-registered state), and the `gcx` plugin has no MCP server of its
+own to begin with (just skills/agents that shell out to `gcx` when actually invoked) — so in both
+cases, installing ahead of authentication is safe, same lazy-auth pattern as the OAuth-based
+services. When `install` *does* refuse (dependency missing or too old), the result comes back as
+`{"success": false, "blocked": true, "unmet_dependencies": [...], ...}` instead of actually
+registering anything — go straight to step 3 for each entry in `unmet_dependencies`, and once
+that's resolved (whether you just fixed it yourself via `dep-install`, or the user told you they
+fixed it manually), **retry the same `install` call** (don't just re-check status and stop) —
+that's what actually registers the MCP/plugin once the dependency clears.
 
 Otherwise relay the result (`success`, what got installed, or the `error` if it failed for some
 other reason).
@@ -177,43 +179,67 @@ content wraps differently across terminal widths; a plain rule doesn't have that
 
 ```
 ======================================================================
-MANUAL STEP NEEDED — Step 1 of 2: install the sf CLI
+MANUAL STEP NEEDED — Step 1 of 2: install Node.js
 ======================================================================
-I can't do this myself — it needs root/admin access on this machine.
+I can't do this myself — the sf CLI installs via npm, and Node.js/npm isn't on this machine yet.
 
-    sudo npm install -g @salesforce/cli
+    Install Node.js first (nodejs.org, or your OS package manager/nvm), then tell me to continue.
 
-Run that yourself, then come back and tell me to continue — I'll re-check before moving on, not
-just take your word for it.
+I'll re-check before moving on, not just take your word for it.
 ======================================================================
 ```
 
 Number sequential steps ("Step 1 of 2", "Step 2 of 2") whenever more than one manual step is
-currently outstanding for the same service (e.g. install the CLI, then log in), and show every
-outstanding one in the same message — don't drip-feed them one at a time when the user already
-needs to do both.
+currently outstanding for the same service (e.g. install a missing prerequisite, then log in), and
+show every outstanding one in the same message — don't drip-feed them one at a time when the user
+already needs to do both.
 
-- **A dependency isn't installed and might need root** (currently: `sf` for salesforce-prod/uat,
-  `gcx` for grafana). Run `python3 manage_companions.py dep-guidance <dependency>` (e.g.
-  `dep-guidance sf` or `dep-guidance gcx`) — this actually tests the machine, it doesn't guess.
-  Then:
-  - If `root_required` is `null`: relay the `prerequisite` field (e.g. install Node.js first for
-    `sf`, or Go/git for `gcx` on Windows) — there's nothing to run yet, so this doesn't need the
-    box treatment, just say plainly what to install first.
-  - If `root_required` is `true`: this is a **hard stop for you** — you have no way to supply a
-    root/admin password interactively even if you tried. Use the box format above.
-  - If `root_required` is `false`: same box format, but phrase the content as an offer inside it,
-    since you *could* run it: "This doesn't need root on your machine — want me to run
-    `<command>` for you, or would you rather run it yourself?" Only run it after they say yes.
-    `gcx`'s install script normally lands here (it installs to `~/.local/bin`, never root) — don't
-    assume it needs the same root/no-root ambiguity `sf` does, `dep-guidance` already resolved
-    that.
+- **A dependency is missing, or installed but below the minimum version this MCP server needs**
+  (currently: `sf` for salesforce-prod/uat — including machines with a leftover pre-unification
+  `sf`/legacy `sfdx-cli` from a while back, which looks "installed" but flat-out lacks the
+  `--orgs`/`--toolsets` flags this MCP server needs; and `gcx` for grafana, which is always a fresh
+  install since there's no legacy version of it to be stuck on). **Default to just installing (or
+  upgrading) it yourself, without asking permission first** — run
+  `python3 manage_companions.py dep-install <dependency>` (e.g. `dep-install sf` or
+  `dep-install gcx`) directly. **Root is never actually required for either of these, so don't
+  present it as a permission question or a blocker** — confirmed by actually running the fix
+  end-to-end on a machine whose default npm global prefix was root-owned: `gcx` always installs to
+  `~/.local/bin` or the user's Go bin dir (no root, ever); `sf` via npm either uses the default
+  prefix directly when it's already user-writable, or — when it isn't (common when Node.js came
+  from apt/a system package manager) — points npm's global prefix at a user-owned directory
+  instead (`npm config set prefix ~/.npm-global`, npm's own documented fix, not sudo) and installs
+  there. `dep-install` tries the Homebrew cask first on macOS when `brew` is present (`brew install
+  --cask salesforce-cli` for a fresh install, `brew upgrade --cask salesforce-cli` when the existing
+  install already came from that cask) as an even simpler no-root option, before falling back to
+  the npm path. State what you're about to run in one short sentence first (transparency, not a
+  yes/no question — e.g. "Installing the sf CLI now — no root needed."), then relay the actual
+  result from `dep-install`'s JSON (`success`, `method`, `command`, `note`, or `error`) — verify
+  from that, don't assume it worked just because you ran it. If `dep-install` reports a `note` about
+  PATH (the npm-user-prefix and both gcx paths install outside the usual system directories), pass
+  it along — the user may need to open a new shell or update their profile before the plain command
+  name resolves. Once a dependency install/upgrade succeeds, retry the service's own `install` call
+  (step 2) — that's what actually registers the MCP/plugin now that the dependency is clear.
+  - **Only fall back to a manual step when `dep-install` itself reports `{"success": false,
+    "blocked": true, ...}` with `command: null`** — in practice this means Node.js is missing for
+    `sf`, or Go/git is missing for `gcx` on Windows (see `prerequisite`): there's a real prerequisite
+    to install first, with nothing to run yet, so use the box format above but don't frame it as a
+    root/permission issue — it isn't one.
+  - To preview what `dep-install` would do without actually running anything (e.g. the user asks
+    "what would that involve" before deciding), `dep-guidance <dependency>` resolves and returns
+    the exact same fields, read-only.
 - **A dependency is installed but not authenticated** — `sf` CLI present but the relevant alias
   isn't logged in, or `gcx` CLI present but `gcx config check` fails: both are always something
   only the human can do (interactive browser login) — same box format, headed e.g. "MANUAL STEP
-  NEEDED — Step 2 of 2: log into Salesforce" with the exact command (`sf org login web --alias
-  prod`/`--alias uat`, or `gcx login --server https://chg.grafana.net` for Grafana — that's this
-  org's Grafana Cloud stack; don't let the user log into a different one).
+  NEEDED — Step 2 of 2: log into Salesforce" with the exact command:
+  - **prod**: `sf org login web --alias prod` — the default `login.salesforce.com` URL is correct
+    here, don't add an `--instance-url`.
+  - **uat**: `sf org login web --alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com`
+    — UAT is a sandbox, not a regular production-style org, so the `--instance-url` flag is
+    required; the plain `--alias uat` form (no instance URL) will send the browser to the wrong
+    login host and fail. Always include this exact flag/value for UAT — never omit it or
+    substitute a different sandbox URL.
+  - **Grafana**: `gcx login --server https://chg.grafana.net` — that's this org's Grafana Cloud
+    stack; don't let the user log into a different one.
 - **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): `status`
   shows `Connected: "No — ..."` in the table (not just `"—"`) until the entry's own live connection
   state — read from `claude mcp list`, not just "the plugin is registered" — comes back connected.
@@ -274,8 +300,14 @@ yourself:
   on both CLIs.
 - **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
 - **Salesforce prod** — SOQL queries against the prod org, via `npx @salesforce/mcp`. Needs the
-  `sf` CLI *installed* first — `install` refuses otherwise — but not necessarily logged into the
-  `prod` alias yet: verified directly that the MCP server starts up and registers its tools
-  cleanly even against a never-authenticated alias, only erroring if a tool is actually called
-  before `sf org login web --alias prod` (see step 3 above).
-- **Salesforce UAT** — SOQL queries against the UAT org. Same as prod, scoped to the `uat` alias.
+  `sf` CLI *installed and at least SF_MIN_VERSION* first (`manage_companions.py`'s constant,
+  currently the unified-CLI floor `2.0.0`) — `install` refuses otherwise, whether `sf` is missing
+  entirely or just too old (a leftover pre-unification `sf`/legacy `sfdx-cli` seen on some machines
+  looks "installed" but lacks the `--orgs`/`--toolsets` flags this MCP server needs) — but not
+  necessarily logged into the `prod` alias yet: verified directly that the MCP server starts up and
+  registers its tools cleanly even against a never-authenticated alias, only erroring if a tool is
+  actually called before `sf org login web --alias prod` (see step 3 above).
+- **Salesforce UAT** — SOQL queries against the UAT org. Same as prod, scoped to the `uat` alias,
+  with one difference: UAT is a sandbox, so logging in requires an explicit `--instance-url` —
+  `sf org login web --alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com` — not
+  just `--alias uat` on its own (that's enough for prod, but not for this sandbox).
