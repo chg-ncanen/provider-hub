@@ -59,7 +59,9 @@ with the PDE Ops Tools plugin (`pde`) itself, not something this wizard installs
 alongside it, and its
 `ready`/`detail` fields come from `status` the same way: use `—` instead of a number in that row so
 it's visibly not a pickable option, and if the user replies with that dash or its name anyway,
-just explain it isn't installable here rather than trying to do anything with it.
+just explain it isn't installable here — this only means it's not a numbered choice to *install*;
+missing required config on this row still gets proactively flagged regardless of what the user
+picks (see below), that's a different thing from "picking" it.
 
 | # | Service | Deps | Installed | Configured | Connected | Description |
 |---|---|---|---|---|---|---|
@@ -136,19 +138,62 @@ sentence:
 For the `pde_mcp` row, `Deps` and `Connected` are always `"—"` (it isn't something this wizard
 installs, and isn't a service you connect to a login/OAuth session — it's the plugin's own bundled
 server). `Configured`, though, is a real check here (see above) — `pde_mcp_configured()` reads
-whether the plugin's required userConfig (`ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`) is actually set,
-straight from Claude Code's own on-disk plugin config (`~/.claude/settings.json`'s `pluginConfigs`
-for the non-sensitive fields, `~/.claude/.credentials.json`'s `pluginSecrets` for the ones marked
-`"sensitive": true` in `plugin.json` — checked for presence only, never for the actual value, which
-this skill should never print, log, or ask the user to paste). Claude Code-only and best-effort: it
-returns `None` (render as `"—"`, not a false `"❌"`) on Copilot CLI, or whenever either file can't be
+whether the plugin's *required* userConfig (`ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`) is actually
+set, straight from Claude Code's own on-disk plugin config (`~/.claude/settings.json`'s
+`pluginConfigs` for the non-sensitive fields, `~/.claude/.credentials.json`'s `pluginSecrets` for
+the ones marked `"sensitive": true` in `plugin.json` — checked for presence only, never for the
+actual value, which this skill should never print, log, or ask the user to paste).
+`pde_mcp_config_state()` behind it also breaks out *which* fields are missing
+(`missing_required_config`/`missing_optional_config` on the `pde_mcp` status entry — `ATLASSIAN_EMAIL`/
+`ATLASSIAN_API_TOKEN` required, `EMAIL_USERNAME`/`EMAIL_PASSWORD` optional, only needed for email
+features) rather than just a pass/fail bit, so the guidance below can say exactly what's missing
+instead of a vague "something's unconfigured." Claude Code-only and best-effort: both return
+`None`/empty (render as `"—"`, not a false `"❌"`) on Copilot CLI, or whenever either file can't be
 read at all. `ready: null` means the PDE Ops Tools plugin (`pde`) itself wasn't found installed —
 genuinely unusual, since this skill is bundled inside it, so seeing this likely means something's
 off with the CLI/marketplace lookup itself; show `detail` verbatim as the `Installed` cell rather
 than a checkmark in that case. `ready: false` means something's actually wrong with an install that
 *was* found (venv missing, or a broken dependency) — `Installed` is still `"❌"`, but put `detail` in
-the Description column too so it's visible without the user having to ask, since
-this row never leads to a follow-up step the way the picker rows do.
+the Description column too so it's visible without the user having to ask.
+
+**Unlike the rest of this row, missing `pde_mcp` config *does* lead to a follow-up step** — even
+though `pde_mcp` itself stays unnumbered/non-pickable (this wizard still doesn't install the
+plugin), give `missing_required_config` the same unmistakable `MANUAL STEP NEEDED` box treatment as
+step 3's other manual steps whenever it's non-empty, right alongside the status table rather than
+waiting for the user to ask about it:
+
+```
+======================================================================
+MANUAL STEP NEEDED: fill in pde-mcp's missing config — ATLASSIAN_API_TOKEN
+======================================================================
+JSM alert tools will fail until this is set. Run this in your own terminal (not something I can
+do for you — this is a credential):
+
+    /plugin configure pde
+
+That opens Claude Code's interactive config form for every userConfig field the plugin declares,
+including this one, and stores it the same secure way as a normal plugin install prompt.
+======================================================================
+```
+
+- **Always point at `/plugin configure pde`** (or `/plugin` → choose "Configure" for the `pde`
+  plugin, if the exact subcommand form isn't accepted) as the primary path — it's the one
+  interactive flow that handles every declared field, sensitive or not, through Claude Code's own
+  secure storage.
+- **Never construct or run a `claude plugin install ... --config ATLASSIAN_API_TOKEN=...` /
+  `--config EMAIL_PASSWORD=...` command yourself, and never ask the user to paste either value into
+  the chat** — both are marked `"sensitive": true` in the plugin's schema for a reason; typing them
+  into a shell command or a chat message puts them in this conversation's transcript/history, which
+  defeats the point of the secure storage `/plugin configure` uses. Route both to the human via the
+  box above, exactly like every other credential-entry step in this skill.
+- **`ATLASSIAN_EMAIL`/`EMAIL_USERNAME` are not sensitive** — if the user would rather just tell you
+  the value in chat than run the interactive flow, it's fine to relay it via `claude plugin install
+  pde@provider-hub --config ATLASSIAN_EMAIL=<value>` yourself (repeatable per field; validated
+  against the plugin's schema and stored via the same path `/plugin configure` uses) — same
+  "just install when it can" philosophy as the rest of this skill for anything that isn't a secret.
+- `missing_optional_config` (just `EMAIL_PASSWORD`/`EMAIL_USERNAME`) only matters if the user
+  actually wants email features — mention it, but don't give it the same urgency as
+  `missing_required_config`; JSM/alert tools work fine without it.
 
 Keep `Description` to what the service generally does — the concrete not-connected/not-configured
 reason belongs in `Connected`/`Configured`/`Deps`, not here. Don't also list the six bundled

@@ -100,24 +100,35 @@ def _claude_plugin_full_id(plugin_name):
     return entry.get("id") if entry else None
 
 
-def pde_mcp_configured(cli):
-    """Whether pde-mcp's required userConfig credentials (ATLASSIAN_EMAIL,
-    ATLASSIAN_API_TOKEN) are actually set — read directly from Claude Code's
-    own on-disk plugin config, since these get substituted into the MCP
-    server's spawned process via .mcp.json's `${user_config.*}` syntax and
-    aren't visible in this script's own environment any other way. Confirmed
-    directly where each half lives: non-sensitive fields (ATLASSIAN_EMAIL,
-    EMAIL_USERNAME) sit in ~/.claude/settings.json's `pluginConfigs`; fields
-    marked `"sensitive": true` in plugin.json's userConfig schema (the API
-    token, the email app password) sit in ~/.claude/.credentials.json's
-    `pluginSecrets` instead — checked here for presence/non-empty only, the
-    actual value is never read into anything that gets printed or logged.
+# The pde plugin's own declared userConfig schema (.claude-plugin/plugin.json) — kept here too so
+# pde_mcp_config_state() knows which fields are required vs optional and which are sensitive
+# without re-parsing that manifest. Update this if the plugin's own schema ever changes.
+PDE_USER_CONFIG_FIELDS = {
+    "ATLASSIAN_EMAIL": {"required": True, "sensitive": False},
+    "ATLASSIAN_API_TOKEN": {"required": True, "sensitive": True},
+    "EMAIL_USERNAME": {"required": False, "sensitive": False},
+    "EMAIL_PASSWORD": {"required": False, "sensitive": True},
+}
 
-    Claude Code-only concept (Copilot CLI has its own separate, unexplored
-    plugin-config storage) — returns `None`, genuinely unknown, rather than a
-    false "not configured", whenever `cli != "claude"`, the plugin isn't
-    found, or either file can't be read (e.g. a different OS keeping secrets
-    in a real OS keychain instead of this file)."""
+
+def pde_mcp_config_state(cli):
+    """Presence (not value) of each of pde-mcp's declared userConfig fields —
+    read directly from Claude Code's own on-disk plugin config, since these
+    get substituted into the MCP server's spawned process via .mcp.json's
+    `${user_config.*}` syntax and aren't visible in this script's own
+    environment any other way. Confirmed directly where each half lives:
+    non-sensitive fields (ATLASSIAN_EMAIL, EMAIL_USERNAME) sit in
+    ~/.claude/settings.json's `pluginConfigs`; fields marked `"sensitive":
+    true` in plugin.json's userConfig schema (the API token, the email app
+    password) sit in ~/.claude/.credentials.json's `pluginSecrets` instead —
+    checked here for presence/non-empty only, the actual value is never read
+    into anything that gets printed or logged.
+
+    Returns a `{field: bool}` dict, or `None` — genuinely unknown, not a
+    false "nothing is set" — whenever `cli != "claude"` (Copilot CLI has its
+    own separate, unexplored plugin-config storage), the plugin isn't found,
+    or either file can't be read (e.g. a different OS keeping secrets in a
+    real OS keychain instead of this file)."""
     if cli != "claude":
         return None
     plugin_id = _claude_plugin_full_id("pde")
@@ -137,7 +148,21 @@ def pde_mcp_configured(cli):
     except Exception:
         return None
 
-    return bool(options.get("ATLASSIAN_EMAIL")) and bool(secrets.get("ATLASSIAN_API_TOKEN"))
+    return {
+        field: bool(secrets.get(field)) if meta["sensitive"] else bool(options.get(field))
+        for field, meta in PDE_USER_CONFIG_FIELDS.items()
+    }
+
+
+def pde_mcp_configured(cli):
+    """Whether pde-mcp's *required* userConfig fields are set — the
+    aggregate boolean pde_mcp_status()'s `configured` column value uses. See
+    pde_mcp_config_state() for the per-field breakdown this derives from,
+    used for actionable guidance on exactly what's missing."""
+    state = pde_mcp_config_state(cli)
+    if state is None:
+        return None
+    return all(state[f] for f, meta in PDE_USER_CONFIG_FIELDS.items() if meta["required"])
 
 
 def pde_mcp_status(cli):
@@ -148,12 +173,21 @@ def pde_mcp_status(cli):
     real broken-venv bug: locate the plugin root, check the venv's python
     exists, then actually try importing pde-mcp's dependencies rather than
     inferring from a marker file."""
+    config_state = pde_mcp_config_state(cli)
     configured = pde_mcp_configured(cli)
+    missing_required, missing_optional = [], []
+    if config_state is not None:
+        for field, meta in PDE_USER_CONFIG_FIELDS.items():
+            if not config_state[field]:
+                (missing_required if meta["required"] else missing_optional).append(field)
+
     plugin_root = find_plugin_root("pde", cli)
     if not plugin_root:
         return {
             "ready": None,
             "configured": configured,
+            "missing_required_config": missing_required,
+            "missing_optional_config": missing_optional,
             "detail": "Not installed — the PDE Ops Tools plugin (`pde`) wasn't found",
         }
 
@@ -162,6 +196,8 @@ def pde_mcp_status(cli):
         return {
             "ready": False,
             "configured": configured,
+            "missing_required_config": missing_required,
+            "missing_optional_config": missing_optional,
             "detail": "venv not found yet — restart your session so the SessionStart hook can build it",
         }
 
@@ -177,13 +213,23 @@ def pde_mcp_status(cli):
     )
     if rc == 0:
         detail = "Bundled with the PDE Ops Tools plugin — venv and dependencies OK"
-        if configured is False:
-            detail += "; missing required userConfig (Atlassian email and/or API token) — JSM tools will fail until that's filled in"
-        return {"ready": True, "configured": configured, "detail": detail}
+        if missing_required:
+            detail += f"; missing required userConfig ({', '.join(missing_required)}) — JSM tools will fail until that's filled in"
+        elif missing_optional:
+            detail += f"; missing optional userConfig ({', '.join(missing_optional)}) — only needed for email features"
+        return {
+            "ready": True,
+            "configured": configured,
+            "missing_required_config": missing_required,
+            "missing_optional_config": missing_optional,
+            "detail": detail,
+        }
     reason = (err or out).strip().splitlines()[-1] if (err or out).strip() else "unknown import error"
     return {
         "ready": False,
         "configured": configured,
+        "missing_required_config": missing_required,
+        "missing_optional_config": missing_optional,
         "detail": f"dependencies broken — {reason} (restart your session to let the hook reinstall)",
     }
 
