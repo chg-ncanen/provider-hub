@@ -230,16 +230,15 @@ already needs to do both.
 - **A dependency is installed but not authenticated** — `sf` CLI present but the relevant alias
   isn't logged in, or `gcx` CLI present but `gcx config check` fails: both are always something
   only the human can do (interactive browser login) — same box format, headed e.g. "MANUAL STEP
-  NEEDED — Step 2 of 2: log into Salesforce" with the exact command:
-  - **prod**: `sf org login web --alias prod` — the default `login.salesforce.com` URL is correct
-    here, don't add an `--instance-url`.
-  - **uat**: `sf org login web --alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com`
-    — UAT is a sandbox, not a regular production-style org, so the `--instance-url` flag is
-    required; the plain `--alias uat` form (no instance URL) will send the browser to the wrong
-    login host and fail. Always include this exact flag/value for UAT — never omit it or
-    substitute a different sandbox URL.
-  - **Grafana**: `gcx login --server https://chg.grafana.net` — that's this org's Grafana Cloud
-    stack; don't let the user log into a different one.
+  NEEDED — Step 2 of 2: log into Salesforce". **For `sf`, use the exact command from `status`'s own
+  `ready_hint` for that service** rather than retyping or reconstructing it here — prod and uat both
+  need an explicit `--instance-url` (uat because Salesforce sandboxes are never reachable via the
+  generic login page regardless of org config; prod because this org's own custom domain doesn't
+  accept the generic login page either), and `manage_companions.py`'s `sf_login_command()` /
+  `SF_LOGIN_INSTANCE_URLS` is the one place that knows the current URL for each — if either domain
+  ever changes, that's the only place that needs updating, so don't duplicate the URLs into this
+  file too. For Grafana: `gcx login --server https://chg.grafana.net` — that's this org's Grafana
+  Cloud stack; don't let the user log into a different one.
 - **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly): `status`
   shows `Connected: "No — ..."` in the table (not just `"—"`) until the entry's own live connection
   state — read from `claude mcp list`, not just "the plugin is registered" — comes back connected.
@@ -299,15 +298,18 @@ yourself:
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
 - **LogRocket** — session replay, metrics, issue search. Same install mechanism on both CLIs.
-- **Salesforce prod** — SOQL queries against the prod org, via `npx @salesforce/mcp`. Needs the
-  `sf` CLI *installed and at least SF_MIN_VERSION* first (`manage_companions.py`'s constant,
-  currently the unified-CLI floor `2.0.0`) — `install` refuses otherwise, whether `sf` is missing
-  entirely or just too old (a leftover pre-unification `sf`/legacy `sfdx-cli` seen on some machines
-  looks "installed" but lacks the `--orgs`/`--toolsets` flags this MCP server needs) — but not
-  necessarily logged into the `prod` alias yet: verified directly that the MCP server starts up and
+- **Salesforce prod and UAT** — SOQL queries against the prod/UAT orgs, via `npx @salesforce/mcp`,
+  scoped to the `prod`/`uat` alias respectively. Identical mechanics for both — one shared `sf` CLI
+  dependency, checked and installed/upgraded the same way regardless of which alias you're setting
+  up (see step 3): needs `sf` *installed and at least SF_MIN_VERSION* (`manage_companions.py`'s
+  constant, currently the unified-CLI floor `2.0.0`) — `install` refuses otherwise, whether `sf` is
+  missing entirely or just too old (a leftover pre-unification `sf`/legacy `sfdx-cli` seen on some
+  machines looks "installed" but lacks the `--orgs`/`--toolsets` flags this MCP server needs) — but
+  not necessarily logged into that alias yet: verified directly that the MCP server starts up and
   registers its tools cleanly even against a never-authenticated alias, only erroring if a tool is
-  actually called before `sf org login web --alias prod` (see step 3 above).
-- **Salesforce UAT** — SOQL queries against the UAT org. Same as prod, scoped to the `uat` alias,
-  with one difference: UAT is a sandbox, so logging in requires an explicit `--instance-url` —
-  `sf org login web --alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com` — not
-  just `--alias uat` on its own (that's enough for prod, but not for this sandbox).
+  actually called before logging in. **The only real difference between the two is the login URL**
+  — both need an explicit `--instance-url` (uat because it's a sandbox, unreachable via the generic
+  login page regardless of org config; prod because this org's own custom domain doesn't accept the
+  generic login page either), and the current URL for each lives in exactly one place,
+  `manage_companions.py`'s `SF_LOGIN_INSTANCE_URLS`/`sf_login_command()` — not restated here, so a
+  future domain change only needs to happen in that one file.

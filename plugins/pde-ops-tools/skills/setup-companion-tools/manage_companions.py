@@ -185,6 +185,42 @@ def sf_connected_aliases():
         return set()
 
 
+# Org login endpoints — the one real difference between prod and uat, everything else about the
+# sf CLI (install/upgrade/version-floor handling, MCP registration, lazy-auth) is identical and
+# shared via the `alias`-parameterized functions below. Sandboxes are never reachable via the
+# generic login.salesforce.com regardless of org config, so uat always needs an explicit
+# --instance-url; prod gets one too here since this org's confirmed My Domain
+# (chg.my.salesforce.com — also referenced in resolve-duplicate-contact-alerts for building prod
+# record links) doesn't accept login via the generic login page either. Update only here if either
+# ever changes — every other place that needs the login command calls sf_login_command(alias)
+# rather than re-typing a URL.
+SF_LOGIN_INSTANCE_URLS = {
+    "prod": "https://chg.my.salesforce.com",
+    "uat": "https://chg--uat.sandbox.my.salesforce.com",
+}
+
+
+def sf_login_command(alias):
+    url = SF_LOGIN_INSTANCE_URLS.get(alias)
+    command = f"sf org login web --alias {alias}"
+    return f"{command} --instance-url {url}" if url else command
+
+
+def _sf_service_hints(alias):
+    """Shared ready_hint/post_install text for a Salesforce alias's SERVICES entry — the two
+    aliases only ever differ in the login command sf_login_command() produces."""
+    login_command = sf_login_command(alias)
+    ready_hint = (
+        f"Registered, but the sf CLI isn't logged into '{alias}' yet — run `{login_command}` "
+        "to connect it."
+    )
+    post_install = (
+        "Registers regardless of `sf` login state (its tools just error if called before "
+        f"you're logged in) — run `{login_command}` if you haven't already."
+    )
+    return ready_hint, post_install
+
+
 def sf_dependency_status(alias):
     """Status of the `sf` CLI dependency, scoped to one org alias (prod/uat) —
     each Salesforce service needs its own alias logged in, even though the
@@ -437,14 +473,8 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "prod", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("prod")],
         "org_alias": "prod",
-        "ready_hint": (
-            "Registered, but the sf CLI isn't logged into 'prod' yet — run `sf org login web "
-            "--alias prod` to connect it."
-        ),
-        "post_install": (
-            "Registers regardless of `sf` login state (its tools just error if called before "
-            "you're logged in) — run `sf org login web --alias prod` if you haven't already."
-        ),
+        "ready_hint": _sf_service_hints("prod")[0],
+        "post_install": _sf_service_hints("prod")[1],
     },
     "salesforce-uat": {
         "label": "Salesforce UAT — SOQL queries against the UAT org",
@@ -453,17 +483,8 @@ SERVICES = {
         "mcp_command": ["npx", "-y", "@salesforce/mcp", "--orgs", "uat", "--toolsets", "orgs,data"],
         "dependencies": lambda: [sf_dependency_status("uat")],
         "org_alias": "uat",
-        "ready_hint": (
-            "Registered, but the sf CLI isn't logged into 'uat' yet — run `sf org login web "
-            "--alias uat --instance-url https://chg--uat.sandbox.my.salesforce.com` to connect "
-            "it. The `--instance-url` is required here — UAT is a sandbox, so the default "
-            "login.salesforce.com URL `sf org login web --alias prod` uses won't reach it."
-        ),
-        "post_install": (
-            "Registers regardless of `sf` login state (its tools just error if called before "
-            "you're logged in) — run `sf org login web --alias uat --instance-url "
-            "https://chg--uat.sandbox.my.salesforce.com` if you haven't already."
-        ),
+        "ready_hint": _sf_service_hints("uat")[0],
+        "post_install": _sf_service_hints("uat")[1],
     },
 }
 
