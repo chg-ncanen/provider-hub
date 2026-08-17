@@ -84,7 +84,7 @@ Match results back to their alerts by ID. Only contacts returned still exist.
 Some sub-brands belong to the same parent brand and are treated as **brand groups**. A provider should have at most **one contact across the entire group** — having contacts in two different sub-brands within the same group is still a duplicate. A duplicate exists if 2+ contacts exist within the same brand group (regardless of whether the sub-brands differ).
 
 Known brand groups:
-- **GMI / GMD** (Global Medical Staffing)
+- **GMI / GMD** (Global Medical Staffing) — **exception:** GMI and GMD are tracked separately here, not combined. Having 1 GMD contact and 1 GMI contact is expected and is **not** a duplicate. A duplicate only exists if the *same* sub-brand (e.g. GMD alone) has 2+ surviving contacts. GMS is the only brand group with this exception.
 - **WMS / WBY** (Weatherby)
 - **CHS / CHA** (CompHealth)
 

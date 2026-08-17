@@ -84,7 +84,7 @@ Use this only if the script fails or needs debugging. See `SKILL.md` for the ful
 5. **Report** summary of all actions
 
 Brand grouping ensures providers have at most one contact per brand group:
-- GMI / GMD → Global Medical Staffing
+- GMI / GMD → Global Medical Staffing (exception: GMI and GMD are tracked separately — 1 contact each is expected and not a duplicate; a duplicate requires 2+ within the *same* sub-brand)
 - WMS / WBY → Weatherby
 - CHS / CHA → CompHealth
 

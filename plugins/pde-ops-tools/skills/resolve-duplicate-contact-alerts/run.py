@@ -61,7 +61,7 @@ SF_ORG = "prod"
 
 # Brand groups: brands in the same group are treated as one.
 # A provider having contacts in two different sub-brands within a group is
-# still a duplicate.
+# still a duplicate — EXCEPT for GMS (GMI/GMD), see SPLIT_BRAND_GROUPS below.
 BRAND_GROUPS: dict[str, str] = {
     "GMI": "GMS",
     "GMD": "GMS",
@@ -70,6 +70,13 @@ BRAND_GROUPS: dict[str, str] = {
     "CHS": "COMPHEALTH",
     "CHA": "COMPHEALTH",
 }
+
+# Groups where sub-brands are tracked separately instead of being capped
+# together: up to 1 contact per sub-brand (e.g. 1 GMD + 1 GMI) is expected
+# and NOT a duplicate. A duplicate only exists if the same sub-brand has 2+
+# contacts. GMS is the only group with this exception — WEATHERBY and
+# COMPHEALTH still cap at 1 contact total across the whole group.
+SPLIT_BRAND_GROUPS: set[str] = {"GMS"}
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +148,31 @@ def imap_date(dt: datetime) -> str:
 
 def has_duplicate(survivors: list[dict]) -> bool:
     """
-    Return True if 2+ contacts survive within the same brand group.
+    Return True if a duplicate exists among the survivors.
     Each survivor dict has keys: id, name, brand, group.
+
+    For most brand groups, a duplicate is 2+ contacts surviving within the
+    same group, regardless of which sub-brand each is in. For
+    SPLIT_BRAND_GROUPS (currently just GMS/GMI+GMD), sub-brands are counted
+    separately instead of together — 1 GMD + 1 GMI is expected, not a
+    duplicate. A duplicate there only exists if the same sub-brand (e.g. GMD
+    alone) has 2+ surviving contacts.
     """
-    groups: dict[str, int] = {}
+    group_counts: dict[str, int] = {}
+    subbrand_counts: dict[tuple[str, str], int] = {}
     for s in survivors:
-        groups[s["group"]] = groups.get(s["group"], 0) + 1
-    return any(count >= 2 for count in groups.values())
+        group = s["group"]
+        subbrand = s["brand"].upper().strip()
+        group_counts[group] = group_counts.get(group, 0) + 1
+        subbrand_counts[(group, subbrand)] = subbrand_counts.get((group, subbrand), 0) + 1
+
+    for group, count in group_counts.items():
+        if group in SPLIT_BRAND_GROUPS:
+            if any(c >= 2 for (g, _), c in subbrand_counts.items() if g == group):
+                return True
+        elif count >= 2:
+            return True
+    return False
 
 
 def email_mentions_any(emails: list[dict], contact_ids: list[str]) -> bool:
