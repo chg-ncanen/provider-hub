@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from api.jsm.config import AppConfig
 from api.jsm.alerts_tool import JSMOpsAlertsTool
+from api.jsm.schedules_tool import JSMOpsSchedulesTool
 
 
 class JSMOpsAPI:
@@ -35,6 +36,16 @@ class JSMOpsAPI:
             max_retries=config.max_retries,
             mock_mode=mock_mode,
         )
+        self.schedules_tool = JSMOpsSchedulesTool(
+            cloud_id=config.atlassian_cloud_id,
+            email=config.atlassian_email,
+            api_token=config.atlassian_api_token,
+            timeout_seconds=config.timeout_seconds,
+            max_retries=config.max_retries,
+            mock_mode=mock_mode,
+        )
+        self._schedules_cache: Optional[List[Dict[str, Any]]] = None
+        self._user_display_cache: Dict[str, Dict[str, Optional[str]]] = {}
 
     @classmethod
     def from_config_file(
@@ -514,3 +525,138 @@ class JSMOpsAPI:
         if " " in escaped or ":" in escaped:
             return f'"{escaped}"'
         return escaped
+
+    # ------------------------------------------------------------------
+    # ASA (App Support Ambassador) rotation support
+    #
+    # PDE calls this rotation "ASA"; the underlying JSM Ops / Opsgenie API
+    # calls the same concept "on-call" (schedules/on-calls/overrides). These
+    # methods expose it under PDE's own name and resolve the bare Atlassian
+    # accountIds the API returns into display names/emails.
+    # ------------------------------------------------------------------
+
+    _SCHEDULE_ID_PATTERN = re.compile(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    )
+
+    def list_asa_schedules(self, refresh: bool = False) -> Dict[str, Any]:
+        if self._schedules_cache is None or refresh:
+            result = self.schedules_tool.list_schedules()
+            self._schedules_cache = result.get("schedules", [])
+        return {
+            "success": True,
+            "count": len(self._schedules_cache),
+            "schedules": self._schedules_cache,
+        }
+
+    def _resolve_schedule(self, schedule: str) -> Dict[str, Any]:
+        if self._SCHEDULE_ID_PATTERN.match(schedule.strip()):
+            return {"id": schedule.strip(), "name": None}
+
+        schedules = self.list_asa_schedules()["schedules"]
+        needle = schedule.strip().lower()
+        exact = [s for s in schedules if str(s.get("name", "")).strip().lower() == needle]
+        if len(exact) == 1:
+            return exact[0]
+
+        matches = [s for s in schedules if needle in str(s.get("name", "")).lower()]
+        if not matches:
+            raise ValueError(f"No ASA schedule found matching {schedule!r}.")
+        if len(matches) > 1:
+            names = ", ".join(str(s.get("name", "")) for s in matches)
+            raise ValueError(f"Multiple ASA schedules match {schedule!r}: {names}. Be more specific.")
+        return matches[0]
+
+    def _resolve_user(self, account_id: str) -> Dict[str, Optional[str]]:
+        if account_id not in self._user_display_cache:
+            self._user_display_cache[account_id] = self.schedules_tool.resolve_user_display(account_id)
+        return self._user_display_cache[account_id]
+
+    def get_current_asa(self, schedule: str, date: Optional[str] = None) -> Dict[str, Any]:
+        sched = self._resolve_schedule(schedule)
+        result = self.schedules_tool.get_on_calls(schedule_id=sched["id"], date=date)
+        people = [
+            self._resolve_user(p["id"])
+            for p in result.get("participants", [])
+            if isinstance(p, dict) and p.get("type") == "user" and p.get("id")
+        ]
+        return {
+            "success": True,
+            "schedule": sched.get("name") or schedule,
+            "schedule_id": sched["id"],
+            "date": date,
+            "on_asa": people,
+        }
+
+    def get_asa_timeline(
+        self,
+        schedule: str,
+        date: Optional[str] = None,
+        interval: int = 4,
+        interval_unit: str = "weeks",
+        include_overrides: bool = True,
+    ) -> Dict[str, Any]:
+        sched = self._resolve_schedule(schedule)
+        expand = "override" if include_overrides else None
+        result = self.schedules_tool.get_timeline(
+            schedule_id=sched["id"],
+            date=date,
+            interval=interval,
+            interval_unit=interval_unit,
+            expand=expand,
+        )
+        timeline = result.get("timeline", {}) if isinstance(result, dict) else {}
+        periods = self._flatten_timeline_periods(timeline.get("finalTimeline"))
+        overrides = (
+            self._flatten_timeline_periods(timeline.get("overrideTimeline"))
+            if include_overrides
+            else []
+        )
+        for period in periods + overrides:
+            responder_id = period.get("responder_id")
+            if responder_id:
+                period["responder"] = self._resolve_user(responder_id)
+
+        return {
+            "success": True,
+            "schedule": sched.get("name") or schedule,
+            "schedule_id": sched["id"],
+            "window_start": timeline.get("startDate"),
+            "window_end": timeline.get("endDate"),
+            "periods": periods,
+            "overrides": overrides,
+        }
+
+    @staticmethod
+    def _flatten_timeline_periods(timeline_block: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for rotation in (timeline_block or {}).get("rotations", []):
+            for period in rotation.get("periods", []):
+                responder = period.get("responder") or {}
+                out.append(
+                    {
+                        "rotation_name": rotation.get("name"),
+                        "start": period.get("startDate"),
+                        "end": period.get("endDate"),
+                        "type": period.get("type"),
+                        "responder_id": responder.get("id"),
+                    }
+                )
+        return out
+
+    def list_asa_overrides(self, schedule: str) -> Dict[str, Any]:
+        sched = self._resolve_schedule(schedule)
+        result = self.schedules_tool.list_overrides(schedule_id=sched["id"])
+        overrides = result.get("overrides", [])
+        for override in overrides:
+            responder = override.get("user") or override.get("responder") or {}
+            responder_id = responder.get("id") if isinstance(responder, dict) else None
+            if responder_id:
+                override["responder"] = self._resolve_user(responder_id)
+        return {
+            "success": True,
+            "schedule": sched.get("name") or schedule,
+            "schedule_id": sched["id"],
+            "count": len(overrides),
+            "overrides": overrides,
+        }

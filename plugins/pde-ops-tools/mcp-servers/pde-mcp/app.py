@@ -29,7 +29,7 @@ from mcp.server.models import InitializationOptions
 from api.jsm.client import JSMOpsAPI
 from api.jsm.config import AppConfig
 from api.mail.email_tool import EmailTool
-from tools import alerts, email, skills
+from tools import alerts, asa, email, skills
 
 # Copilot CLI loads the same .mcp.json as Claude Code but has no `userConfig`
 # of its own, so it doesn't understand .mcp.json's ${user_config.*} env
@@ -82,7 +82,7 @@ def _get_email() -> EmailTool:
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    return alerts.definitions() + email.definitions() + skills.definitions()
+    return alerts.definitions() + asa.definitions() + email.definitions() + skills.definitions()
 
 
 @server.call_tool()
@@ -90,6 +90,10 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[types.TextCont
     if alerts.can_handle(name):
         payload = alerts.handle(name=name, arguments=arguments, api=_get_api())
         return alerts.as_text_content(payload)
+
+    if asa.can_handle(name):
+        payload = asa.handle(name=name, arguments=arguments, api=_get_api())
+        return asa.as_text_content(payload)
 
     if email.can_handle(name):
         payload = email.handle(name=name, arguments=arguments, email_tool=_get_email())
