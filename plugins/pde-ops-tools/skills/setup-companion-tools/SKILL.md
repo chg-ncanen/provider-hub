@@ -15,6 +15,10 @@ developer explicitly invokes this skill, and only for whichever service(s) they 
 particular downstream skill needs one of these installed is that skill's own concern to check,
 not this one's.
 
+The wizard loop below assumes a human is present. For an async/headless agent run, `grafana` and
+`salesforce-prod`/`salesforce-uat` support a non-interactive auth path via pre-supplied env vars —
+see "Non-interactive auth" further down.
+
 ## Before you start
 
 Figure out which CLI you're actually running under (a machine can have both installed) — check
@@ -333,17 +337,27 @@ already needs to do both.
     "what would that involve" before deciding), `dep-guidance <dependency>` resolves and returns
     the exact same fields, read-only.
 - **A dependency is installed but not authenticated** — `sf` CLI present but the relevant alias
-  isn't logged in, or `gcx` CLI present but `gcx config check` fails: both are always something
-  only the human can do (interactive browser login) — same box format, headed e.g. "MANUAL STEP
-  NEEDED — Step 2 of 2: log into Salesforce". **For `sf`, use the exact command from `status`'s own
-  `ready_hint` for that service** rather than retyping or reconstructing it here — prod and uat both
-  need an explicit `--instance-url` (uat because Salesforce sandboxes are never reachable via the
-  generic login page regardless of org config; prod because this org's own custom domain doesn't
-  accept the generic login page either), and `manage_companions.py`'s `sf_login_command()` /
-  `SF_LOGIN_INSTANCE_URLS` is the one place that knows the current URL for each — if either domain
-  ever changes, that's the only place that needs updating, so don't duplicate the URLs into this
-  file too. For Grafana: `gcx login --server https://chg.grafana.net` — that's this org's Grafana
-  Cloud stack; don't let the user log into a different one.
+  isn't logged in, or `gcx` CLI present but `gcx config check` fails. **Before falling back to an
+  interactive login for `sf`/`gcx` specifically**, check whether the matching env var is already
+  set in this process's environment: `SFDX_AUTH_URL_PROD`/`SFDX_AUTH_URL_UAT` for the two
+  Salesforce aliases, `GRAFANA_TOKEN` (optional `GRAFANA_SERVER` override) for gcx. If it is, this
+  is an async/headless run where the credential was supplied ahead of time — run
+  `python3 manage_companions.py auth <service>` instead of asking a human to log in, and relay its
+  JSON result the same way as `install`/`dep-install` (see "Non-interactive auth" below for what
+  each does). Most interactive runs won't have these set, and that's expected — fall straight
+  through to the manual box below in that case, don't ask the user whether they want to set one.
+  - **Neither env var set (the normal interactive case)**: both are always something only the
+    human can do (interactive browser login) — same box format, headed e.g. "MANUAL STEP NEEDED —
+    Step 2 of 2: log into Salesforce". **For `sf`, use the exact command from `status`'s own
+    `ready_hint` for that service** rather than retyping or reconstructing it here — prod and uat
+    both need an explicit `--instance-url` (uat because Salesforce sandboxes are never reachable
+    via the generic login page regardless of org config; prod because this org's own custom domain
+    doesn't accept the generic login page either), and `manage_companions.py`'s
+    `sf_login_command()` / `SF_LOGIN_INSTANCE_URLS` is the one place that knows the current URL for
+    each — if either domain ever changes, that's the only place that needs updating, so don't
+    duplicate the URLs into this file too. For Grafana: `gcx login --server
+    https://chg.grafana.net` — that's this org's Grafana Cloud stack; don't let the user log into a
+    different one.
 - **OAuth-based services with no local dependency** (logrocket, atlassian, launch-darkly, figma):
   `status` shows `Connected: "❌ ..."` in the table (not just `"—"`) until the entry's own live
   connection state — read from `claude mcp list`, not just "the plugin is registered" — comes back
@@ -365,6 +379,43 @@ already needs to do both.
 
 Never bundle one of these action-needed moments into a paragraph of other text — always give it
 the `MANUAL STEP NEEDED` rule-line treatment above so it can't be missed.
+
+## Non-interactive auth
+
+This wizard is normally interactive — the loop above assumes a human is present to answer the
+numbered question and complete any browser login. For an async/headless agent run where the
+relevant credential was supplied ahead of time (e.g. as an environment variable on the process),
+`salesforce-prod`, `salesforce-uat`, and `grafana` each have a non-interactive alternative to the
+browser login — see the env-var check in step 3's "installed but not authenticated" case above for
+when to use it instead of the manual box.
+
+- **`salesforce-prod` / `salesforce-uat`**: needs `SFDX_AUTH_URL_PROD` / `SFDX_AUTH_URL_UAT` set to
+  an sfdx auth URL, generated ahead of time on any machine already logged into that alias with `sf
+  org auth show-sfdx-auth-url --target-org <prod|uat> --json` (the `sfdxAuthUrl` field of the
+  result). `python3 manage_companions.py auth salesforce-prod` (or `salesforce-uat`) pipes that URL
+  to `sf org login sfdx-url --sfdx-url-stdin` — never as an argv value, never printed. This is a
+  bearer refresh token for whoever generated it, not a scoped service-account credential — the
+  agent inherits that person's Salesforce permissions, and revoking access means revoking their
+  connected-app session and regenerating the URL.
+- **`grafana`**: needs `GRAFANA_TOKEN` set to a Grafana service-account token (Administration >
+  Service accounts, in the target stack), and optionally `GRAFANA_SERVER` to override the default
+  (`https://chg.grafana.net`, this org's stack). `python3 manage_companions.py auth grafana` writes
+  it straight into gcx's own config store (`gcx config set stacks.chg.grafana.token ...` and
+  switches to that context) instead of running `gcx login`'s browser OAuth — the same persistence
+  mechanism `gcx login` itself would use, just supplied instead of typed into a browser flow. If
+  the result has a `warning` field, it's gcx's own notice that no OS credential store (Keychain/
+  Credential Manager/Secret Service) was available, so the token now sits in plaintext in gcx's
+  config file on disk — relay this to whoever's running the headless agent rather than treating
+  `success: true` as the whole story; it's expected on a bare CI/headless box but worth knowing.
+- **Everything else stays interactive-only for now.** Atlassian, LogRocket, and LaunchDarkly each
+  have a non-OAuth alternative on the vendor side (Atlassian's Rovo MCP server supports API-token
+  auth once an org admin enables it; LogRocket's hosted MCP accepts a Bearer API key; LaunchDarkly
+  only via its separate local npx/Docker MCP server, not the hosted one this skill installs) — none
+  of that is wired up here yet, and each comes with a real tradeoff (an org-admin prerequisite, or
+  installing a different server than the interactive path does) rather than being a simple flag
+  addition. Figma's remote MCP is confirmed OAuth-only with no alternative at all. If one of these
+  needs a non-interactive path later, treat it as new scope, not an extension of the `auth`
+  subcommand as currently built.
 
 ## Resuming
 
@@ -438,6 +489,8 @@ yourself:
     installing; installing the plugin has zero runtime footprint (no server to leave in a broken
     state), so it's fine to install ahead of `gcx login`. This org's stack is
     `https://chg.grafana.net` — that's the `--server` value to use for `gcx login`.
+  - For a non-interactive/headless run, `GRAFANA_TOKEN` (optional `GRAFANA_SERVER` override) replaces
+    `gcx login` — see "Non-interactive auth" above.
 - **LaunchDarkly** — feature flag management. Remote MCP, authenticates via an interactive OAuth
   prompt the first time it connects — no static credentials to configure. Same install mechanism
   on both CLIs.
@@ -467,3 +520,5 @@ yourself:
   generic login page either), and the current URL for each lives in exactly one place,
   `manage_companions.py`'s `SF_LOGIN_INSTANCE_URLS`/`sf_login_command()` — not restated here, so a
   future domain change only needs to happen in that one file.
+  For a non-interactive/headless run, `SFDX_AUTH_URL_PROD`/`SFDX_AUTH_URL_UAT` replaces `sf org
+  login web` — see "Non-interactive auth" above.

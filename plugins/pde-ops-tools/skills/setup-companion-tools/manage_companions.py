@@ -11,6 +11,14 @@ Usage:
     python3 manage_companions.py install <service> --cli claude|copilot
     python3 manage_companions.py dep-guidance <dependency>
     python3 manage_companions.py dep-install <dependency>
+    python3 manage_companions.py auth <salesforce-prod|salesforce-uat|grafana>
+
+`auth` is the non-interactive path for an async/headless agent: it reads a pre-supplied
+credential straight from the environment (SFDX_AUTH_URL_PROD/SFDX_AUTH_URL_UAT for the two
+Salesforce aliases, GRAFANA_TOKEN plus optional GRAFANA_SERVER for gcx) instead of prompting for
+an interactive browser login. Only these two CLIs have a confirmed non-interactive auth
+mechanism at all — see setup-companion-tools/SKILL.md for why the OAuth-only services
+(atlassian/launch-darkly/logrocket/figma) aren't covered here.
 """
 import argparse
 import json
@@ -22,9 +30,9 @@ import subprocess
 from functools import lru_cache
 
 
-def run(cmd, timeout=30):
+def run(cmd, timeout=30, input_data=None):
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, input=input_data)
         return r.returncode, r.stdout, r.stderr
     except Exception as e:
         return 1, "", str(e)
@@ -435,6 +443,12 @@ def sf_dependency_status(alias):
 # rather than an inferred one. Bump this whenever you deliberately move to a newer gcx release.
 GCX_MIN_VERSION = (1, 0, 0)
 _GCX_VERSION_RE = re.compile(r"gcx version (\d+)\.(\d+)\.(\d+)")
+
+# This org's Grafana Cloud stack — the same value already used in ready_hint/dep-guidance text
+# below, pulled out as a real constant here since _auth_gcx() needs it programmatically rather
+# than just embedded in a hint string.
+GCX_DEFAULT_SERVER = "https://chg.grafana.net"
+GCX_CONTEXT_NAME = "chg"
 
 
 @lru_cache(maxsize=1)
@@ -850,12 +864,16 @@ def cmd_status(cli):
     print(json.dumps(result, indent=2))
 
 
+def _blocking_dep_errors(deps):
+    return [d for d in deps if d.get("blocking") and not d.get("ready")]
+
+
 def cmd_install(service_key, cli):
     svc = SERVICES[service_key]
 
     deps_fn = svc.get("dependencies")
     if deps_fn:
-        unmet = [d for d in deps_fn() if d.get("blocking") and not d.get("ready")]
+        unmet = _blocking_dep_errors(deps_fn())
         if unmet:
             print(json.dumps({
                 "success": False,
@@ -952,6 +970,134 @@ def cmd_dep_install(dependency):
         _dep_install_gcx()
     else:
         print(json.dumps({"success": False, "error": f"no auto-install available for dependency '{dependency}'"}))
+
+
+# Env var names for the non-interactive `auth` path — SFDX_AUTH_URL_* rather than a single shared
+# name since prod and uat need distinct credentials. Matches the "SFDX_AUTH_URL" name Salesforce's
+# own CI examples have used for years, just split per alias.
+SF_AUTH_URL_ENV_VARS = {"prod": "SFDX_AUTH_URL_PROD", "uat": "SFDX_AUTH_URL_UAT"}
+
+
+def _scrub(text, secret):
+    """Strip a secret out of CLI output before it can land in a returned/printed error — `sf`/`gcx`
+    diagnostics aren't guaranteed to never echo back what they were given (e.g. an "invalid auth
+    url: <url>" style message), so this is a backstop on top of never passing the secret as argv."""
+    return text.replace(secret, "[REDACTED]") if text and secret else text
+
+
+def _auth_sf(alias):
+    """Non-interactive login for one Salesforce alias, using an sfdx auth URL supplied via
+    env var rather than a browser. The URL is piped to `sf`'s stdin, never passed as an argv
+    value or printed — same "never let a secret land in argv/logs" rule as everything else in
+    this skill. Generate the URL on any already-authenticated machine with
+    `sf org auth show-sfdx-auth-url --target-org <alias> --json`."""
+    env_var = SF_AUTH_URL_ENV_VARS[alias]
+    auth_url = os.environ.get(env_var, "").strip()
+    if not auth_url:
+        return {
+            "success": False,
+            "error": (
+                f"{env_var} not set. Generate one on any machine already logged into '{alias}' "
+                f"with `sf org auth show-sfdx-auth-url --target-org {alias} --json`, export the "
+                f"resulting sfdxAuthUrl as {env_var}, and retry."
+            ),
+        }
+    rc, out, err = run(
+        ["sf", "org", "login", "sfdx-url", "--sfdx-url-stdin", "--alias", alias],
+        timeout=60,
+        input_data=auth_url,
+    )
+    _sf_known_orgs.cache_clear()
+    if rc != 0:
+        return {"success": False, "alias": alias, "error": _scrub((err or out).strip(), auth_url)}
+    return {
+        "success": True,
+        "alias": alias,
+        "connected": alias in sf_connected_aliases(),
+        "detail": f"Logged into '{alias}' non-interactively via the sfdx auth URL from {env_var}.",
+    }
+
+
+def _auth_gcx():
+    """Non-interactive gcx auth using a pre-created service-account/access-policy token instead
+    of `gcx login`'s browser OAuth — the token/server go straight into gcx's own config store via
+    `gcx config set`, the same persistence `gcx login` itself would use, just supplied instead of
+    typed into a browser flow. See setup-gcx's own docs, Path C / Option A-2."""
+    token = os.environ.get("GRAFANA_TOKEN", "").strip()
+    if not token:
+        return {
+            "success": False,
+            "error": (
+                "GRAFANA_TOKEN not set. Create a service-account token in the target Grafana "
+                "stack (Administration > Service accounts), export it as GRAFANA_TOKEN "
+                "(optionally GRAFANA_SERVER to override the default), and retry."
+            ),
+        }
+    server = os.environ.get("GRAFANA_SERVER", "").strip() or GCX_DEFAULT_SERVER
+
+    steps = [
+        ["gcx", "config", "set", f"stacks.{GCX_CONTEXT_NAME}.grafana.server", server],
+        ["gcx", "config", "set", f"stacks.{GCX_CONTEXT_NAME}.grafana.token", token],
+        ["gcx", "config", "set", f"contexts.{GCX_CONTEXT_NAME}.stack", GCX_CONTEXT_NAME],
+        ["gcx", "config", "use-context", GCX_CONTEXT_NAME],
+    ]
+    plaintext_warning = None
+    for cmd in steps:
+        rc, out, err = run(cmd, timeout=30)
+        if rc != 0:
+            # cmd[:-1] — every step's last element is either the token or a non-sensitive name;
+            # dropping it uniformly means the token value is never included in an error report.
+            return {
+                "success": False,
+                "step": " ".join(cmd[:-1]),
+                "error": _scrub((err or out).strip(), token),
+            }
+        # `gcx config set`/`use-context` warn on stderr (rc still 0) when no OS credential store
+        # (Keychain/Credential Manager/Secret Service) is available — confirmed directly on a
+        # machine with no such store: the token just written sits in plaintext in gcx's config
+        # file. Headless/CI boxes are exactly where this is likely, so surface it rather than
+        # silently dropping it once rc == 0.
+        if "plaintext" in err.lower():
+            plaintext_warning = next(
+                (line.strip() for line in err.splitlines() if "plaintext" in line.lower()), None
+            )
+
+    result = {
+        "success": True,
+        "server": server,
+        "context": GCX_CONTEXT_NAME,
+        "connected": gcx_configured(),
+        "detail": f"Configured context '{GCX_CONTEXT_NAME}' non-interactively via GRAFANA_TOKEN.",
+    }
+    if plaintext_warning:
+        result["warning"] = plaintext_warning
+    return result
+
+
+def cmd_auth(service_key):
+    if service_key in ("salesforce-prod", "salesforce-uat"):
+        alias = SERVICES[service_key]["org_alias"]
+        unmet = _blocking_dep_errors([sf_dependency_status(alias)])
+        if unmet:
+            print(json.dumps({
+                "success": False,
+                "blocked": True,
+                "unmet_dependencies": unmet,
+                "error": "sf CLI isn't usable yet — see unmet_dependencies.",
+            }, indent=2))
+            return
+        print(json.dumps(_auth_sf(alias), indent=2))
+    elif service_key == "grafana":
+        unmet = _blocking_dep_errors([gcx_dependency_status()])
+        if unmet:
+            print(json.dumps({
+                "success": False,
+                "blocked": True,
+                "unmet_dependencies": unmet,
+                "error": "gcx CLI isn't usable yet — see unmet_dependencies.",
+            }, indent=2))
+            return
+        print(json.dumps(_auth_gcx(), indent=2))
 
 
 def _resolve_sf_guidance():
@@ -1282,6 +1428,9 @@ def main():
     p_dep_install = sub.add_parser("dep-install")
     p_dep_install.add_argument("dependency")
 
+    p_auth = sub.add_parser("auth")
+    p_auth.add_argument("service", choices=["salesforce-prod", "salesforce-uat", "grafana"])
+
     args = parser.parse_args()
     if args.cmd == "status":
         cmd_status(args.cli)
@@ -1291,6 +1440,8 @@ def main():
         cmd_dep_guidance(args.dependency)
     elif args.cmd == "dep-install":
         cmd_dep_install(args.dependency)
+    elif args.cmd == "auth":
+        cmd_auth(args.service)
 
 
 if __name__ == "__main__":
