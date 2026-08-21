@@ -67,6 +67,12 @@ Always check HTTP status — exit with `status: crashed` on non-2xx.
 
 ### Transition IDs for PDE tickets
 
+`ticket-orchestrator/orchestrator.py`'s `JIRA_TRANSITION_IDS` dict is the single
+source of truth for this table — `copy_worker_skill()` re-renders it into the
+copy placed in each ticket directory, so the deployed copy always matches the
+code regardless of what's checked in here. Edit `JIRA_TRANSITION_IDS`, not
+this table, when a transition ID changes.
+
 | Target status | Transition ID |
 |---|---|
 | Blocked | 21 |
@@ -112,18 +118,32 @@ Run these steps at the beginning of every session, in order:
    s = json.load(open(f)) if os.path.exists(f) else {}
    ```
 
-4. **Write `picked_up_at` immediately** — do this before any other work:
+4. **Write `picked_up_at` immediately** — do this before any other work. This
+   races against the orchestrator's own read-modify-write of the same file
+   right after launch (to record `pid`) — take an exclusive `flock` for the
+   whole read-modify-write, the same way `orchestrator.py`'s `update_state()`
+   does, or whichever write lands second silently clobbers the other's field:
    ```python
-   import json, os
+   import fcntl, json, os
    from datetime import datetime, timezone
    f = ".session.state"
-   s = json.load(open(f)) if os.path.exists(f) else {}
-   now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-   if not s.get("started_at"):
-       s["started_at"] = now
-   s["picked_up_at"] = now
-   s["updated_at"] = now
-   json.dump(s, open(f, "w"), indent=2)
+   if not os.path.exists(f):
+       open(f, "a").close()
+   with open(f, "r+") as fh:
+       fcntl.flock(fh, fcntl.LOCK_EX)
+       try:
+           content = fh.read()
+           s = json.loads(content) if content else {}
+           now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+           if not s.get("started_at"):
+               s["started_at"] = now
+           s["picked_up_at"] = now
+           s["updated_at"] = now
+           fh.seek(0)
+           fh.truncate()
+           fh.write(json.dumps(s, indent=2))
+       finally:
+           fcntl.flock(fh, fcntl.LOCK_UN)
    ```
 
 5. **Read Jira status:**
@@ -294,9 +314,15 @@ First, check whether implementation has already been done:
 2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing exit with `status: crashed`.
 
 3. **Create the PR** (worker does this, not the implementation agent):
-   Read `implementation-notes.md` to find the repo name. Then:
+   Read `implementation-notes.md` to find the repo name. Then, from the ticket's
+   own **worktree** — `$TICKET_DIR/<repo-name>`, not `$REPOS_DIR/<repo-name>` —
+   since that's where `ticket-implementation` actually created the feature
+   branch and committed to it; the shared clone under `$REPOS_DIR` stays on
+   `main` by design (see `ticket-implementation/SKILL.md`'s worktree-isolation
+   section). Reading the branch from `$REPOS_DIR` instead would report `main`
+   and produce a PR with head==base:
    ```bash
-   cd $REPOS_DIR/<repo-name>
+   cd $TICKET_DIR/<repo-name>
    BRANCH=$(git branch --show-current)
    git push origin HEAD 2>/dev/null || true
    EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null)

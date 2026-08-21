@@ -96,10 +96,14 @@ For CHANGE_REQUIRED comments: reply describing the change you will make, e.g.:
 
 If any comments require code changes:
 
-1. Make the changes directly in `$REPOS_DIR/$REPO`
+1. Make the changes in the ticket's own **worktree** — `$TICKET_DIR/$REPO`, not
+   `$REPOS_DIR/$REPO`. The shared clone under `$REPOS_DIR` stays on `main` by
+   design (see `ticket-implementation/SKILL.md`'s worktree-isolation section);
+   committing there would push straight onto `main`, and it isn't safe to touch
+   concurrently since it's shared across every ticket, not per-ticket.
 2. Commit and push:
    ```bash
-   cd $REPOS_DIR/$REPO
+   cd $TICKET_DIR/$REPO
    git add -A
    git commit -m "PDE: $KEY — address PR review comments
 

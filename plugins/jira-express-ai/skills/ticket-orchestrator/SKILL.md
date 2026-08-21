@@ -100,13 +100,22 @@ incomplete stage** and transitions Jira accordingly.
 |---|---|---|
 | None | In Discovery | `discovery.md` |
 | Discovery only | In Progress | `implementation-notes.md` |
-| Discovery + Implementation | UAT Review | `review-notes.md` |
+
+`review-notes.md` is deliberately **not** a gated stage here — it's an optional
+artifact from a second implementation pass (addressing PR comments after
+`In Review`), never produced when a ticket is approved straight through to
+`UAT Review` on the first pass. Reaching `UAT Review` only requires
+`discovery.md` + `implementation-notes.md` (2 completed stages); a ticket that
+legitimately has both never rewinds, `review-notes.md` or not.
 
 **Examples:**
 - Ticket manually moved to `In Progress` before any work → rewind to `In Discovery`,
   transition Jira → `In Discovery`, treat as `In Discovery` this run.
 - Ticket manually moved to `UAT Review` with only discovery done → rewind to
   `In Progress`, transition Jira → `In Progress`.
+- Ticket at `UAT Review` with `discovery.md` + `implementation-notes.md` present
+  (no `review-notes.md`, because it was approved on the first pass) → no rewind,
+  `UAT Review` stands as-is.
 - No ticket directory exists at all → treat as fresh `In Discovery` (like `To Do`
   but session name already exists or didn't exist yet).
 
@@ -313,32 +322,55 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    > executes destructive code, it only damages the VM — not the host machine.
 
 9. Write the real PID into `.session.state`:
+   Take the same exclusive `flock` for this read-modify-write that the
+   worker's own startup write takes (step 4 of `ticket-worker/SKILL.md`) —
+   otherwise the two writes can interleave and one silently clobbers the
+   other's field (concretely: this write's stale copy, missing
+   `picked_up_at`, overwrites the worker's update):
    ```bash
    python3 -c "
-   import json
+   import fcntl, json
    f = '$TICKET_DIR/.session.state'
-   s = json.load(open(f))
-   s['pid'] = $SESSION_PID
-   json.dump(s, open(f,'w'), indent=2)
+   with open(f, 'r+') as fh:
+       fcntl.flock(fh, fcntl.LOCK_EX)
+       try:
+           s = json.loads(fh.read())
+           s['pid'] = $SESSION_PID
+           fh.seek(0); fh.truncate()
+           fh.write(json.dumps(s, indent=2))
+       finally:
+           fcntl.flock(fh, fcntl.LOCK_UN)
    "
    ```
 
-10. Poll `tickets/<KEY>/.session.state` every 2 seconds until `picked_up_at` is
-    present, up to 30 seconds. If absent after 30 seconds, log
-    "<KEY>: session did not pick up within 30s — flagged as failed to start" and stop.
-
-11. Log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket."
-    Do not block. Move immediately to the next ticket.
+10. **Do not poll per-ticket.** Move immediately to the next ticket instead —
+    log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket."
+    Polling every launched session for `picked_up_at` one at a time, up to 30s
+    each, doesn't scale: with N tickets in one run that's a worst case of
+    N×30s, which can exceed the 5–15 minute cron interval this is meant to run
+    on. Instead, **after every ticket in this run has been dispatched**, poll
+    all of them together against one shared 30-second deadline: repeatedly
+    check each not-yet-confirmed ticket's `.session.state` for `picked_up_at`,
+    dropping it from the pending set once found, until either all are
+    confirmed or the deadline passes. Log
+    "<KEY>: session did not pick up within 30s — flagged as failed to start"
+    for anything still pending once the deadline passes.
 
 ## Orchestrator responsibilities
 
 - Query Jira fresh each run.
-- Archive `tickets/*/` folders for tickets no longer active in Jira (status: done in state file).
+- Archive `tickets/*/` folders for tickets no longer active in Jira results —
+  not just ones that finished cleanly (`status: done`); a ticket that got
+  Cancelled/Released/Backlog-ed or lost its `AI-Work` label counts too. The
+  only exception is a genuinely in-flight session (`status: running` with a
+  live PID) — leave that alone rather than archiving out from under it.
 - Read ticket status and state file.
 - Detect and log crashes (dead PID).
 - Create ticket folder and write `.context.md`.
 - Launch worker session via `claude` CLI (`nohup ... &`).
-- Wait up to 30s for `picked_up_at` confirmation, then move on.
+- After dispatching every ticket this run, poll all of them together for
+  `picked_up_at` against one shared 30s deadline (see step 10) — not
+  per-ticket.
 - **Exit after processing all tickets** — no long-running blocking.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).
 

@@ -20,6 +20,7 @@ Optional env vars:
                            script's sibling skill files regardless of cwd.
 """
 
+import fcntl
 import json
 import logging
 import os
@@ -55,6 +56,13 @@ JQL = (
 ACTIONABLE_STATUSES = {"To Do", "In Discovery", "In Progress", "UAT Review"}
 PICKUP_TIMEOUT_SECS = 30
 ARCHIVE_MAX_DAYS = 7
+
+# Deliberate cap, not a paging bug: each dispatched ticket can spawn a
+# long-running worker session, so a single cron tick shouldn't try to launch
+# an unbounded number of them. If the query ever actually hits this cap,
+# search_tickets() logs it loudly rather than silently dropping the overflow —
+# see its "isLast"/count check below.
+MAX_TICKETS_PER_RUN = 100
 
 # This plugin's install root — where the sibling skill files (SKILL.md for
 # the worker, discovery, implementation, review, and merge agents) live.
@@ -130,13 +138,24 @@ def _jira_get(path: str, auth, **params) -> dict:
 def search_tickets(auth) -> list[dict]:
     r = requests.post(
         f"{JIRA_BASE}/search/jql",
-        json={"jql": JQL, "fields": ["status", "assignee", "summary"], "maxResults": 100},
+        json={"jql": JQL, "fields": ["status", "assignee", "summary"], "maxResults": MAX_TICKETS_PER_RUN},
         auth=auth,
         headers={"Content-Type": "application/json", "Accept": "application/json"},
         timeout=20,
     )
     r.raise_for_status()
-    return r.json().get("issues", [])
+    body = r.json()
+    issues = body.get("issues", [])
+    # MAX_TICKETS_PER_RUN is an intentional per-run cap (see its definition),
+    # not something we page through — but if it's actually being hit, that's
+    # worth knowing loudly rather than silently dropping the overflow forever.
+    if body.get("isLast") is False or len(issues) >= MAX_TICKETS_PER_RUN:
+        log.warning(
+            f"Jira query returned {len(issues)} issue(s), at or above the "
+            f"MAX_TICKETS_PER_RUN cap of {MAX_TICKETS_PER_RUN} — there may be "
+            f"more matching tickets than this run can see."
+        )
+    return issues
 
 
 def get_current_user(auth) -> dict:
@@ -167,6 +186,39 @@ def read_state(ticket_dir: Path) -> dict | None:
 
 def write_state(ticket_dir: Path, state: dict) -> None:
     (ticket_dir / ".session.state").write_text(json.dumps(state, indent=2))
+
+
+def update_state(ticket_dir: Path, mutate) -> dict:
+    """Atomically read-modify-write .session.state under an exclusive flock.
+
+    A plain read_state() + write_state() pair is NOT atomic against a
+    concurrent writer — e.g. the worker session this same call just launched,
+    which does its own read-modify-write at startup to set picked_up_at. If
+    that lands between this process's read and write, whichever write lands
+    last silently clobbers the other's update (concretely: the orchestrator's
+    stale copy, missing picked_up_at, overwrites the worker's update, and
+    poll_all_pickups() then times out on a session that actually started fine).
+    flock only serializes cooperating callers — the worker's own startup
+    write (ticket-worker/SKILL.md step 4) takes the same lock for this to
+    actually hold.
+    """
+    path = ticket_dir / ".session.state"
+    path.touch(exist_ok=True)
+    with open(path, "r+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            content = fh.read()
+            try:
+                state = json.loads(content) if content else {}
+            except Exception:
+                state = {}
+            state = mutate(state)
+            fh.seek(0)
+            fh.truncate()
+            fh.write(json.dumps(state, indent=2))
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+    return state
 
 # ── PID check ─────────────────────────────────────────────────────────────────
 
@@ -264,17 +316,27 @@ def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Pat
 
 
 def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], repos_dir: Path) -> None:
-    # Archive done tickets no longer in Jira results
+    # Archive tickets no longer in Jira results — not just ones that finished
+    # cleanly (status: done). A ticket dropped out of active_keys because it's
+    # now Done, Cancelled, Released, or Backlog-ed (all excluded by JQL), or
+    # its AI-Work label was removed — in every case the orchestrator has no
+    # reason to keep it around. Only exception: leave a genuinely in-flight
+    # session (status: running with a live PID) alone rather than yanking its
+    # working directory out from under it; everything else (waiting, done,
+    # crashed, a running status with a dead PID, or no state file at all) is
+    # safe to archive.
     if tickets_dir.exists():
         for folder in tickets_dir.iterdir():
-            if not folder.is_dir():
+            if not folder.is_dir() or folder == archive_dir:
                 continue
             key = folder.name
             if key in active_keys:
                 continue
             state = read_state(folder)
-            if state and state.get("status") == "done":
-                archive_ticket(key, folder, archive_dir, repos_dir)
+            if state and state.get("status") == "running" and pid_alive(state.get("pid")):
+                log.info(f"{key}: no longer in Jira's active results but session still running (PID {state.get('pid')}) — leaving in place")
+                continue
+            archive_ticket(key, folder, archive_dir, repos_dir)
 
     # Purge archives older than ARCHIVE_MAX_DAYS
     if archive_dir.exists():
@@ -294,12 +356,32 @@ SKILLS_TO_COPY = [
     "ticket-merge",
 ]
 
+def render_transition_table() -> str:
+    """Render JIRA_TRANSITION_IDS (defined below) as the markdown table
+    ticket-worker/SKILL.md embeds, so the deployed copy can't drift from the
+    orchestrator's own table — see copy_worker_skill()."""
+    lines = ["| Target status | Transition ID |", "|---|---|"]
+    lines += [f"| {status} | {tid} |" for status, tid in JIRA_TRANSITION_IDS.items()]
+    return "\n".join(lines)
+
+
+TRANSITION_TABLE_RE = re.compile(
+    r"\| Target status \| Transition ID \|\n\|---\|---\|\n(?:\|.*\|\n?)*"
+)
+
+
 def copy_worker_skill(ticket_dir: Path) -> None:
     for skill in SKILLS_TO_COPY:
         src = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
         dest = ticket_dir / ".claude" / "skills" / skill / "SKILL.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(dest))
+        content = src.read_text()
+        if skill == "ticket-worker":
+            # JIRA_TRANSITION_IDS is the single source of truth; render it
+            # into the copy instead of trusting a hand-maintained markdown
+            # table in the SKILL.md source to stay in sync with the code.
+            content = TRANSITION_TABLE_RE.sub(render_transition_table() + "\n", content)
+        dest.write_text(content)
 
 # ── Context file ──────────────────────────────────────────────────────────────
 
@@ -342,16 +424,31 @@ def launch_session(key: str, session_id: str, ticket_dir: Path, repos_dir: Path,
     return proc.pid
 
 
-def poll_pickup(ticket_dir: Path, timeout: int = PICKUP_TIMEOUT_SECS) -> bool:
+def poll_all_pickups(launched: dict[str, Path], timeout: int = PICKUP_TIMEOUT_SECS) -> None:
+    """Poll every ticket launched this run for pickup confirmation concurrently,
+    against one shared deadline — not serially, PICKUP_TIMEOUT_SECS per ticket.
+    With N tickets launched in a single run, a serial per-ticket wait could
+    take N*PICKUP_TIMEOUT_SECS and blow past the 5-15 minute cron interval
+    this is meant to run on; polling the whole batch together caps the total
+    wait at PICKUP_TIMEOUT_SECS regardless of how many tickets launched."""
+    pending = dict(launched)
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        state = read_state(ticket_dir)
-        if state and state.get("picked_up_at"):
-            return True
-        time.sleep(1)
-    # One final check after deadline — avoids false negatives on tight timing
-    state = read_state(ticket_dir)
-    return bool(state and state.get("picked_up_at"))
+
+    def _check_once():
+        for key in list(pending):
+            state = read_state(pending[key])
+            if state and state.get("picked_up_at"):
+                log.info(f"{key}: session confirmed pickup")
+                del pending[key]
+
+    while pending and time.monotonic() < deadline:
+        _check_once()
+        if pending:
+            time.sleep(1)
+    _check_once()  # one final check after the deadline — avoids false negatives on tight timing
+
+    for key in pending:
+        log.warning(f"{key}: session did not pick up within {timeout}s — flagged as failed to start")
 
 # ── Stage rewind ─────────────────────────────────────────────────────────────
 
@@ -370,21 +467,29 @@ JIRA_TRANSITION_IDS = {
 
 # Ordered stages with their deliverable artifacts.
 # A stage is "done" if and only if its deliverable exists in ticket_dir.
+# review-notes.md is deliberately NOT a stage here: it's an optional artifact
+# from a second implementation pass (addressing PR comments), never produced
+# when a ticket goes straight from In Review to UAT Review on first approval.
+# Treating it as a required 3rd stage made rewind_if_needed compute
+# STAGE_ORDER[2][0] == "UAT Review" for a ticket that had legitimately already
+# reached UAT Review — a self-transition, firing every run.
 STAGE_ORDER = [
     ("In Discovery",  "discovery.md"),
     ("In Progress",   "implementation-notes.md"),
-    ("UAT Review",    "review-notes.md"),
 ]
 
-# Which statuses imply that certain stages should already be done
+# Which statuses imply that certain stages should already be done. Only
+# covers statuses rewind_if_needed is actually called for — the ACTIONABLE_STATUSES
+# rewind_if_needed's caller (process_ticket) is invoked for. "QA Review" and
+# "In Review" are human-gate statuses that never reach rewind_if_needed at
+# all (process_ticket only runs for ACTIONABLE_STATUSES), so they don't
+# belong here — this table used to carry both anyway, silently unreachable.
 # Map: jira_status → number of stages that must be completed before reaching it
 STAGES_REQUIRED_BEFORE = {
     # Status          min completed stages needed
     "In Discovery":   0,
-    "QA Review":      1,   # discovery must be done
     "In Progress":    1,   # discovery must be done
-    "In Review":      2,   # discovery + implementation must be done
-    "UAT Review":     3,   # discovery + implementation + review must be done
+    "UAT Review":     2,   # discovery + implementation must be done
 }
 
 
@@ -461,7 +566,14 @@ def process_ticket(
     repos_dir: Path,
     auth,
     current_user_id: str | None,
-) -> None:
+) -> Path | None:
+    """Launch (or resume) this ticket's session if warranted. Returns the
+    ticket_dir if a session was actually launched this call, so the caller
+    can poll it for pickup afterward — None if nothing was launched (already
+    running, or a non-actionable path). Does NOT poll for pickup itself; see
+    poll_all_pickups() in main(), which polls every ticket launched this run
+    concurrently against one shared deadline instead of serially per ticket.
+    """
     ticket_dir = cwd / "tickets" / key
 
     # Check state file for running/crashed sessions
@@ -471,7 +583,7 @@ def process_ticket(
             pid = state.get("pid")
             if pid_alive(pid):
                 log.info(f"{key}: session already running (PID {pid}) — skipping")
-                return
+                return None
             else:
                 log.info(f"{key}: crashed session detected (PID {pid}) — proceeding")
                 state["status"] = "crashed"
@@ -536,16 +648,16 @@ def process_ticket(
     pid = launch_session(key, session_id, ticket_dir, repos_dir, is_new)
     log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid}, claude_session_id={session_id})")
 
-    # Write real PID
-    s = read_state(ticket_dir) or {}
-    s["pid"] = pid
-    write_state(ticket_dir, s)
+    # Write real PID — via update_state(), not read_state()+write_state(), since
+    # the just-launched worker session is concurrently doing its own
+    # read-modify-write to set picked_up_at/started_at (see update_state()'s
+    # docstring for the exact clobber this prevents).
+    def _set_pid(s):
+        s["pid"] = pid
+        return s
+    update_state(ticket_dir, _set_pid)
 
-    # Confirm pickup
-    if poll_pickup(ticket_dir):
-        log.info(f"{key}: session confirmed pickup — moving to next ticket")
-    else:
-        log.warning(f"{key}: session did not pick up within {PICKUP_TIMEOUT_SECS}s — flagged as failed to start")
+    return ticket_dir
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
@@ -592,15 +704,24 @@ def main() -> None:
     archive_dir.mkdir(parents=True, exist_ok=True)
     cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
 
-    # Get current user — only process tickets assigned to this user
-    current_user_id: str | None = None
+    # Get current user — only process tickets assigned to this user. This is a
+    # hard safety requirement (see ticket-orchestrator/SKILL.md's "To Do" step),
+    # so a failed lookup must fail closed (skip dispatch for this run) rather
+    # than fail open — `if current_user_id and ...` alone would silently treat
+    # a None current_user_id as "no filter" and process every ticket regardless
+    # of assignee, including ones assigned to other engineers.
     try:
         me = get_current_user(auth)
         current_user_id = me.get("accountId")
     except Exception as e:
-        log.warning(f"Could not get current user — cannot filter by assignee: {e}")
+        log.error(f"Could not get current user — refusing to dispatch this run (assignee filter cannot be enforced): {e}")
+        return
+    if not current_user_id:
+        log.error("Jira /myself returned no accountId — refusing to dispatch this run (assignee filter cannot be enforced)")
+        return
 
     # Dispatch each ticket
+    launched: dict[str, Path] = {}  # key -> ticket_dir, for tickets launched this run
     for issue in valid_issues:
         key = issue["key"]
         jira_status = issue["fields"]["status"]["name"]
@@ -612,16 +733,24 @@ def main() -> None:
             continue
 
         # Only process tickets assigned to the current user
-        if current_user_id and assignee_id != current_user_id:
+        if assignee_id != current_user_id:
             who = (assignee or {}).get("displayName", "unassigned")
             log.info(f"{key}: not assigned to current user (assigned to: {who}) — skipping")
             continue
 
         log.info(f"{key}: processing ({jira_status})")
         try:
-            process_ticket(key, jira_status, assignee, cwd, repos_dir, auth, current_user_id)
+            ticket_dir = process_ticket(key, jira_status, assignee, cwd, repos_dir, auth, current_user_id)
+            if ticket_dir is not None:
+                launched[key] = ticket_dir
         except Exception as e:
             log.error(f"{key}: unhandled error — {e}", exc_info=True)
+
+    # Poll every session launched this run for pickup confirmation together —
+    # see poll_all_pickups()'s docstring for why this replaced a per-ticket
+    # serial wait.
+    if launched:
+        poll_all_pickups(launched)
 
 
 if __name__ == "__main__":
