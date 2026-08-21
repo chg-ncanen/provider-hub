@@ -154,8 +154,7 @@ and the session write to it — but for different fields and at different times.
   "started_at": "2026-07-13T10:00:00Z",
   "picked_up_at": "2026-07-13T10:00:05Z",
   "updated_at": "2026-07-13T10:04:22Z",
-  "stage": "discovery",
-  "claude_session_id": "a1b2c3d4-...-uuid"
+  "stage": "discovery"
 }
 ```
 
@@ -167,19 +166,20 @@ and the session write to it — but for different fields and at different times.
 | `picked_up_at` | Session, first update | Confirmation that the session loaded and is working |
 | `updated_at` | Session, each update | Heartbeat — last time the session wrote anything |
 | `stage` | Session | Which stage is active (discovery, implementation, merge, etc.) |
-| `claude_session_id` | Orchestrator, once, on first launch | The real `--resume` handle (a UUID). `--name` is cosmetic only. |
 
 `picked_up_at` is the orchestrator's confirmation signal. If it is absent
 after a reasonable wait, the session never started cleanly.
 
-**Developer shortcut:** `--name="<KEY>"` makes the ticket key show up as the
-session's display label (prompt box, `/resume` picker, terminal title), but
-it is *not* a valid `--resume` target — Claude Code's `--resume`/`--session-id`
-take a UUID, not an arbitrary name. The real resume handle is
-`claude_session_id` in `.session.state`:
-`claude --resume "$(python3 -c "import json; print(json.load(open('tickets/<KEY>/.session.state'))['claude_session_id'])")"`.
-A fresh "To Do" restart simply mints a new UUID — there's no old session name
-to free up or rename.
+**Developer shortcut:** `claude --resume "<KEY>"` — the ticket key is both the
+session's display name (`--name="<KEY>"` at launch) and its real `--resume`
+handle. Verified directly: Claude Code resolves `--resume` by the name set via
+`--name`, non-interactively, no UUID needed — as long as that name is
+unambiguous. Names aren't unique, though: a second fresh launch reusing the
+same `--name` creates a second, distinct session sharing it, and `--resume`
+then hard-errors demanding a session ID to disambiguate. That's why a fresh
+"To Do" launch always renames any existing same-named session out of the way
+first (via a headless `/rename` prompt — see step 3b) rather than just
+reusing the key blindly.
 
 ## Jira MCP
 
@@ -215,10 +215,20 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
          return
      ```
 
-   b. Delete the entire `tickets/<KEY>/` directory if it exists. This discards all
-     prior working artifacts (notes, cloned code, etc.) — the fresh session below
-     gets a brand-new `claude_session_id`, so there's no old session identity to
-     free up first.
+   b. Rename any existing claude session still named `<KEY>` out of the way,
+     via a headless prompt — safe to run even if no such session exists (there's
+     simply nothing to rename, which isn't an error worth acting on):
+     ```bash
+     claude --resume="<KEY>" -p "/rename <KEY>-archived-$(date +%Y-%m-%d)" \
+       --permission-mode=bypassPermissions
+     ```
+     This has to happen *before* deleting the ticket directory below and
+     *before* launching the fresh session in step 8, which will reuse the
+     plain name `<KEY>` — without this, `--resume "<KEY>"` later would match
+     both the old and new sessions and hard-error demanding a session ID.
+
+   c. Delete the entire `tickets/<KEY>/` directory if it exists. This discards
+     all prior working artifacts (notes, cloned code, etc.).
 
 4. Create `tickets/<KEY>/` if it does not exist.
 
@@ -241,15 +251,12 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
     "tickets/<KEY>/.claude/skills/ticket-worker/SKILL.md"
    ```
 
-7. Set path variables and write `.session.state` before launch. `claude_session_id`
-   is a UUID we mint ourselves — it's the real `--resume` handle (`--name` is a
-   cosmetic display label only, see step 8):
+7. Set path variables and write `.session.state` before launch:
    ```bash
    TICKET_DIR="$(pwd)/tickets/<KEY>"
    REPOS_DIR="$(pwd)"
    ```
-   - **To Do (fresh start):** full reset — all fields null except a freshly minted
-    `claude_session_id`:
+   - **To Do (fresh start):** full reset — all fields null:
     ```json
     {
       "status": "running",
@@ -257,38 +264,32 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       "started_at": null,
       "picked_up_at": null,
       "updated_at": null,
-      "stage": null,
-      "claude_session_id": "<uuid4 generated now>"
+      "stage": null
     }
     ```
    - **Resume (In Discovery, In Progress, UAT Review):** partial update only —
     reset `picked_up_at` to null and set `status: running`. Preserve all other
-    fields (`started_at`, `stage`, `claude_session_id`, etc.) the worker
-    previously wrote. If `claude_session_id` is somehow missing (e.g. a ticket
-    directory that predates this field), mint a new UUID and treat this launch
-    as fresh instead of a resume — there's nothing to resume without it:
+    fields (`started_at`, `stage`, etc.) the worker previously wrote:
     ```python
-    import json, os, uuid
+    import json, os
     f = f"{TICKET_DIR}/.session.state"
     s = json.load(open(f)) if os.path.exists(f) else {}
     s["status"] = "running"
     s["picked_up_at"] = None
-    if not s.get("claude_session_id"):
-        s["claude_session_id"] = str(uuid.uuid4())
     json.dump(s, open(f, "w"), indent=2)
     ```
 
 8. Launch the session (cwd is set directly on the subprocess — Claude Code's
-   CLI has no `-C` equivalent, unlike Copilot's):
+   CLI has no `-C` equivalent, unlike Copilot's). `--name`/`--resume` both
+   just use the plain ticket key — step 3b's rename is what keeps that
+   unambiguous for a fresh launch:
    ```bash
-   SESSION_ID=$(python3 -c "import json; print(json.load(open('$TICKET_DIR/.session.state'))['claude_session_id'])")
    # $! must be read inside the same subshell that backgrounds the process —
    # capturing it via `echo $!` in a command substitution, not outside a
    # plain (...) group, which would already have exited by the time $! is read.
    if [ "$JIRA_STATUS" = "To Do" ]; then
     # Fresh session:
     SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
-      --session-id="$SESSION_ID" \
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
@@ -296,8 +297,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       > "$TICKET_DIR/session.log" 2>&1 & echo $!)
    else
     # Resume existing session (In Discovery, In Progress, UAT Review):
-    SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
-      --resume="$SESSION_ID" \
+    SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --resume="<KEY>" \
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
@@ -306,17 +306,16 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    fi
    ```
    - The `cd ... && ... &` sets the worker's cwd without a `-C` flag.
-   - `--name="<KEY>"` is cosmetic only (prompt box, `/resume` picker, terminal
-     title) — it is NOT a valid `--resume` target under Claude Code.
-   - `--session-id`/`--resume` take the UUID from `.session.state`, not the key.
+   - `--name="<KEY>"` on a fresh launch sets both the display label and the
+     future `--resume` handle — they're the same thing under Claude Code.
    - `--permission-mode=bypassPermissions` auto-approves every tool call
      (required for non-interactive mode) — the Claude Code equivalent of
      Copilot's `--allow-all-tools --allow-all-urls`.
    - `--add-dir` restricts file access to the ticket and repos directories only.
    - `-p "/ticket-worker"` invokes the worker skill as the initial prompt.
    - The Atlassian `cloudId` is `e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2`.
-   - A fresh "To Do" restart simply mints a new UUID in step 7 — there's no old
-     session name to free up or rename first.
+   - A fresh "To Do" restart's rename step (3b) already freed up the plain
+     key name before this point, so `--name="<KEY>"` here can never collide.
 
    > **Production note:** Run the orchestrator inside a dedicated VM. If a session
    > executes destructive code, it only damages the VM — not the host machine.

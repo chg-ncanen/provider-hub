@@ -29,7 +29,6 @@ import shutil
 import subprocess
 import sys
 import time
-import uuid
 from datetime import date
 from pathlib import Path
 
@@ -393,21 +392,55 @@ def write_context_md(ticket_dir: Path, repos_dir: Path) -> None:
         f"Use for code exploration. Falls back to GitHub search if unavailable.\n"
     )
 
+# ── Session rename ────────────────────────────────────────────────────────────
+
+def rename_stale_session(key: str) -> None:
+    """Before a fresh 'To Do' launch, rename any existing claude session
+    named <key> out of the way via a headless /rename prompt, so --name and
+    --resume can both just use the plain ticket key without ever colliding
+    with a leftover session from a prior run of this same ticket.
+
+    Verified directly: claude session names are NOT unique — launching a
+    second fresh session that reuses a --name already in use creates a
+    second, distinct session sharing that name, and a later --resume by
+    that name then hard-errors ("matches N sessions... pass one of these
+    session IDs to disambiguate") instead of resolving. /rename does work
+    as a plain headless -p prompt (no interactive session needed), so
+    renaming the old one out of the way first — mirroring Copilot CLI's
+    original same-purpose step, just via Claude Code's own command instead
+    of hand-editing session files — keeps the plain key always resolvable.
+
+    Safe to call even when no such session exists yet (the common case for
+    a ticket's very first "To Do"): --resume on a name with zero matches
+    just fails to find anything to rename, which is not an error worth
+    surfacing.
+    """
+    archive_name = f"{key}-archived-{date.today()}"
+    try:
+        subprocess.run(
+            ["claude", f"--resume={key}", "-p", f"/rename {archive_name}",
+             "--permission-mode=bypassPermissions"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception as e:
+        log.warning(f"{key}: rename-stale-session attempt failed (likely nothing to rename): {e}")
+
 # ── Session launch ────────────────────────────────────────────────────────────
 
-def launch_session(key: str, session_id: str, ticket_dir: Path, repos_dir: Path, is_new: bool) -> int:
+def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) -> int:
     """Launch a detached claude worker session. Returns the child PID.
 
-    `--name` is a cosmetic display label only (shown in the prompt box, the
-    /resume picker, and the terminal title) — it is NOT a valid --resume
-    target. The actual resume handle is `session_id`, a UUID we generate
-    ourselves and persist in .session.state (see process_ticket), passed as
-    --session-id on first launch and --resume on every later one.
+    --name/--resume both just use the plain ticket key — verified directly
+    that Claude Code resolves --resume by the name set via --name at launch,
+    non-interactively, no UUID needed, as long as the name is unambiguous.
+    rename_stale_session() (called from process_ticket before a fresh
+    launch) is what keeps it unambiguous.
     """
-    cmd = [
-        "claude",
-        f"--name={key}",
-        f"--session-id={session_id}" if is_new else f"--resume={session_id}",
+    if is_new:
+        cmd = ["claude", f"--name={key}"]
+    else:
+        cmd = ["claude", f"--resume={key}"]
+    cmd += [
         "--permission-mode=bypassPermissions",
         f"--add-dir={ticket_dir}",
         f"--add-dir={repos_dir}",
@@ -604,8 +637,12 @@ def process_ticket(
     is_new = jira_status == "To Do" or (no_prior_session and jira_status == "In Discovery")
 
     if is_new:
-        # Archive prior artifacts — a fresh session just gets a fresh UUID
-        # below, so there's no old session identity to free up first.
+        # Rename any stale claude session still holding this ticket's plain
+        # key name — a leftover from a prior run of this same ticket — before
+        # this launch reuses that name, so --resume stays unambiguous. See
+        # rename_stale_session()'s docstring for why this is necessary.
+        rename_stale_session(key)
+        # Archive prior artifacts.
         if ticket_dir.exists():
             archive_ticket(key, ticket_dir, cwd / "tickets" / "archive", repos_dir)
 
@@ -616,11 +653,8 @@ def process_ticket(
     write_context_md(ticket_dir, repos_dir)
     copy_worker_skill(ticket_dir)
 
-    # Reset / update state file before launch. claude_session_id is the real
-    # --resume handle (a UUID we mint ourselves) — --name is cosmetic only,
-    # see launch_session().
+    # Reset / update state file before launch.
     if is_new:
-        session_id = str(uuid.uuid4())
         write_state(ticket_dir, {
             "status": "running",
             "pid": None,
@@ -628,25 +662,16 @@ def process_ticket(
             "picked_up_at": None,
             "updated_at": None,
             "stage": None,
-            "claude_session_id": session_id,
         })
     else:
         s = read_state(ticket_dir) or {}
-        session_id = s.get("claude_session_id")
-        if not session_id:
-            # Pre-existing ticket dir with no recorded session id (e.g. an
-            # upgrade from an older run) — nothing to resume, start fresh.
-            log.warning(f"{key}: no claude_session_id on record — starting a new session instead of resuming")
-            session_id = str(uuid.uuid4())
-            is_new = True
         s["status"] = "running"
         s["picked_up_at"] = None
-        s["claude_session_id"] = session_id
         write_state(ticket_dir, s)
 
     # Launch session
-    pid = launch_session(key, session_id, ticket_dir, repos_dir, is_new)
-    log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid}, claude_session_id={session_id})")
+    pid = launch_session(key, ticket_dir, repos_dir, is_new)
+    log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid})")
 
     # Write real PID — via update_state(), not read_state()+write_state(), since
     # the just-launched worker session is concurrently doing its own
