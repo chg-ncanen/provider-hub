@@ -10,6 +10,11 @@
       "name": "pde",
       "source": "./plugins/pde-ops-tools",
       "description": "JSM alert management (pde-mcp MCP server), the resolve-duplicate-contact-alerts skill, and the dependabot-triage skill."
+    },
+    {
+      "name": "jexpress",
+      "source": "./plugins/jira-express-ai",
+      "description": "Orchestrates PDE AI-Work Jira tickets end-to-end (discovery, implementation, review, merge), progressing status and pausing at human review gates until the developer advances it."
     }
   ]
 }
