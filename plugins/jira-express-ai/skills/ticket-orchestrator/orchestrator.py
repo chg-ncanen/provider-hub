@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from datetime import date
 from pathlib import Path
 
@@ -88,11 +89,29 @@ log = logging.getLogger(__name__)
 # ── Jira helpers ──────────────────────────────────────────────────────────────
 
 def _auth() -> tuple[str, str]:
-    email = os.environ.get("ATLASSIAN_EMAIL", "").strip()
-    token = os.environ.get("ATLASSIAN_API_TOKEN", "").strip()
+    # Claude Code propagates plugin userConfig values as CLAUDE_PLUGIN_OPTION_<KEY>
+    # (uppercased), never as the bare key name — confirmed against this plugin's
+    # own bootstrap-deps.sh equivalent in pde-ops-tools. Bare ATLASSIAN_EMAIL/
+    # ATLASSIAN_API_TOKEN still take priority for direct/manual runs (e.g.
+    # exported by hand outside a plugin-managed session). Re-exporting the
+    # resolved values under the bare names means every subprocess this script
+    # launches (nested claude sessions, and whatever *they* launch) sees plain
+    # ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN via normal env inheritance, so none of
+    # the sub-agent SKILL.md files need to know about the CLAUDE_PLUGIN_OPTION_
+    # prefix at all.
+    email = (
+        os.environ.get("ATLASSIAN_EMAIL", "").strip()
+        or os.environ.get("CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL", "").strip()
+    )
+    token = (
+        os.environ.get("ATLASSIAN_API_TOKEN", "").strip()
+        or os.environ.get("CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN", "").strip()
+    )
     if not email or not token:
-        log.error("ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN must be set")
+        log.error("ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN must be set (directly, or via this plugin's userConfig)")
         sys.exit(1)
+    os.environ["ATLASSIAN_EMAIL"] = email
+    os.environ["ATLASSIAN_API_TOKEN"] = token
     return (email, token)
 
 
@@ -159,29 +178,6 @@ def pid_alive(pid: int | None) -> bool:
         return True
     except (ProcessLookupError, PermissionError):
         return False
-
-# ── Session rename ────────────────────────────────────────────────────────────
-
-def rename_old_session(key: str) -> None:
-    """Rename any copilot session named <KEY> to <KEY>-archived-<date>."""
-    state_root = Path.home() / ".copilot" / "session-state"
-    if not state_root.exists():
-        return
-    archive_name = f"{key}-archived-{date.today()}"
-    pattern = re.compile(rf"^name: {re.escape(key)}$", re.MULTILINE)
-    for sid in state_root.iterdir():
-        wy = sid / "workspace.yaml"
-        if not wy.exists():
-            continue
-        content = wy.read_text()
-        if pattern.search(content):
-            content = re.sub(r"^name: .*$", f"name: {archive_name}", content, flags=re.MULTILINE)
-            content = re.sub(r"^user_named: .*$", "user_named: false", content, flags=re.MULTILINE)
-            wy.write_text(content)
-            log.info(f"{key}: renamed old session → {archive_name}")
-            break
-
-# ── Cleanup ───────────────────────────────────────────────────────────────────
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
@@ -256,7 +252,7 @@ def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
 
 
 def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Path) -> None:
-    """Close remote artifacts, move ticket_dir to a timestamped archive folder, rename copilot session."""
+    """Close remote artifacts and move ticket_dir to a timestamped archive folder."""
     close_remote_artifacts(key, ticket_dir, repos_dir)
     dest = archive_dir / f"{key}-{date.today()}"
     suffix = 0
@@ -265,7 +261,6 @@ def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Pat
         dest = archive_dir / f"{key}-{date.today()}-{suffix}"
     shutil.move(str(ticket_dir), str(dest))
     log.info(f"{key}: archived → {dest}")
-    rename_old_session(key)
 
 
 def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], repos_dir: Path) -> None:
@@ -302,7 +297,7 @@ SKILLS_TO_COPY = [
 def copy_worker_skill(ticket_dir: Path) -> None:
     for skill in SKILLS_TO_COPY:
         src = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
-        dest = ticket_dir / ".agents" / "skills" / skill / "SKILL.md"
+        dest = ticket_dir / ".claude" / "skills" / skill / "SKILL.md"
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(src), str(dest))
 
@@ -318,14 +313,20 @@ def write_context_md(ticket_dir: Path, repos_dir: Path) -> None:
 
 # ── Session launch ────────────────────────────────────────────────────────────
 
-def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) -> int:
-    """Launch a detached copilot worker session. Returns the child PID."""
+def launch_session(key: str, session_id: str, ticket_dir: Path, repos_dir: Path, is_new: bool) -> int:
+    """Launch a detached claude worker session. Returns the child PID.
+
+    `--name` is a cosmetic display label only (shown in the prompt box, the
+    /resume picker, and the terminal title) — it is NOT a valid --resume
+    target. The actual resume handle is `session_id`, a UUID we generate
+    ourselves and persist in .session.state (see process_ticket), passed as
+    --session-id on first launch and --resume on every later one.
+    """
     cmd = [
-        "copilot",
-        "-C", str(ticket_dir),
-        f"--name={key}" if is_new else f"--resume={key}",
-        "--allow-all-tools",
-        "--allow-all-urls",
+        "claude",
+        f"--name={key}",
+        f"--session-id={session_id}" if is_new else f"--resume={session_id}",
+        "--permission-mode=bypassPermissions",
         f"--add-dir={ticket_dir}",
         f"--add-dir={repos_dir}",
         "-p", "/ticket-worker",
@@ -333,6 +334,7 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) ->
     log_file = open(ticket_dir / "session.log", "a")
     proc = subprocess.Popen(
         cmd,
+        cwd=str(ticket_dir),
         stdout=log_file,
         stderr=log_file,
         start_new_session=True,  # detach — survives orchestrator exit
@@ -490,11 +492,10 @@ def process_ticket(
     is_new = jira_status == "To Do" or (no_prior_session and jira_status == "In Discovery")
 
     if is_new:
-        # Archive prior artifacts and free the session name
+        # Archive prior artifacts — a fresh session just gets a fresh UUID
+        # below, so there's no old session identity to free up first.
         if ticket_dir.exists():
             archive_ticket(key, ticket_dir, cwd / "tickets" / "archive", repos_dir)
-        else:
-            rename_old_session(key)
 
     # Ensure directory exists
     ticket_dir.mkdir(parents=True, exist_ok=True)
@@ -503,8 +504,11 @@ def process_ticket(
     write_context_md(ticket_dir, repos_dir)
     copy_worker_skill(ticket_dir)
 
-    # Reset / update state file before launch
+    # Reset / update state file before launch. claude_session_id is the real
+    # --resume handle (a UUID we mint ourselves) — --name is cosmetic only,
+    # see launch_session().
     if is_new:
+        session_id = str(uuid.uuid4())
         write_state(ticket_dir, {
             "status": "running",
             "pid": None,
@@ -512,16 +516,25 @@ def process_ticket(
             "picked_up_at": None,
             "updated_at": None,
             "stage": None,
+            "claude_session_id": session_id,
         })
     else:
         s = read_state(ticket_dir) or {}
+        session_id = s.get("claude_session_id")
+        if not session_id:
+            # Pre-existing ticket dir with no recorded session id (e.g. an
+            # upgrade from an older run) — nothing to resume, start fresh.
+            log.warning(f"{key}: no claude_session_id on record — starting a new session instead of resuming")
+            session_id = str(uuid.uuid4())
+            is_new = True
         s["status"] = "running"
         s["picked_up_at"] = None
+        s["claude_session_id"] = session_id
         write_state(ticket_dir, s)
 
     # Launch session
-    pid = launch_session(key, ticket_dir, repos_dir, is_new)
-    log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid})")
+    pid = launch_session(key, session_id, ticket_dir, repos_dir, is_new)
+    log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid}, claude_session_id={session_id})")
 
     # Write real PID
     s = read_state(ticket_dir) or {}

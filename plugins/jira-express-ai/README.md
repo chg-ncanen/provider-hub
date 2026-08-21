@@ -4,11 +4,10 @@ Plugin that orchestrates the full lifecycle of a PDE **AI-Work** Jira ticket —
 implementation, PR review, and merge — driving Jira status transitions automatically and
 stopping at each human review gate until a developer moves the ticket forward.
 
-**Currently built for GitHub Copilot CLI specifically** (sub-agents are launched via
-`copilot -C ... --resume=... -p "/<skill>"`, detached with `nohup`). Standardizing this on
-Claude Code is a planned follow-up, not yet done — installing via Claude Code will register the
-skills, but `ticket-orchestrator` won't be able to launch sub-agent sessions until that migration
-happens.
+**Built for Claude Code.** Sub-agents are launched via detached `claude -p "/<skill>"` sessions
+(`nohup`'d, `--permission-mode=bypassPermissions`). This plugin originally ran on GitHub Copilot
+CLI; it's since been converted to Claude Code — see "Claude Code session identity" below for the
+one behavioral difference that conversion introduced.
 
 ## Contents
 
@@ -64,23 +63,37 @@ been done.
 Only `/jexpress:ticket-orchestrator` is meant for a human (or cron) to invoke directly — it's the
 only skill in this plugin with `user-invocable: true`. The other five (`ticket-worker`,
 `ticket-discovery`, `ticket-implementation`, `ticket-review`, `ticket-merge`) are `user-invocable:
-false` on Claude Code: they're launched by the orchestrator/worker as detached sub-agent sessions
-against a specific ticket directory's own copied `SKILL.md` and would fail confusingly if invoked
-directly, without that ticket directory's `.context.md` / `.session.state` / `review-context.md`
-already in place. (Copilot CLI doesn't recognize `user-invocable` — until this plugin's sub-agent
-launching is migrated off Copilot CLI, that flag has no effect there.)
+false`: they're launched by the orchestrator/worker as detached sub-agent sessions against a
+specific ticket directory's own copied `SKILL.md` and would fail confusingly if invoked directly,
+without that ticket directory's `.context.md` / `.session.state` / `review-context.md` already in
+place.
+
+## Claude Code session identity
+
+Copilot CLI let you resume a session by an arbitrary human-chosen name (`--resume="<KEY>"`), so the
+ticket key itself was the resume handle. Claude Code's `--resume`/`--session-id` require an actual
+UUID — `--name` only sets a cosmetic display label (prompt box, `/resume` picker, terminal title),
+it isn't a valid resume target. So each ticket's `.session.state` now also stores a
+`claude_session_id` (a UUID the orchestrator mints on first launch) — that's the real resume
+handle; `--name="<KEY>"` is kept purely so the ticket key still shows up for a human skimming
+`claude agents` or the `/resume` picker. One side effect: this made the old "rename the previous
+session to free up the name" step unnecessary — UUIDs never collide, so a fresh "To Do" restart
+just mints a new one.
 
 ## Prerequisites
 
-- **GitHub Copilot CLI** (`copilot`) — the orchestrator and worker launch sub-agent sessions
-  through it; this doesn't yet work under Claude Code.
+- **Claude Code CLI** (`claude`) on `PATH` — the orchestrator and worker launch sub-agent sessions
+  through it (`claude -p "/<skill>" --permission-mode=bypassPermissions ...`, detached with
+  `nohup`).
 - Python 3 with the `requests` package installed on the machine running `orchestrator.py` (not yet
   automated via a bootstrap hook the way `pde-mcp`'s venv is — install it yourself for now:
   `pip install requests`).
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
-  `userConfig` under Claude Code; under Copilot CLI (no `userConfig` support) export them yourself
-  in the environment the orchestrator and sub-agent sessions run in.
+  `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
+  `CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL`/`CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN` (normal OS env
+  inheritance carries them into nested subprocesses automatically). If running the script directly
+  outside a plugin-managed session, export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` yourself instead.
 - A target project directory containing (or able to clone) the repos being worked on, plus a
   writable `tickets/` subdirectory — this is where the orchestrator is run *from* (see
   `ticket-orchestrator/SKILL.md`'s "Working directory" section).
@@ -88,13 +101,10 @@ launching is migrated off Copilot CLI, that flag has no effect there.)
 ## Installing
 
 ```bash
-# Claude Code
 claude plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
 claude plugin install jexpress@provider-hub
-
-# Copilot CLI
-copilot plugin marketplace add https://github.com/chg-ncanen/provider-hub.git
-copilot plugin install jexpress@provider-hub
 ```
 
-Then start a new session before using it, same as any plugin install.
+Then start a new session before using it, same as any plugin install. This plugin can still be
+listed in the marketplace for Copilot CLI, but installing it there won't get you a working
+orchestrator — `orchestrator.py` shells out to the `claude` binary specifically.

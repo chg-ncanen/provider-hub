@@ -145,7 +145,8 @@ and the session write to it — but for different fields and at different times.
   "started_at": "2026-07-13T10:00:00Z",
   "picked_up_at": "2026-07-13T10:00:05Z",
   "updated_at": "2026-07-13T10:04:22Z",
-  "stage": "discovery"
+  "stage": "discovery",
+  "claude_session_id": "a1b2c3d4-...-uuid"
 }
 ```
 
@@ -157,13 +158,19 @@ and the session write to it — but for different fields and at different times.
 | `picked_up_at` | Session, first update | Confirmation that the session loaded and is working |
 | `updated_at` | Session, each update | Heartbeat — last time the session wrote anything |
 | `stage` | Session | Which stage is active (discovery, implementation, merge, etc.) |
+| `claude_session_id` | Orchestrator, once, on first launch | The real `--resume` handle (a UUID). `--name` is cosmetic only. |
 
 `picked_up_at` is the orchestrator's confirmation signal. If it is absent
 after a reasonable wait, the session never started cleanly.
 
-**Developer shortcut:** `copilot --resume="<KEY>"` — the session name is always
-the ticket key. Old sessions are renamed to `<KEY>-archived-<date>` on To Do
-re-runs, so the name is always unambiguous.
+**Developer shortcut:** `--name="<KEY>"` makes the ticket key show up as the
+session's display label (prompt box, `/resume` picker, terminal title), but
+it is *not* a valid `--resume` target — Claude Code's `--resume`/`--session-id`
+take a UUID, not an arbitrary name. The real resume handle is
+`claude_session_id` in `.session.state`:
+`claude --resume "$(python3 -c "import json; print(json.load(open('tickets/<KEY>/.session.state'))['claude_session_id'])")"`.
+A fresh "To Do" restart simply mints a new UUID — there's no old session name
+to free up or rename.
 
 ## Jira MCP
 
@@ -199,27 +206,10 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
          return
      ```
 
-   b. Rename the old session (if any) to free the name `<KEY>` for the new session.
-     Scan all `~/.copilot/session-state/*/workspace.yaml` files — no state file
-     check needed, always scan:
-     ```python
-     import re, os
-     from datetime import date
-     state_root = os.path.expanduser("~/.copilot/session-state")
-     for sid in os.listdir(state_root):
-         wy = os.path.join(state_root, sid, "workspace.yaml")
-         if not os.path.exists(wy): continue
-         content = open(wy).read()
-         if re.search(rf'^name: {re.escape("<KEY>")}$', content, re.MULTILINE):
-             archive_name = f"<KEY>-archived-{date.today()}"
-             content = re.sub(r'^name: .*$', f'name: {archive_name}', content, flags=re.MULTILINE)
-             content = re.sub(r'^user_named: .*$', 'user_named: false', content, flags=re.MULTILINE)
-             open(wy, 'w').write(content)
-             break
-     ```
-
-   c. Delete the entire `tickets/<KEY>/` directory if it exists. This discards all
-     prior working artifacts (notes, cloned code, etc.).
+   b. Delete the entire `tickets/<KEY>/` directory if it exists. This discards all
+     prior working artifacts (notes, cloned code, etc.) — the fresh session below
+     gets a brand-new `claude_session_id`, so there's no old session identity to
+     free up first.
 
 4. Create `tickets/<KEY>/` if it does not exist.
 
@@ -237,17 +227,20 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
 6. Copy the worker skill into the ticket directory so the worker discovers it
    from its own working directory:
    ```bash
-   mkdir -p "tickets/<KEY>/.agents/skills/ticket-worker"
+   mkdir -p "tickets/<KEY>/.claude/skills/ticket-worker"
    cp "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/SKILL.md" \
-    "tickets/<KEY>/.agents/skills/ticket-worker/SKILL.md"
+    "tickets/<KEY>/.claude/skills/ticket-worker/SKILL.md"
    ```
 
-7. Set path variables and write `.session.state` before launch:
+7. Set path variables and write `.session.state` before launch. `claude_session_id`
+   is a UUID we mint ourselves — it's the real `--resume` handle (`--name` is a
+   cosmetic display label only, see step 8):
    ```bash
    TICKET_DIR="$(pwd)/tickets/<KEY>"
    REPOS_DIR="$(pwd)"
    ```
-   - **To Do (fresh start):** full reset — all fields null:
+   - **To Do (fresh start):** full reset — all fields null except a freshly minted
+    `claude_session_id`:
     ```json
     {
       "status": "running",
@@ -255,53 +248,66 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       "started_at": null,
       "picked_up_at": null,
       "updated_at": null,
-      "stage": null
+      "stage": null,
+      "claude_session_id": "<uuid4 generated now>"
     }
     ```
    - **Resume (In Discovery, In Progress, UAT Review):** partial update only —
     reset `picked_up_at` to null and set `status: running`. Preserve all other
-    fields (`started_at`, `stage`, etc.) the worker previously wrote:
+    fields (`started_at`, `stage`, `claude_session_id`, etc.) the worker
+    previously wrote. If `claude_session_id` is somehow missing (e.g. a ticket
+    directory that predates this field), mint a new UUID and treat this launch
+    as fresh instead of a resume — there's nothing to resume without it:
     ```python
-    import json, os
+    import json, os, uuid
     f = f"{TICKET_DIR}/.session.state"
     s = json.load(open(f)) if os.path.exists(f) else {}
     s["status"] = "running"
     s["picked_up_at"] = None
+    if not s.get("claude_session_id"):
+        s["claude_session_id"] = str(uuid.uuid4())
     json.dump(s, open(f, "w"), indent=2)
     ```
 
-8. Launch the session using `-C` to set the working directory:
+8. Launch the session (cwd is set directly on the subprocess — Claude Code's
+   CLI has no `-C` equivalent, unlike Copilot's):
    ```bash
+   SESSION_ID=$(python3 -c "import json; print(json.load(open('$TICKET_DIR/.session.state'))['claude_session_id'])")
+   # $! must be read inside the same subshell that backgrounds the process —
+   # capturing it via `echo $!` in a command substitution, not outside a
+   # plain (...) group, which would already have exited by the time $! is read.
    if [ "$JIRA_STATUS" = "To Do" ]; then
-    # Fresh session — name was freed by rename in step 3b:
-    nohup copilot -C "$TICKET_DIR" --name="<KEY>" \
-      --allow-all-tools \
-      --allow-all-urls \
+    # Fresh session:
+    SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
+      --session-id="$SESSION_ID" \
+      --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
       -p "/ticket-worker" \
-      > "$TICKET_DIR/session.log" 2>&1 &
+      > "$TICKET_DIR/session.log" 2>&1 & echo $!)
    else
     # Resume existing session (In Discovery, In Progress, UAT Review):
-    nohup copilot -C "$TICKET_DIR" --resume="<KEY>" \
-      --allow-all-tools \
-      --allow-all-urls \
+    SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
+      --resume="$SESSION_ID" \
+      --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
       -p "/ticket-worker" \
-      > "$TICKET_DIR/session.log" 2>&1 &
+      > "$TICKET_DIR/session.log" 2>&1 & echo $!)
    fi
-   SESSION_PID=$!
    ```
-   - `-C "$TICKET_DIR"` sets the worker's cwd without requiring `cd`/`cd -`.
-   - `--allow-all-tools` auto-approves tool calls (required for non-interactive mode).
-   - `--allow-all-urls` allows Jira and GitHub API calls without prompting.
+   - The `cd ... && ... &` sets the worker's cwd without a `-C` flag.
+   - `--name="<KEY>"` is cosmetic only (prompt box, `/resume` picker, terminal
+     title) — it is NOT a valid `--resume` target under Claude Code.
+   - `--session-id`/`--resume` take the UUID from `.session.state`, not the key.
+   - `--permission-mode=bypassPermissions` auto-approves every tool call
+     (required for non-interactive mode) — the Claude Code equivalent of
+     Copilot's `--allow-all-tools --allow-all-urls`.
    - `--add-dir` restricts file access to the ticket and repos directories only.
-   - Do NOT use `--allow-all-paths` or `--yolo`.
    - `-p "/ticket-worker"` invokes the worker skill as the initial prompt.
    - The Atlassian `cloudId` is `e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2`.
-   - **Session name = ticket key, always.** Developer shortcut: `copilot --resume="<KEY>"`.
-   - Archived sessions are named `<KEY>-archived-<date>` and retain full history.
+   - A fresh "To Do" restart simply mints a new UUID in step 7 — there's no old
+     session name to free up or rename first.
 
    > **Production note:** Run the orchestrator inside a dedicated VM. If a session
    > executes destructive code, it only damages the VM — not the host machine.
@@ -331,7 +337,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
 - Read ticket status and state file.
 - Detect and log crashes (dead PID).
 - Create ticket folder and write `.context.md`.
-- Launch worker session via `copilot` CLI (`nohup ... &`).
+- Launch worker session via `claude` CLI (`nohup ... &`).
 - Wait up to 30s for `picked_up_at` confirmation, then move on.
 - **Exit after processing all tickets** — no long-running blocking.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).

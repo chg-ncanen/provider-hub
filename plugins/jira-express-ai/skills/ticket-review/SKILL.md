@@ -103,7 +103,7 @@ If any comments require code changes:
    git add -A
    git commit -m "PDE: $KEY — address PR review comments
 
-   Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+   Co-authored-by: Claude <noreply@anthropic.com>"
    git push origin HEAD
    ```
 3. Log each fix:
