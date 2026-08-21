@@ -322,18 +322,28 @@ def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], re
             key = folder.name
             if key in active_keys:
                 continue
-            if is_locked(folder):
-                log.info(f"{key}: no longer in Jira's active results but session still running — leaving in place")
-                continue
-            archive_ticket(key, folder, archive_dir, repos_dir)
+            try:
+                if is_locked(folder):
+                    log.info(f"{key}: no longer in Jira's active results but session still running — leaving in place")
+                    continue
+                archive_ticket(key, folder, archive_dir, repos_dir)
+            except Exception as e:
+                # One bad folder (unreadable file, permission error, etc.)
+                # must not stop every other folder in this pass from being
+                # archived — and must not propagate up and abort dispatch
+                # for every ticket this run, every run, forever.
+                log.error(f"{key}: failed to archive — {e}", exc_info=True)
 
     # Purge archives older than ARCHIVE_MAX_DAYS
     if archive_dir.exists():
         cutoff = time.time() - (ARCHIVE_MAX_DAYS * 86400)
         for folder in archive_dir.iterdir():
-            if folder.is_dir() and folder.stat().st_mtime < cutoff:
-                shutil.rmtree(folder)
-                log.info(f"{folder.name}: purged archive (>{ARCHIVE_MAX_DAYS} days old)")
+            try:
+                if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                    shutil.rmtree(folder)
+                    log.info(f"{folder.name}: purged archive (>{ARCHIVE_MAX_DAYS} days old)")
+            except Exception as e:
+                log.error(f"{folder.name}: failed to purge archive — {e}", exc_info=True)
 
 # ── Session rename ────────────────────────────────────────────────────────────
 
@@ -613,7 +623,10 @@ def main() -> None:
         tickets_dir = cwd / "tickets"
         archive_dir = cwd / "tickets" / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
-        cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
+        try:
+            cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
+        except Exception as e:
+            log.error(f"cleanup_pass failed: {e}", exc_info=True)
         return
 
     log.info(f"Found {len(issues)} ticket(s)")
@@ -629,11 +642,16 @@ def main() -> None:
         active_keys.add(key)
         valid_issues.append(issue)
 
-    # Cleanup pass (archive done, purge old archives)
+    # Cleanup pass (archive done, purge old archives). Wrapped like each
+    # per-ticket dispatch below — a failure here must not abort dispatch for
+    # every ticket this run, and must not recur forever on every future run.
     tickets_dir = cwd / "tickets"
     archive_dir = cwd / "tickets" / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
-    cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
+    try:
+        cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
+    except Exception as e:
+        log.error(f"cleanup_pass failed: {e}", exc_info=True)
 
     # Get current user — only process tickets assigned to this user. This is a
     # hard safety requirement (see ticket-orchestrator/SKILL.md's "To Do" step),

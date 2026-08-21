@@ -407,6 +407,15 @@ First, check whether implementation has already been done:
      - Post comment: `🤖 Merge blocked for <KEY>: <Reason from merge-notes.md>`
      - Update state: `{ "stage": "merge-blocked", "status": "waiting" }`
 
+   - **`PENDING`:**
+     - Nothing is wrong, just not ready yet (CI still running, approval still
+       needed) — **do not transition Jira** and **do not post a comment**. The
+       ticket stays at `UAT Review` exactly as it is.
+     - Update state: `{ "stage": "merge-pending", "status": "waiting" }`
+     - Exit normally. The next orchestrator run resumes this session, re-enters
+       this same path (step 1 always deletes stale `merge-notes.md` and runs
+       the merge sub-agent fresh), and checks again.
+
 ---
 
 ## Path: QA Review (human gate — worker resumed)

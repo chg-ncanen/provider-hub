@@ -49,7 +49,14 @@ jira_get() {
 ## Repo setup (worktree isolation)
 
 Each ticket works in its **own git worktree** under `$TICKET_DIR/<repo>/` so
-concurrent tickets never collide in the shared clone.
+concurrent tickets never collide *once inside their worktree*. Setting that
+worktree up, though, means touching the **shared** clone at `$REPOS_DIR/<repo>/`
+(cloning it if absent, fetching, checking out and pulling `main`) — and two
+tickets that both need the same repo can genuinely run this at the same
+moment. Lock around that shared-clone setup so they don't race on the same
+`.git` directory (index.lock, HEAD, etc.); nothing after the worktree is
+created needs the lock, since everything from there on happens in
+per-ticket `$WORKTREE`.
 
 For each repo you need to modify:
 
@@ -58,6 +65,10 @@ REPO=<repo-name>
 BRANCH="feature/${KEY}-<short-slug>"
 MAIN_CLONE="$REPOS_DIR/$REPO"
 WORKTREE="$TICKET_DIR/$REPO"
+
+mkdir -p "$REPOS_DIR/.repo-locks"
+exec 200>"$REPOS_DIR/.repo-locks/$REPO.lock"
+flock 200
 
 # Clone the repo if it doesn't exist locally yet
 if [ ! -d "$MAIN_CLONE/.git" ]; then
@@ -69,8 +80,21 @@ fi
 git -C "$MAIN_CLONE" fetch origin
 git -C "$MAIN_CLONE" checkout main && git -C "$MAIN_CLONE" pull --ff-only
 
-# Create an isolated worktree on a new branch
-git -C "$MAIN_CLONE" worktree add "$WORKTREE" -b "$BRANCH"
+# Idempotent: a prior attempt that crashed or timed out after getting this far
+# (but before implementation-notes.md was written) can leave the worktree, the
+# branch, or both already in place. Only create what's actually missing,
+# rather than failing on "already exists" and getting permanently stuck on
+# every retry.
+if [ -d "$WORKTREE" ]; then
+  echo "[implementation] Worktree already exists (resuming after a prior attempt): $WORKTREE"
+elif git -C "$MAIN_CLONE" show-ref --verify --quiet "refs/heads/$BRANCH"; then
+  echo "[implementation] Branch $BRANCH already exists but worktree is missing — attaching to it"
+  git -C "$MAIN_CLONE" worktree add "$WORKTREE" "$BRANCH"
+else
+  git -C "$MAIN_CLONE" worktree add "$WORKTREE" -b "$BRANCH"
+fi
+
+flock -u 200
 
 echo "[implementation] Worktree ready: $WORKTREE (branch: $BRANCH)"
 ```
@@ -107,6 +131,17 @@ implementations), make a reasonable decision and document it.
 Log each change:
 ```
 [implementation] Edited: <file path> — <brief description of change>
+```
+
+Commit your changes in `$WORKTREE` once they're in a working state — the
+worker pushes this branch and opens a PR from it immediately afterward, so
+uncommitted changes here mean an empty PR:
+```bash
+cd $WORKTREE
+git add -A
+git commit -m "PDE: $KEY — <summary of the change>
+
+Co-authored-by: Claude <noreply@anthropic.com>"
 ```
 
 ### Step 3 — Run tests (if possible)
@@ -194,7 +229,8 @@ echo "[implementation-agent] BLOCKED — implementation-notes.md written with bl
 ## Rules
 
 - Work exclusively in the worktree at `$TICKET_DIR/<repo>/` — never commit or branch in `$REPOS_DIR/<repo>/` directly.
-- Always `fetch` + `pull --ff-only` the main clone before creating the worktree.
+- Always `fetch` + `pull --ff-only` the main clone before creating the worktree, and hold `$REPOS_DIR/.repo-locks/<repo>.lock` for that whole sequence — another ticket may be doing the same thing to the same shared clone at the same moment.
+- Commit your changes in the worktree before signaling completion — the worker assumes there's something real to push.
 - Do not transition any Jira ticket.
 - Do not write to `.session.state`.
 - Write `implementation-notes.md` and `.implementation-agent-done` — required outputs.

@@ -130,7 +130,7 @@ The rewind is logged: `"<KEY>: Jira says 'X' but only N/M prerequisite stage(s) 
 
 ## Status → action table
 
-The orchestrator delegates work in exactly three statuses. Everything else is
+The orchestrator delegates work in exactly four statuses. Everything else is
 either a human gate or a terminal state — touch nothing.
 
 | Status | Category | Action |
@@ -140,7 +140,7 @@ either a human gate or a terminal state — touch nothing.
 | In Progress | **Resume** | The human approved. Resume the existing session (`--resume`) to run implementation. |
 | UAT Review | **Resume** | The PR was approved. Resume the existing session (`--resume`) to merge. |
 | QA Review | **Human gate** | Do nothing. |
-| In Review | **Resume** | The PR has comments to address. Resume the existing session (`--resume`) to run the review agent. |
+| In Review | **Human gate** | Do nothing — the orchestrator never dispatches for this status. A human addresses PR comments by moving the ticket back to `In Progress`; that's what actually triggers `ticket-worker` to run the review agent (see `ticket-worker/SKILL.md`'s Path: Implementation, second branch). |
 | Backlog | **Ignored** | Do nothing. Excluded by JQL query — cannot appear, but documented for completeness. |
 | Done | **Terminal** | Do nothing. |
 

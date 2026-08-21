@@ -68,68 +68,104 @@ gh pr view $PR_NUMBER --json reviewDecision,reviews,mergeable \
 - Write `merge-notes.md` with `Status: BLOCKED` and reason
 - Signal completion and stop
 
-**If any required CI check is pending:**
-- Write `merge-notes.md` with `Status: PENDING_CI`
-- Signal completion and stop (orchestrator will retry on next run)
+**If any required CI check is still pending (running, not failing):**
+- Write `merge-notes.md` with `Status: PENDING` and reason (which check(s) are
+  still running)
+- Signal completion and stop. **Do not transition Jira** — the ticket stays at
+  `UAT Review`, and the next orchestrator run resumes this same check; nothing
+  about this condition needs a human.
 
 **If `reviewDecision` is `REVIEW_REQUIRED` or `CHANGES_REQUESTED`:**
-- Write `merge-notes.md` with `Status: PENDING_APPROVAL`
-- Signal completion and stop
+- Write `merge-notes.md` with `Status: PENDING` and reason (approval still needed)
+- Signal completion and stop. Same as above — no Jira transition.
 
 **If `mergeable` is `CONFLICTING`:**
-- Write `merge-notes.md` with `Status: NEEDS_REVIEW`, reason: merge conflicts
+- Write `merge-notes.md` with `Status: BLOCKED`, reason: merge conflicts. Unlike
+  the two `PENDING` cases above, a conflict will not resolve itself on retry —
+  it genuinely needs a human.
 - Signal completion and stop
 
 ### Step 2 — Merge
 
-All gates clear. Attempt merge:
+All gates clear. Attempt merge, and **check that it actually succeeded** before
+assuming there's anything to monitor — the PR can go out of date (a new commit
+landing) between the gate check above and this attempt:
 
 ```bash
-gh pr merge $PR_NUMBER --squash --delete-branch
-```
+if ! gh pr merge $PR_NUMBER --squash --delete-branch; then
+  echo "[merge] Merge attempt failed"
+  # Write merge-notes.md: Status: BLOCKED, reason: merge command failed
+  # (likely the PR went out of date since the gate check). Signal completion
+  # and stop — do NOT proceed to Step 3 on an unconfirmed merge.
+fi
 
-Log: `[merge] Merge submitted for PR #<number>`
+echo "[merge] Merge submitted for PR #$PR_NUMBER"
+```
 
 ### Step 3 — Monitor post-merge CI
 
-After merge, check that the main branch CI passes. Poll up to 10 minutes:
+After a **confirmed** merge, check that the main branch CI passes. Poll up to 10 minutes:
 
 ```bash
-# Get the merge commit SHA
-MERGE_SHA=$(gh pr view $PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid' 2>/dev/null)
+# Get the merge commit SHA — retry briefly rather than silently proceeding
+# with an empty value (mergeCommit can take a moment to populate right after
+# merging). An empty MERGE_SHA must NOT be read as "nothing pending" below.
+MERGE_SHA=""
+for i in $(seq 1 10); do
+  MERGE_SHA=$(gh pr view $PR_NUMBER --json mergeCommit --jq '.mergeCommit.oid')
+  [ -n "$MERGE_SHA" ] && [ "$MERGE_SHA" != "null" ] && break
+  sleep 3
+done
+if [ -z "$MERGE_SHA" ] || [ "$MERGE_SHA" = "null" ]; then
+  echo "[merge] Could not resolve the merge commit SHA after merging"
+  # Write merge-notes.md: Status: BLOCKED, reason: merge commit SHA never
+  # resolved even though gh pr merge reported success. Signal completion and stop.
+fi
 
-# Poll checks on the merge commit
+# Poll checks on the merge commit. An empty check-runs list is ambiguous right
+# after merging — it means either "nothing has registered yet" or "genuinely
+# nothing required." Only treat "no pending checks" as real completion once
+# at least one check-run has actually been observed at some point in the poll.
+SEEN_ANY_CHECK=false
 for i in $(seq 1 20); do
   sleep 30
-  STATUS=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs \
-    --jq '[.check_runs[] | {name: .name, conclusion: .conclusion, status: .status}]' 2>/dev/null)
-  echo "[merge] Post-merge CI check $i: $STATUS"
+  RUNS=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs --jq '.check_runs')
+  COUNT=$(echo "$RUNS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
+  [ "$COUNT" -gt 0 ] && SEEN_ANY_CHECK=true
 
-  # Check if all completed
-  PENDING=$(echo "$STATUS" | python3 -c "
+  PENDING=$(echo "$RUNS" | python3 -c "
 import json,sys
 runs = json.load(sys.stdin)
 pending = [r['name'] for r in runs if r['status'] != 'completed']
 print('\n'.join(pending))
-" 2>/dev/null)
+")
+  echo "[merge] Post-merge CI check $i: $COUNT check(s) registered, pending: $PENDING"
 
-  if [ -z "$PENDING" ]; then
+  if [ "$SEEN_ANY_CHECK" = true ] && [ -z "$PENDING" ]; then
     echo "[merge] All post-merge checks completed"
     break
   fi
-  echo "[merge] Still pending: $PENDING"
 done
+
+if [ "$SEEN_ANY_CHECK" = false ]; then
+  echo "[merge] No check-runs ever registered against $MERGE_SHA within the poll window"
+  # Treat as PENDING, not SUCCESS — don't claim success on an absence of
+  # evidence. (Known limitation: a repo with genuinely zero CI configured on
+  # main would loop here indefinitely rather than ever reaching SUCCESS —
+  # acceptable for now, not solved by this fix.)
+fi
 ```
 
 Check for failures:
 ```bash
 FAILED=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs \
-  --jq '[.check_runs[] | select(.conclusion == "failure") | .name]' 2>/dev/null)
+  --jq '[.check_runs[] | select(.conclusion == "failure") | .name]')
 ```
 
 ### Step 4 — Write merge-notes.md and signal completion
 
-**On success:**
+**On success** (merge confirmed, and post-merge CI genuinely observed as complete
+with nothing failing):
 ```markdown
 # Merge Notes: <KEY>
 
@@ -139,7 +175,23 @@ FAILED=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs \
 **Merge commit:** <SHA>
 ```
 
-**On any failure (gate, merge error, or post-merge CI):**
+**On a transient not-ready condition** (CI still running, approval still needed,
+or post-merge checks never confirmed complete within the poll window):
+```markdown
+# Merge Notes: <KEY>
+
+**Status:** PENDING
+**Date:** <ISO date>
+**PR:** #<number> (<URL>)
+
+## Reason
+
+<What's not ready yet — e.g. "2 CI checks still running", "awaiting reviewer
+approval", "no post-merge check-runs registered within 10 minutes".>
+```
+
+**On any real failure** (gate failure, merge conflicts, unconfirmed merge, or a
+genuine post-merge CI failure):
 ```markdown
 # Merge Notes: <KEY>
 
@@ -150,12 +202,13 @@ FAILED=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs \
 
 ## Blocker
 
-<Clear description of what prevented the merge — failing checks, missing approvals,
-merge conflicts, post-merge CI failures, or anything else blocking completion.>
+<Clear description of what prevented the merge — failing checks, merge
+conflicts, an unconfirmed merge attempt, post-merge CI failures, or anything
+else that genuinely needs a human.>
 
 ## Suggested Next Step
 
-<What the human should do to unblock — e.g. fix CI, approve the PR, resolve conflicts.>
+<What the human should do to unblock — e.g. fix CI, resolve conflicts.>
 ```
 
 ```bash
@@ -167,8 +220,17 @@ echo "[merge-agent] Complete — merge-notes.md written with status: <STATUS>"
 
 ## Rules
 
-- Two outcomes only: `SUCCESS` or `BLOCKED`. Nothing else.
-- On any gate failure, merge error, or post-merge CI failure → `BLOCKED`.
+- Three outcomes: `SUCCESS`, `BLOCKED`, or `PENDING`.
+  - `PENDING` means nothing is wrong, just not ready yet (CI still running,
+    approval still pending, or post-merge completion couldn't be confirmed) —
+    do **not** transition Jira; the ticket stays at `UAT Review` and gets
+    picked up again on the next orchestrator run.
+  - `BLOCKED` means something needs a human: a real CI failure, a merge
+    conflict, or a merge attempt that didn't actually succeed.
+- Never write `SUCCESS` without having actually confirmed both the merge and
+  post-merge CI completion — an empty or missing API response is not evidence
+  of success, treat it as `PENDING` or `BLOCKED` instead.
 - Always write `merge-notes.md` and `.merge-agent-done` regardless of outcome.
-- Do not transition any Jira ticket.
+- Do not transition any Jira ticket yourself — `ticket-worker` does that based
+  on the status you write.
 - Do not write to `.session.state`.
