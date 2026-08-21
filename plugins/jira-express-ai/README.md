@@ -70,15 +70,18 @@ place.
 
 ## Claude Code session identity
 
-Copilot CLI let you resume a session by an arbitrary human-chosen name (`--resume="<KEY>"`), so the
-ticket key itself was the resume handle. Claude Code's `--resume`/`--session-id` require an actual
-UUID — `--name` only sets a cosmetic display label (prompt box, `/resume` picker, terminal title),
-it isn't a valid resume target. So each ticket's `.session.state` now also stores a
-`claude_session_id` (a UUID the orchestrator mints on first launch) — that's the real resume
-handle; `--name="<KEY>"` is kept purely so the ticket key still shows up for a human skimming
-`claude agents` or the `/resume` picker. One side effect: this made the old "rename the previous
-session to free up the name" step unnecessary — UUIDs never collide, so a fresh "To Do" restart
-just mints a new one.
+Like Copilot CLI, Claude Code resolves `--resume` by the name set via `--name` at launch, fully
+non-interactively — verified directly against the real CLI, no session UUID needed. So the ticket
+key itself is both the display name and the resume handle: `--name="<KEY>"` on first launch,
+`--resume="<KEY>"` on every later one, exactly like the original Copilot design.
+
+One real difference: Claude Code session names aren't unique. A second fresh launch reusing a
+`--name` already in use creates a second, distinct session sharing that name, and `--resume` then
+hard-errors demanding a session ID to disambiguate, instead of just picking one. So a fresh "To
+Do" launch still needs the same fix Copilot's design used for the same reason — rename any
+existing same-named session out of the way first — just done through Claude Code's own `/rename`
+command (which works fine as a plain headless `-p` prompt, also verified directly) instead of
+hand-editing session files.
 
 ## Prerequisites
 
