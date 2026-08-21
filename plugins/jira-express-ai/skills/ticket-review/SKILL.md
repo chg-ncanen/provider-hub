@@ -1,7 +1,7 @@
 ---
 name: ticket-review
 description: "Standalone review agent for a PDE Jira ticket. Reads open PR review comments, responds to them, and iterates with implementation if code changes are needed. Signals completion with .review-agent-done once all comments are resolved or acknowledged."
-user-invocable: false
+user-invocable: true
 ---
 
 # PDE Review Agent
@@ -22,13 +22,6 @@ You do not create the PR, merge, transition Jira tickets, or write to `.session.
 KEY=$(basename "$(pwd)")
 TICKET_DIR="$(pwd)"
 
-REPOS_DIR=$(python3 -c "
-import re
-content = open('.context.md').read()
-m = re.search(r'\*\*Repos directory:\*\* (.+)', content)
-print(m.group(1).strip() if m else '')
-")
-
 # Read PR number from review-context.md (written by worker before launching this agent)
 PR_NUMBER=$(python3 -c "
 import re
@@ -45,6 +38,11 @@ print(m.group(1).strip() if m else '')
 
 echo "[review] Ticket: $KEY  PR: #$PR_NUMBER  Repo: $REPO"
 ```
+
+`REPOS_DIR` is not read from any file — it's given directly as part of the
+prompt that invoked this skill (`/ticket-review Repos directory: <path>`).
+Take the text following "Repos directory:" in your own initial prompt as
+its value.
 
 ---
 

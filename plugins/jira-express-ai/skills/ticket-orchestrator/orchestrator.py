@@ -2,7 +2,8 @@
 """
 PDE AI Ticket Orchestrator
 
-Stateless dispatcher: query Jira, check state files, launch worker sessions, exit.
+Stateless dispatcher: query Jira, check each ticket's worker lock, launch or
+resume worker sessions, exit.
 Safe to run on a schedule (cron every 5-15 minutes).
 
 Usage:
@@ -21,7 +22,6 @@ Optional env vars:
 """
 
 import fcntl
-import json
 import logging
 import os
 import re
@@ -53,7 +53,6 @@ JQL = (
 )
 
 ACTIONABLE_STATUSES = {"To Do", "In Discovery", "In Progress", "UAT Review"}
-PICKUP_TIMEOUT_SECS = 30
 ARCHIVE_MAX_DAYS = 7
 
 # Deliberate cap, not a paging bug: each dispatched ticket can spawn a
@@ -171,64 +170,58 @@ def assign_ticket(key: str, account_id: str, auth) -> None:
     )
     r.raise_for_status()
 
-# ── State file ────────────────────────────────────────────────────────────────
+# ── Worker lock ───────────────────────────────────────────────────────────────
+#
+# Liveness is answered by an OS-level flock, not by a stored pid + kill(0)
+# check. This isn't just simpler, it's more correct: flock is tied to the
+# open file description, not to any code path running cleanup — it's
+# released unconditionally by the kernel the instant the holding process's
+# file descriptors go away, whether that's a clean exit, an uncaught
+# exception, kill -9, an OOM kill, or the whole machine losing power. A
+# stored pid can be legitimately reused by an unrelated process after a
+# reboot (numbering restarts low); a held-or-not flock can't lie that way.
+#
+# The lock is handed to the launched worker across the exec boundary: this
+# process opens + locks the file, passes that exact fd to the child via
+# subprocess.Popen's pass_fds, then closes its own reference. flock locks
+# are associated with the open file description, which the child's inherited
+# fd also refers to — so the lock stays held by the child for as long as the
+# child keeps that fd open, i.e. its entire lifetime, with no gap between
+# "orchestrator decided to launch" and "child is actually holding the lock."
 
-def read_state(ticket_dir: Path) -> dict | None:
-    f = ticket_dir / ".session.state"
-    if not f.exists():
-        return None
-    try:
-        return json.loads(f.read_text())
-    except Exception:
-        return None
+LOCK_FILENAME = ".worker.lock"
 
 
-def write_state(ticket_dir: Path, state: dict) -> None:
-    (ticket_dir / ".session.state").write_text(json.dumps(state, indent=2))
-
-
-def update_state(ticket_dir: Path, mutate) -> dict:
-    """Atomically read-modify-write .session.state under an exclusive flock.
-
-    A plain read_state() + write_state() pair is NOT atomic against a
-    concurrent writer — e.g. the worker session this same call just launched,
-    which does its own read-modify-write at startup to set picked_up_at. If
-    that lands between this process's read and write, whichever write lands
-    last silently clobbers the other's update (concretely: the orchestrator's
-    stale copy, missing picked_up_at, overwrites the worker's update, and
-    poll_all_pickups() then times out on a session that actually started fine).
-    flock only serializes cooperating callers — the worker's own startup
-    write (ticket-worker/SKILL.md step 4) takes the same lock for this to
-    actually hold.
-    """
-    path = ticket_dir / ".session.state"
-    path.touch(exist_ok=True)
-    with open(path, "r+") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+def is_locked(ticket_dir: Path) -> bool:
+    """Non-consuming peek: is a live worker session currently holding this
+    ticket's lock? Never holds the lock itself — acquires non-blockingly and
+    immediately releases if it succeeds, just to answer the question."""
+    lock_path = ticket_dir / LOCK_FILENAME
+    if not lock_path.exists():
+        return False
+    with open(lock_path, "a+") as fh:
         try:
-            content = fh.read()
-            try:
-                state = json.loads(content) if content else {}
-            except Exception:
-                state = {}
-            state = mutate(state)
-            fh.seek(0)
-            fh.truncate()
-            fh.write(json.dumps(state, indent=2))
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
-    return state
-
-# ── PID check ─────────────────────────────────────────────────────────────────
-
-def pid_alive(pid: int | None) -> bool:
-    if not pid:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        fcntl.flock(fh, fcntl.LOCK_UN)
         return False
+
+
+def try_acquire_lock(ticket_dir: Path):
+    """Try to acquire and KEEP HOLDING this ticket's worker lock — unlike
+    is_locked(), does not release on success. Returns the open file object
+    (the caller must pass its fd to the launched child via pass_fds and then
+    close its own reference — see launch_session()) if acquired, or None if
+    another process already holds it."""
+    lock_path = ticket_dir / LOCK_FILENAME
+    fh = open(lock_path, "a+")
     try:
-        os.kill(pid, 0)
-        return True
-    except (ProcessLookupError, PermissionError):
-        return False
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
@@ -316,14 +309,12 @@ def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Pat
 
 def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], repos_dir: Path) -> None:
     # Archive tickets no longer in Jira results — not just ones that finished
-    # cleanly (status: done). A ticket dropped out of active_keys because it's
-    # now Done, Cancelled, Released, or Backlog-ed (all excluded by JQL), or
-    # its AI-Work label was removed — in every case the orchestrator has no
+    # cleanly. A ticket dropped out of active_keys because it's now Done,
+    # Cancelled, Released, or Backlog-ed (all excluded by JQL), or its
+    # AI-Work label was removed — in every case the orchestrator has no
     # reason to keep it around. Only exception: leave a genuinely in-flight
-    # session (status: running with a live PID) alone rather than yanking its
-    # working directory out from under it; everything else (waiting, done,
-    # crashed, a running status with a dead PID, or no state file at all) is
-    # safe to archive.
+    # session (its lock still held) alone rather than yanking its working
+    # directory out from under it.
     if tickets_dir.exists():
         for folder in tickets_dir.iterdir():
             if not folder.is_dir() or folder == archive_dir:
@@ -331,9 +322,8 @@ def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], re
             key = folder.name
             if key in active_keys:
                 continue
-            state = read_state(folder)
-            if state and state.get("status") == "running" and pid_alive(state.get("pid")):
-                log.info(f"{key}: no longer in Jira's active results but session still running (PID {state.get('pid')}) — leaving in place")
+            if is_locked(folder):
+                log.info(f"{key}: no longer in Jira's active results but session still running — leaving in place")
                 continue
             archive_ticket(key, folder, archive_dir, repos_dir)
 
@@ -344,53 +334,6 @@ def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], re
             if folder.is_dir() and folder.stat().st_mtime < cutoff:
                 shutil.rmtree(folder)
                 log.info(f"{folder.name}: purged archive (>{ARCHIVE_MAX_DAYS} days old)")
-
-# ── Skill copy ────────────────────────────────────────────────────────────────
-
-SKILLS_TO_COPY = [
-    "ticket-worker",
-    "ticket-discovery",
-    "ticket-implementation",
-    "ticket-review",
-    "ticket-merge",
-]
-
-def render_transition_table() -> str:
-    """Render JIRA_TRANSITION_IDS (defined below) as the markdown table
-    ticket-worker/SKILL.md embeds, so the deployed copy can't drift from the
-    orchestrator's own table — see copy_worker_skill()."""
-    lines = ["| Target status | Transition ID |", "|---|---|"]
-    lines += [f"| {status} | {tid} |" for status, tid in JIRA_TRANSITION_IDS.items()]
-    return "\n".join(lines)
-
-
-TRANSITION_TABLE_RE = re.compile(
-    r"\| Target status \| Transition ID \|\n\|---\|---\|\n(?:\|.*\|\n?)*"
-)
-
-
-def copy_worker_skill(ticket_dir: Path) -> None:
-    for skill in SKILLS_TO_COPY:
-        src = PLUGIN_ROOT / "skills" / skill / "SKILL.md"
-        dest = ticket_dir / ".claude" / "skills" / skill / "SKILL.md"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        content = src.read_text()
-        if skill == "ticket-worker":
-            # JIRA_TRANSITION_IDS is the single source of truth; render it
-            # into the copy instead of trusting a hand-maintained markdown
-            # table in the SKILL.md source to stay in sync with the code.
-            content = TRANSITION_TABLE_RE.sub(render_transition_table() + "\n", content)
-        dest.write_text(content)
-
-# ── Context file ──────────────────────────────────────────────────────────────
-
-def write_context_md(ticket_dir: Path, repos_dir: Path) -> None:
-    (ticket_dir / ".context.md").write_text(
-        f"# Session Context\n\n"
-        f"**Repos directory:** {repos_dir}\n\n"
-        f"This directory contains local clones organized by repository name.\n"
-        f"Use for code exploration. Falls back to GitHub search if unavailable.\n"
-    )
 
 # ── Session rename ────────────────────────────────────────────────────────────
 
@@ -427,7 +370,7 @@ def rename_stale_session(key: str) -> None:
 
 # ── Session launch ────────────────────────────────────────────────────────────
 
-def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) -> int:
+def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lock_fh) -> int:
     """Launch a detached claude worker session. Returns the child PID.
 
     --name/--resume both just use the plain ticket key — verified directly
@@ -435,6 +378,20 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) ->
     non-interactively, no UUID needed, as long as the name is unambiguous.
     rename_stale_session() (called from process_ticket before a fresh
     launch) is what keeps it unambiguous.
+
+    The repos directory rides along as plain text after the skill invocation
+    in the same prompt — verified directly that Claude Code passes text
+    following a skill name straight through as real input. No context file
+    needed. ticket-worker is invoked by its bare name, not namespaced under
+    this plugin — verified directly that an installed plugin's skills
+    resolve by bare name too, as long as it's unambiguous, so there's also
+    no need to copy its (or any specialist's) SKILL.md into this ticket
+    directory first; the installed plugin is already globally reachable.
+
+    lock_fh is the already-held worker lock (see try_acquire_lock()) —
+    pass_fds hands its fd to the child across the exec boundary, and closing
+    our own reference afterward is what makes the lock live exactly as long
+    as the child does, with no gap.
     """
     if is_new:
         cmd = ["claude", f"--name={key}"]
@@ -444,7 +401,7 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) ->
         "--permission-mode=bypassPermissions",
         f"--add-dir={ticket_dir}",
         f"--add-dir={repos_dir}",
-        "-p", "/ticket-worker",
+        "-p", f"/ticket-worker Repos directory: {repos_dir}",
     ]
     log_file = open(ticket_dir / "session.log", "a")
     proc = subprocess.Popen(
@@ -452,36 +409,12 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool) ->
         cwd=str(ticket_dir),
         stdout=log_file,
         stderr=log_file,
+        pass_fds=(lock_fh.fileno(),),
         start_new_session=True,  # detach — survives orchestrator exit
     )
+    lock_fh.close()  # our reference; the child's inherited fd keeps the lock held
     return proc.pid
 
-
-def poll_all_pickups(launched: dict[str, Path], timeout: int = PICKUP_TIMEOUT_SECS) -> None:
-    """Poll every ticket launched this run for pickup confirmation concurrently,
-    against one shared deadline — not serially, PICKUP_TIMEOUT_SECS per ticket.
-    With N tickets launched in a single run, a serial per-ticket wait could
-    take N*PICKUP_TIMEOUT_SECS and blow past the 5-15 minute cron interval
-    this is meant to run on; polling the whole batch together caps the total
-    wait at PICKUP_TIMEOUT_SECS regardless of how many tickets launched."""
-    pending = dict(launched)
-    deadline = time.monotonic() + timeout
-
-    def _check_once():
-        for key in list(pending):
-            state = read_state(pending[key])
-            if state and state.get("picked_up_at"):
-                log.info(f"{key}: session confirmed pickup")
-                del pending[key]
-
-    while pending and time.monotonic() < deadline:
-        _check_once()
-        if pending:
-            time.sleep(1)
-    _check_once()  # one final check after the deadline — avoids false negatives on tight timing
-
-    for key in pending:
-        log.warning(f"{key}: session did not pick up within {timeout}s — flagged as failed to start")
 
 # ── Stage rewind ─────────────────────────────────────────────────────────────
 
@@ -601,27 +534,24 @@ def process_ticket(
     current_user_id: str | None,
 ) -> Path | None:
     """Launch (or resume) this ticket's session if warranted. Returns the
-    ticket_dir if a session was actually launched this call, so the caller
-    can poll it for pickup afterward — None if nothing was launched (already
-    running, or a non-actionable path). Does NOT poll for pickup itself; see
-    poll_all_pickups() in main(), which polls every ticket launched this run
-    concurrently against one shared deadline instead of serially per ticket.
+    ticket_dir if a session was actually launched this call, None otherwise
+    (already running, or nothing to do). Doesn't wait to see whether the
+    launch actually succeeds — see this module's docstring for why that's
+    fine to not know: whatever caused a launch to fail, the next run finds
+    the lock free again and just retries, exactly as if it had noticed the
+    failure immediately.
+
+    Owns nothing inside ticket_dir except LOCK_FILENAME. Everything else in
+    there — the state the worker tracks about itself, the actual research/
+    implementation/review/merge artifacts — belongs entirely to the worker
+    and its specialists; this function never reads or writes any of it.
     """
     ticket_dir = cwd / "tickets" / key
+    had_prior_dir = ticket_dir.exists()
 
-    # Check state file for running/crashed sessions
-    state = read_state(ticket_dir)
-    if state:
-        if state.get("status") == "running":
-            pid = state.get("pid")
-            if pid_alive(pid):
-                log.info(f"{key}: session already running (PID {pid}) — skipping")
-                return None
-            else:
-                log.info(f"{key}: crashed session detected (PID {pid}) — proceeding")
-                state["status"] = "crashed"
-                write_state(ticket_dir, state)
-        # waiting / done / crashed → proceed
+    if had_prior_dir and is_locked(ticket_dir):
+        log.info(f"{key}: session already running — skipping")
+        return None
 
     # ── Stage rewind check ───────────────────────────────────────────────────
     # The human may have manually moved the ticket to a status that skips earlier
@@ -629,11 +559,10 @@ def process_ticket(
     # earliest stage that hasn't been done yet.
     jira_status = rewind_if_needed(key, jira_status, ticket_dir, auth)
 
-    # If there is no prior session (no state file, no ticket dir) and this isn't
-    # already "To Do", treat it as a fresh start — the human may have manually
-    # set a mid-pipeline status on a brand new ticket, or we rewound to a stage
-    # that was never started.
-    no_prior_session = not ticket_dir.exists() or read_state(ticket_dir) is None
+    # If there is no prior directory and this isn't already "To Do", treat it
+    # as a fresh start — the human may have manually set a mid-pipeline status
+    # on a brand new ticket, or we rewound to a stage that was never started.
+    no_prior_session = not had_prior_dir
     is_new = jira_status == "To Do" or (no_prior_session and jira_status == "In Discovery")
 
     if is_new:
@@ -642,46 +571,23 @@ def process_ticket(
         # this launch reuses that name, so --resume stays unambiguous. See
         # rename_stale_session()'s docstring for why this is necessary.
         rename_stale_session(key)
-        # Archive prior artifacts.
-        if ticket_dir.exists():
+        if had_prior_dir:
             archive_ticket(key, ticket_dir, cwd / "tickets" / "archive", repos_dir)
 
-    # Ensure directory exists
+    # Ensure directory exists — the lock file has to live inside it.
     ticket_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write context and copy skill
-    write_context_md(ticket_dir, repos_dir)
-    copy_worker_skill(ticket_dir)
+    lock_fh = try_acquire_lock(ticket_dir)
+    if lock_fh is None:
+        # Lost a race with another process between the initial is_locked()
+        # peek and here — vanishingly unlikely (nothing else should be
+        # touching this exact ticket concurrently), but fail safe rather
+        # than launch a second session on top of it.
+        log.warning(f"{key}: lock held by another process at launch time — skipping this run")
+        return None
 
-    # Reset / update state file before launch.
-    if is_new:
-        write_state(ticket_dir, {
-            "status": "running",
-            "pid": None,
-            "started_at": None,
-            "picked_up_at": None,
-            "updated_at": None,
-            "stage": None,
-        })
-    else:
-        s = read_state(ticket_dir) or {}
-        s["status"] = "running"
-        s["picked_up_at"] = None
-        write_state(ticket_dir, s)
-
-    # Launch session
-    pid = launch_session(key, ticket_dir, repos_dir, is_new)
+    pid = launch_session(key, ticket_dir, repos_dir, is_new, lock_fh)
     log.info(f"{key}: launched {'new' if is_new else 'resumed'} session (PID {pid})")
-
-    # Write real PID — via update_state(), not read_state()+write_state(), since
-    # the just-launched worker session is concurrently doing its own
-    # read-modify-write to set picked_up_at/started_at (see update_state()'s
-    # docstring for the exact clobber this prevents).
-    def _set_pid(s):
-        s["pid"] = pid
-        return s
-    update_state(ticket_dir, _set_pid)
-
     return ticket_dir
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -745,8 +651,8 @@ def main() -> None:
         log.error("Jira /myself returned no accountId — refusing to dispatch this run (assignee filter cannot be enforced)")
         return
 
-    # Dispatch each ticket
-    launched: dict[str, Path] = {}  # key -> ticket_dir, for tickets launched this run
+    # Dispatch each ticket. Fire-and-forget — no waiting to confirm a launch
+    # actually took; see process_ticket()'s docstring for why that's fine.
     for issue in valid_issues:
         key = issue["key"]
         jira_status = issue["fields"]["status"]["name"]
@@ -765,17 +671,9 @@ def main() -> None:
 
         log.info(f"{key}: processing ({jira_status})")
         try:
-            ticket_dir = process_ticket(key, jira_status, assignee, cwd, repos_dir, auth, current_user_id)
-            if ticket_dir is not None:
-                launched[key] = ticket_dir
+            process_ticket(key, jira_status, assignee, cwd, repos_dir, auth, current_user_id)
         except Exception as e:
             log.error(f"{key}: unhandled error — {e}", exc_info=True)
-
-    # Poll every session launched this run for pickup confirmation together —
-    # see poll_all_pickups()'s docstring for why this replaced a per-ticket
-    # serial wait.
-    if launched:
-        poll_all_pickups(launched)
 
 
 if __name__ == "__main__":

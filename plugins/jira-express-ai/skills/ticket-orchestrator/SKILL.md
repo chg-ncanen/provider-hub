@@ -59,12 +59,14 @@ Each orchestrator run begins with a fresh Jira query — never a cached list.
    This is a hard safety check; do not process non-PDE tickets under any circumstances.
 3. **Cleanup pass:**
    - **Archive:** scan all `tickets/*/` directories. For any ticket folder whose
-     key is **not** in the Jira results (ticket is done, cancelled, or released) and
-     whose `.session.state` has `status: done`, move it to `tickets/archive/<KEY>/`
-     and write log "<KEY>: archived to tickets/archive/<KEY>".
-   - **Purge:** delete any `tickets/archive/<KEY>/` folder older than **7 days**.
-     Use the folder's modification time or the `updated_at` field in `.session.state`.
-     Write log "<KEY>: purged archive (older than 7 days)".
+     key is **not** in the Jira results — done, cancelled, released, backlog-ed,
+     or the `AI-Work` label was removed — archive it to `tickets/archive/<KEY>/`
+     and write log "<KEY>: archived to tickets/archive/<KEY>", **unless its lock
+     is currently held** (a session is genuinely still running — leave it alone
+     rather than archiving out from under it).
+   - **Purge:** delete any `tickets/archive/<KEY>/` folder older than **7 days**,
+     using the folder's own modification time. Write log
+     "<KEY>: purged archive (older than 7 days)".
      ```bash
      find tickets/archive/ -mindepth 1 -maxdepth 1 -type d -mtime +7 | while read dir; do
        echo "[cleanup] Purging old archive: $dir"
@@ -83,11 +85,16 @@ and exit.
 | Signal | Answers | Source |
 |---|---|---|
 | Status | What action does this status call for, if any? | Jira ticket (read fresh each run) |
-| State file | Is a session running, and did it confirm pickup? | `tickets/<KEY>/.session.state` |
+| Lock | Is a session currently running for this ticket? | `tickets/<KEY>/.worker.lock` |
 
 Jira is the source of truth for status. Never infer readiness from anything
 cached locally — check Jira fresh every run. The query already guarantees
 the `AI-Work` label is present; no secondary label check is needed.
+
+Nothing else in the ticket directory is the orchestrator's concern — no
+context file, no copied skill files, no state file. The lock is the only
+thing it owns in there; everything else belongs to the worker and its
+specialists.
 
 ## Status rewind (human may set any status)
 
@@ -142,33 +149,34 @@ The session is created once per ticket and carries all context across every stag
 
 Any status not in this table: do nothing, and do not guess.
 
-## State file schema
+## Worker lock
 
-Each ticket folder contains `.session.state` (JSON). Both the orchestrator
-and the session write to it — but for different fields and at different times.
+Liveness is answered by an OS-level `flock` on `tickets/<KEY>/.worker.lock`,
+not by a stored PID plus a liveness check. This is more than a style choice:
+`flock` is tied to the open file description, not to any cleanup code
+actually running — it's released unconditionally by the kernel the instant
+the holding process's file descriptors go away, whether that's a clean exit,
+an uncaught error, `kill -9`, an OOM kill, or the machine losing power
+outright. A stored PID can't make that guarantee (nothing runs to update it
+on an abrupt death), and after a reboot a recorded PID can even be
+legitimately reused by a totally unrelated process — a held-or-not lock
+can't be fooled that way.
 
-```json
-{
-  "status": "<running|waiting|done|crashed>",
-  "pid": 12345,
-  "started_at": "2026-07-13T10:00:00Z",
-  "picked_up_at": "2026-07-13T10:00:05Z",
-  "updated_at": "2026-07-13T10:04:22Z",
-  "stage": "discovery"
-}
-```
+The lock is handed to the launched worker across the launch itself: acquire
+it non-blockingly *before* deciding to launch, hand its file descriptor to
+the new `claude` process (inherited across the process handoff, not
+re-acquired by the child itself), then let go of your own reference. Because
+`flock` locks live with the open file description — which the child's
+inherited descriptor also refers to — the lock stays held by the child for
+its entire lifetime, with no gap between "decided to launch" and "the lock
+is actually held."
 
-| Field | Written by | Meaning |
-|---|---|---|
-| `status` | Both (orchestrator resets/marks crashed; session updates during work) | Current lifecycle state |
-| `pid` | Orchestrator after launch | Process ID of the worker — used to detect crashes |
-| `started_at` | Session on start | When the session began |
-| `picked_up_at` | Session, first update | Confirmation that the session loaded and is working |
-| `updated_at` | Session, each update | Heartbeat — last time the session wrote anything |
-| `stage` | Session | Which stage is active (discovery, implementation, merge, etc.) |
-
-`picked_up_at` is the orchestrator's confirmation signal. If it is absent
-after a reasonable wait, the session never started cleanly.
+- **Checking if a session is live** (read-only, never holds the lock):
+  try a non-blocking exclusive `flock` on `.worker.lock` and immediately
+  release it if it succeeds. Held → a session is live, leave it alone.
+  Free (or the file doesn't exist) → nothing is running, safe to proceed.
+- **Actually launching** (step 6 below): acquire the same lock the same
+  way, but this time *keep holding it* through the launch and hand it off.
 
 **Developer shortcut:** `claude --resume "<KEY>"` — the ticket key is both the
 session's display name (`--name="<KEY>"` at launch) and its real `--resume`
@@ -194,17 +202,16 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
 
 1. Read the current status from Jira. Look it up in the Status → action table.
    If the row says "do nothing," write a log entry "<KEY>: <Status> — skipping"
-   and stop processing this ticket. **Do not read the state file — Jira status
+   and stop processing this ticket. **Do not check the lock — Jira status
    alone is sufficient to skip.**
 
-2. For actionable statuses (To Do, In Discovery, In Progress, UAT Review):
-   read `.session.state` from `tickets/<KEY>/` if it exists.
-   - Does not exist: proceed.
-   - `status: running`, PID alive: log "<KEY>: session running (PID <pid>) — skipping" and stop.
-   - `status: running`, PID dead: log "<KEY>: crashed session detected (PID <pid>) — proceeding."
-    Write `status: crashed` to `.session.state` and proceed.
-   - `status: waiting`: human moved the ticket to an actionable status — proceed.
-   - `status: done` or `status: crashed`: proceed.
+2. For actionable statuses (To Do, In Discovery, In Progress, UAT Review), if
+   `tickets/<KEY>/` exists, check whether its lock is currently held (see
+   "Worker lock" above — a non-blocking, non-consuming check).
+   - Held: log "<KEY>: session already running — skipping" and stop.
+   - Free, or the directory doesn't exist yet: proceed. No need to distinguish
+     "never ran," "finished cleanly," or "crashed" — a free lock means safe to
+     proceed either way.
 
 3. **If Jira status is `To Do`:**
 
@@ -223,77 +230,44 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
        --permission-mode=bypassPermissions
      ```
      This has to happen *before* deleting the ticket directory below and
-     *before* launching the fresh session in step 8, which will reuse the
+     *before* launching the fresh session in step 6, which will reuse the
      plain name `<KEY>` — without this, `--resume "<KEY>"` later would match
      both the old and new sessions and hard-error demanding a session ID.
 
    c. Delete the entire `tickets/<KEY>/` directory if it exists. This discards
      all prior working artifacts (notes, cloned code, etc.).
 
-4. Create `tickets/<KEY>/` if it does not exist.
+4. Create `tickets/<KEY>/` if it does not exist — the lock file has to live
+   inside it.
 
-5. Write `.context.md` into `tickets/<KEY>/` with the repos directory path (if available).
-   The repos directory is `$(pwd)` (set as `$REPOS_DIR` in step 7):
-   ```markdown
-   # Session Context
+5. Acquire `tickets/<KEY>/.worker.lock` — non-blocking, and this time *keep
+   holding it* (see "Worker lock" above). If someone else grabbed it in the
+   moment since step 2's check, log "<KEY>: lock held by another process at
+   launch time — skipping this run" and stop; this is a race so unlikely
+   it's not worth more than failing safe.
 
-   **Repos directory:** <absolute path to cwd>
-
-   This directory contains local clones organized by repository name.
-   Use for code exploration. Falls back to GitHub search if unavailable.
-   ```
-
-6. Copy the worker skill into the ticket directory so the worker discovers it
-   from its own working directory:
-   ```bash
-   mkdir -p "tickets/<KEY>/.claude/skills/ticket-worker"
-   cp "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/SKILL.md" \
-    "tickets/<KEY>/.claude/skills/ticket-worker/SKILL.md"
-   ```
-
-7. Set path variables and write `.session.state` before launch:
-   ```bash
-   TICKET_DIR="$(pwd)/tickets/<KEY>"
-   REPOS_DIR="$(pwd)"
-   ```
-   - **To Do (fresh start):** full reset — all fields null:
-    ```json
-    {
-      "status": "running",
-      "pid": null,
-      "started_at": null,
-      "picked_up_at": null,
-      "updated_at": null,
-      "stage": null
-    }
-    ```
-   - **Resume (In Discovery, In Progress, UAT Review):** partial update only —
-    reset `picked_up_at` to null and set `status: running`. Preserve all other
-    fields (`started_at`, `stage`, etc.) the worker previously wrote:
-    ```python
-    import json, os
-    f = f"{TICKET_DIR}/.session.state"
-    s = json.load(open(f)) if os.path.exists(f) else {}
-    s["status"] = "running"
-    s["picked_up_at"] = None
-    json.dump(s, open(f, "w"), indent=2)
-    ```
-
-8. Launch the session (cwd is set directly on the subprocess — Claude Code's
+6. Launch the session (cwd is set directly on the subprocess — Claude Code's
    CLI has no `-C` equivalent, unlike Copilot's). `--name`/`--resume` both
    just use the plain ticket key — step 3b's rename is what keeps that
-   unambiguous for a fresh launch:
+   unambiguous for a fresh launch. The repos directory rides along as plain
+   text after the skill name in the same prompt — verified directly that
+   Claude Code passes text following a skill invocation straight through as
+   real input, so no context file is needed to hand it over:
    ```bash
+   REPOS_DIR="$(pwd)"
    # $! must be read inside the same subshell that backgrounds the process —
    # capturing it via `echo $!` in a command substitution, not outside a
    # plain (...) group, which would already have exited by the time $! is read.
+   # The lock's fd must be inherited by the child (not re-acquired by it) —
+   # in the real Python implementation this is subprocess.Popen's pass_fds;
+   # written here as a conceptual bash equivalent using exec's fd-duplication.
    if [ "$JIRA_STATUS" = "To Do" ]; then
     # Fresh session:
     SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
-      -p "/ticket-worker" \
+      -p "/ticket-worker Repos directory: $REPOS_DIR" \
       > "$TICKET_DIR/session.log" 2>&1 & echo $!)
    else
     # Resume existing session (In Discovery, In Progress, UAT Review):
@@ -301,7 +275,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
-      -p "/ticket-worker" \
+      -p "/ticket-worker Repos directory: $REPOS_DIR" \
       > "$TICKET_DIR/session.log" 2>&1 & echo $!)
    fi
    ```
@@ -312,7 +286,11 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
      (required for non-interactive mode) — the Claude Code equivalent of
      Copilot's `--allow-all-tools --allow-all-urls`.
    - `--add-dir` restricts file access to the ticket and repos directories only.
-   - `-p "/ticket-worker"` invokes the worker skill as the initial prompt.
+   - `-p "/ticket-worker Repos directory: $REPOS_DIR"` invokes the worker skill
+     as the initial prompt, with the repos directory as its only argument.
+     `ticket-worker` is invoked by its bare name, not namespaced under this
+     plugin — verified directly that an installed plugin's skills resolve by
+     bare name too, from any directory, as long as it's unambiguous.
    - The Atlassian `cloudId` is `e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2`.
    - A fresh "To Do" restart's rename step (3b) already freed up the plain
      key name before this point, so `--name="<KEY>"` here can never collide.
@@ -320,63 +298,40 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    > **Production note:** Run the orchestrator inside a dedicated VM. If a session
    > executes destructive code, it only damages the VM — not the host machine.
 
-9. Write the real PID into `.session.state`:
-   Take the same exclusive `flock` for this read-modify-write that the
-   worker's own startup write takes (step 4 of `ticket-worker/SKILL.md`) —
-   otherwise the two writes can interleave and one silently clobbers the
-   other's field (concretely: this write's stale copy, missing
-   `picked_up_at`, overwrites the worker's update):
-   ```bash
-   python3 -c "
-   import fcntl, json
-   f = '$TICKET_DIR/.session.state'
-   with open(f, 'r+') as fh:
-       fcntl.flock(fh, fcntl.LOCK_EX)
-       try:
-           s = json.loads(fh.read())
-           s['pid'] = $SESSION_PID
-           fh.seek(0); fh.truncate()
-           fh.write(json.dumps(s, indent=2))
-       finally:
-           fcntl.flock(fh, fcntl.LOCK_UN)
-   "
-   ```
-
-10. **Do not poll per-ticket.** Move immediately to the next ticket instead —
-    log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket."
-    Polling every launched session for `picked_up_at` one at a time, up to 30s
-    each, doesn't scale: with N tickets in one run that's a worst case of
-    N×30s, which can exceed the 5–15 minute cron interval this is meant to run
-    on. Instead, **after every ticket in this run has been dispatched**, poll
-    all of them together against one shared 30-second deadline: repeatedly
-    check each not-yet-confirmed ticket's `.session.state` for `picked_up_at`,
-    dropping it from the pending set once found, until either all are
-    confirmed or the deadline passes. Log
-    "<KEY>: session did not pick up within 30s — flagged as failed to start"
-    for anything still pending once the deadline passes.
+7. Log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket"
+   and move on immediately. There's nothing to wait for or confirm: whatever
+   would cause a launch to silently fail, the next run finds the lock free
+   again and just retries — the same outcome as detecting the failure
+   immediately, just up to one cron interval later. Nothing in
+   `tickets/<KEY>/` needs to be read or written again after this point;
+   everything from here on belongs to the worker.
 
 ## Orchestrator responsibilities
 
 - Query Jira fresh each run.
+- Own the `tickets/` directory structure: create a ticket's folder, and later
+  archive/purge it — never anything inside it beyond the lock file.
 - Archive `tickets/*/` folders for tickets no longer active in Jira results —
-  not just ones that finished cleanly (`status: done`); a ticket that got
+  not just ones that finished cleanly; a ticket that got
   Cancelled/Released/Backlog-ed or lost its `AI-Work` label counts too. The
-  only exception is a genuinely in-flight session (`status: running` with a
-  live PID) — leave that alone rather than archiving out from under it.
-- Read ticket status and state file.
-- Detect and log crashes (dead PID).
-- Create ticket folder and write `.context.md`.
-- Launch worker session via `claude` CLI (`nohup ... &`).
-- After dispatching every ticket this run, poll all of them together for
-  `picked_up_at` against one shared 30s deadline (see step 10) — not
-  per-ticket.
-- **Exit after processing all tickets** — no long-running blocking.
+  only exception is a genuinely in-flight session (lock held) — leave that
+  alone rather than archiving out from under it.
+- Sanity-check Jira's status against what's actually been done (rewind), and
+  correct Jira if a human moved it further than the real work supports.
+- Decide whether to launch or resume, and do it — via the worker's lock file,
+  never via `.session.state` or any other artifact the worker owns.
+- **Exit after dispatching every ticket this run** — no waiting, no polling,
+  no long-running blocking of any kind.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).
 
-## Session responsibilities
+## Worker responsibilities
 
-- Write and maintain `.session.state` (all fields, including `picked_up_at`).
-- Transition Jira tickets as work progresses or fails.
-- Decide what "success" and "failure" mean for each stage.
-- Set `status: waiting` when handing off to a human gate.
-- Clean exit: set `status: done` before exiting normally.
+- Hold the lock for its entire lifetime (inherited from the orchestrator at
+  launch, released automatically — by the kernel, unconditionally — on any
+  exit, clean or otherwise).
+- Own everything else inside its ticket directory: whatever state it wants
+  to track about itself, and every real artifact (research, implementation,
+  review, merge notes).
+- Transition Jira tickets as work progresses or fails, and decide what
+  "success" and "failure" mean for each stage — the orchestrator only ever
+  corrects a status via rewind, it never drives the real lifecycle.

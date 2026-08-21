@@ -1,7 +1,7 @@
 ---
 name: ticket-implementation
 description: "Standalone implementation agent for a PDE Jira ticket. Reads discovery.md, writes code changes, writes implementation-notes.md and .implementation-agent-done sentinel file. Does NOT manage Jira transitions or state files."
-user-invocable: false
+user-invocable: true
 ---
 
 # PDE Implementation Agent
@@ -24,16 +24,14 @@ TICKET_DIR="$(pwd)"
 CLOUD_ID="e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2"
 BASE="https://api.atlassian.com/ex/jira/${CLOUD_ID}/rest/api/3"
 
-REPOS_DIR=$(python3 -c "
-import re
-content = open('.context.md').read()
-m = re.search(r'\*\*Repos directory:\*\* (.+)', content)
-print(m.group(1).strip() if m else '')
-")
-
 echo "[implementation] Ticket: $KEY"
 echo "[implementation] Repos dir: $REPOS_DIR"
 ```
+
+`REPOS_DIR` is not read from any file — it's given directly as part of the
+prompt that invoked this skill (`/ticket-implementation Repos directory: <path>`).
+Take the text following "Repos directory:" in your own initial prompt as
+its value.
 
 ### Jira helper
 

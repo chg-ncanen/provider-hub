@@ -1,7 +1,7 @@
 ---
 name: ticket-merge
 description: "Standalone merge agent for a PDE Jira ticket. Checks CI gates and approvals, merges if ready, monitors the merge, and on failure decides the appropriate recovery action. Writes merge-notes.md and .merge-agent-done."
-user-invocable: false
+user-invocable: true
 ---
 
 # PDE Merge Agent
@@ -26,13 +26,6 @@ You do not address review comments, transition Jira tickets, or write to `.sessi
 KEY=$(basename "$(pwd)")
 TICKET_DIR="$(pwd)"
 
-REPOS_DIR=$(python3 -c "
-import re
-content = open('.context.md').read()
-m = re.search(r'\*\*Repos directory:\*\* (.+)', content)
-print(m.group(1).strip() if m else '')
-")
-
 # Read PR info from review-context.md
 PR_NUMBER=$(python3 -c "
 import re
@@ -50,6 +43,11 @@ print(m.group(1).strip() if m else '')
 echo "[merge] Ticket: $KEY  PR: #$PR_NUMBER  Repo: $REPO"
 cd $REPOS_DIR/$REPO
 ```
+
+`REPOS_DIR` is not read from any file — it's given directly as part of the
+prompt that invoked this skill (`/ticket-merge Repos directory: <path>`).
+Take the text following "Repos directory:" in your own initial prompt as
+its value.
 
 ---
 
