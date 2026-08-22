@@ -167,17 +167,44 @@ def read_status(key: str, auth) -> str:
     return r.json()["fields"]["status"]["name"]
 
 
-def jira_transition(key: str, status_name: str, auth) -> None:
+def jira_transition(key: str, status_name: str, auth, fields: dict | None = None) -> None:
     transition_id = TRANSITION_IDS[status_name]
+    payload = {"transition": {"id": transition_id}}
+    if fields:
+        payload["fields"] = fields
     r = requests.post(
         f"{JIRA_BASE}/issue/{key}/transitions",
-        json={"transition": {"id": transition_id}},
+        json=payload,
         auth=auth,
         headers={"Content-Type": "application/json"},
         timeout=20,
     )
     r.raise_for_status()
     log.info(f"{key}: transitioned to {status_name}")
+
+
+# This workflow's Blocked transition (ID 21) has a required-at-execution-time
+# validator on this field — Jira enforces it as a 400 regardless of what the
+# transition metadata's own "required" flag reports (verified directly
+# against the live API: GET .../transitions?expand=transitions.fields
+# reports required=false for it, but POSTing the transition without it
+# fails with "Blocked Reason is Required"). Its schema is a plain
+# textfield custom field (verified the same way) — a bare string value,
+# not the {"value": ...}/{"id": ...} shape a select-list field would need.
+BLOCKED_REASON_FIELD = "customfield_16637"
+
+# Jira's textfield custom field type has a hard 255-character limit —
+# exceeding it fails the same transition with a different 400. Truncating
+# here means a long Blocker section still transitions successfully; the
+# ticket comment (not field-length-limited) always has the full text.
+BLOCKED_REASON_MAX_LEN = 255
+
+
+def _blocked_reason_field(reason: str) -> dict:
+    reason = reason.strip()
+    if len(reason) > BLOCKED_REASON_MAX_LEN:
+        reason = reason[: BLOCKED_REASON_MAX_LEN - 1].rstrip() + "…"
+    return {BLOCKED_REASON_FIELD: reason}
 
 
 def jira_comment(key: str, text: str, auth) -> None:
@@ -316,7 +343,7 @@ def report_failure(key: str, reason: str, auth) -> None:
         log.warning(f"{key}: failure reported ({consecutive} consecutive) — {reason}")
 
         if consecutive >= 3:
-            jira_transition(key, "Blocked", auth)
+            jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(reason))
             jira_comment(
                 key,
                 f"🤖 {key} has failed 3 times in a row with no progress — stopping "
@@ -342,7 +369,7 @@ def apply_blocked_routing(key: str, artifact_path: Path, stage: str, auth) -> No
     blocker = extract_section(content, "Blocker") or "(no Blocker section found)"
     next_step = extract_section(content, "Suggested Next Step")
 
-    jira_transition(key, "Blocked", auth)
+    jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(blocker))
     message = f"🤖 {stage} is blocked on {key}: {blocker}"
     if next_step:
         message += f"\n{next_step}"
@@ -491,7 +518,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         log.info(f"{key}: merge complete — ticket resolved")
     elif status == "BLOCKED":
         reason = extract_section(content, "Blocker") or "(no Blocker section found)"
-        jira_transition(key, "Blocked", auth)
+        jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(reason))
         jira_comment(key, f"🤖 Merge blocked for {key}: {reason}", auth)
         log.warning(f"{key}: merge blocked — {reason}")
     elif status == "PENDING":

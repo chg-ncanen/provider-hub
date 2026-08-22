@@ -141,6 +141,42 @@ class TestJiraHttpCalls(unittest.TestCase):
         )
         response.raise_for_status.assert_called_once()
 
+    def test_jira_transition_includes_fields_when_given(self) -> None:
+        response = MagicMock()
+        with patch.object(worker.requests, "post", return_value=response) as mock_post:
+            worker.jira_transition("PDE-1", "Blocked", self.auth, fields={"customfield_16637": "needs scope"})
+        self.assertEqual(
+            mock_post.call_args.kwargs["json"],
+            {
+                "transition": {"id": worker.TRANSITION_IDS["Blocked"]},
+                "fields": {"customfield_16637": "needs scope"},
+            },
+        )
+
+    def test_blocked_reason_field_passes_short_text_through(self) -> None:
+        self.assertEqual(
+            worker._blocked_reason_field("needs scope"),
+            {"customfield_16637": "needs scope"},
+        )
+
+    def test_blocked_reason_field_strips_whitespace(self) -> None:
+        self.assertEqual(
+            worker._blocked_reason_field("  needs scope  \n"),
+            {"customfield_16637": "needs scope"},
+        )
+
+    def test_blocked_reason_field_truncates_over_255_chars(self) -> None:
+        reason = "x" * 300
+        result = worker._blocked_reason_field(reason)["customfield_16637"]
+        self.assertEqual(len(result), 255)
+        self.assertTrue(result.endswith("…"))
+        self.assertEqual(result[:-1], "x" * 254)
+
+    def test_blocked_reason_field_exactly_255_chars_is_unchanged(self) -> None:
+        reason = "x" * 255
+        result = worker._blocked_reason_field(reason)["customfield_16637"]
+        self.assertEqual(result, reason)
+
     def test_jira_transition_unknown_status_raises_key_error(self) -> None:
         # A typo'd status name must fail loudly, not silently transition to
         # the wrong (or no) state.
@@ -277,7 +313,9 @@ class TestReportFailure(unittest.TestCase):
             "🤖 ⚠️ PDE-1: second failure — will retry automatically.",
             "🤖 ⚠️ PDE-1: first failure — will retry automatically.",
         ])
-        mock_transition.assert_called_once_with("PDE-1", "Blocked", ("e", "t"))
+        mock_transition.assert_called_once_with(
+            "PDE-1", "Blocked", ("e", "t"), fields=worker._blocked_reason_field("something broke")
+        )
         self.assertEqual(mock_comment.call_count, 2)
 
     def test_stops_counting_at_first_non_failure_comment(self) -> None:
@@ -324,7 +362,10 @@ class TestApplyBlockedRouting(TempDirTestCase):
             with self.assertRaises(SystemExit):
                 worker.apply_blocked_routing("PDE-1", artifact, "ticket-discovery", self.auth)
 
-        mock_transition.assert_called_once_with("PDE-1", "Blocked", self.auth)
+        mock_transition.assert_called_once_with(
+            "PDE-1", "Blocked", self.auth,
+            fields=worker._blocked_reason_field("Need clarification on scope."),
+        )
         message = mock_comment.call_args.args[1]
         self.assertIn("Need clarification on scope.", message)
         self.assertIn("Ask the PM.", message)
@@ -674,7 +715,9 @@ class TestRunMerge(TempDirTestCase):
         mock_transition, mock_comment, mock_fail = self._run(
             "**Status:** BLOCKED\n\n## Blocker\n\nmerge conflicts\n"
         )
-        mock_transition.assert_called_once_with("PDE-1", "Blocked", self.auth)
+        mock_transition.assert_called_once_with(
+            "PDE-1", "Blocked", self.auth, fields=worker._blocked_reason_field("merge conflicts")
+        )
         self.assertIn("merge conflicts", mock_comment.call_args.args[1])
         mock_fail.assert_not_called()
 
