@@ -252,7 +252,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
       -p "/ticket-worker Repos directory: $REPOS_DIR" \
-      > "$TICKET_DIR/session.log" 2>&1 & echo $!)
+      > "${AGENT_CHILD_LOG_DIR:-$TICKET_DIR}/<KEY>.log" 2>&1 & echo $!)
    else
     # Resume existing session (In Discovery, In Progress, UAT Review):
     SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --resume="<KEY>" \
@@ -260,7 +260,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       --add-dir "$TICKET_DIR" \
       --add-dir "$REPOS_DIR" \
       -p "/ticket-worker Repos directory: $REPOS_DIR" \
-      > "$TICKET_DIR/session.log" 2>&1 & echo $!)
+      > "${AGENT_CHILD_LOG_DIR:-$TICKET_DIR}/<KEY>.log" 2>&1 & echo $!)
    fi
    ```
    - The `cd ... && ... &` sets the worker's cwd without a `-C` flag.
@@ -276,6 +276,11 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
      plugin — verified directly that an installed plugin's skills resolve by
      bare name too, from any directory, as long as it's unambiguous.
    - The Atlassian `cloudId` is `e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2`.
+   - Output is redirected to `<KEY>.log` in `$AGENT_CHILD_LOG_DIR` if that env
+     var is set (a calling process manager collecting logs centrally), or in
+     `$TICKET_DIR` otherwise — opened in append mode either way, so a
+     resumed session's output keeps accumulating into the same file rather
+     than starting over.
    - A fresh "To Do" restart's rename step (3b) already freed up the plain
      key name before this point, so `--name="<KEY>"` here can never collide.
 

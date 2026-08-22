@@ -182,12 +182,24 @@ def extract_section(content: str, heading: str) -> str:
 
 # ── Sub-agent launch ──────────────────────────────────────────────────────────
 
-def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, log_name: str) -> None:
+def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path) -> None:
     """Launch a one-shot specialist session. Never resumed across separate
     launches, so --name is a cosmetic display label only (prompt box,
-    /resume picker, terminal title) — no --session-id/--resume needed."""
-    agent_name = f"{ticket_dir.name}-{skill}-{int(time.time())}"
-    log_file = open(ticket_dir / log_name, "a")
+    /resume picker, terminal title) — no --session-id/--resume needed, and
+    no timestamp needed either: unlike the worker/orchestrator (where a
+    reused name is ambiguous for --resume), nothing ever looks this name up
+    again, so a relaunch of the same skill for the same ticket reusing the
+    same name is harmless — it also means a relaunch's log output
+    accumulates into the same file as the first attempt (append mode).
+
+    Logs to AGENT_CHILD_LOG_DIR/<session-name>.log if that env var is set —
+    the calling system wants sessions' output collected centrally — or to
+    ticket_dir/<session-name>.log otherwise. Same convention
+    orchestrator.py's launch_session() uses for the worker's own log."""
+    agent_name = f"{ticket_dir.name}-{skill}"
+    log_dir = Path(os.environ.get("AGENT_CHILD_LOG_DIR") or ticket_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"{agent_name}.log", "a")
     proc = subprocess.Popen(
         ["claude", f"--name={agent_name}",
          "--permission-mode=bypassPermissions",
@@ -240,7 +252,7 @@ def report_failure(key: str, reason: str, auth) -> None:
             jira_comment(
                 key,
                 f"🤖 {key} has failed 3 times in a row with no progress — stopping "
-                f"automatic retries. See the recent comments above and session.log for details.",
+                f"automatic retries. See the recent comments above and this session's logs for details.",
                 auth,
             )
             log.error(f"{key}: escalated to Blocked after 3 consecutive failures")
@@ -279,7 +291,7 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
 
     if not sentinel.exists():
         artifact.unlink(missing_ok=True)  # ensure the specialist starts fresh
-        launch_specialist("ticket-discovery", ticket_dir, repos_dir, "discovery-agent.log")
+        launch_specialist("ticket-discovery", ticket_dir, repos_dir)
         if not wait_for_sentinel("ticket-discovery", sentinel):
             report_failure(key, "ticket-discovery did not complete within 900s", auth)
             return
@@ -316,7 +328,7 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> Non
 def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth) -> None:
     sentinel = ticket_dir / ".implementation-agent-done"
     if not sentinel.exists():
-        launch_specialist("ticket-implementation", ticket_dir, repos_dir, "implementation-agent.log")
+        launch_specialist("ticket-implementation", ticket_dir, repos_dir)
         if not wait_for_sentinel("ticket-implementation", sentinel):
             report_failure(key, "ticket-implementation did not complete within 900s", auth)
             return
@@ -362,7 +374,7 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
     notes.unlink(missing_ok=True)
     sentinel.unlink(missing_ok=True)
 
-    launch_specialist("ticket-review", ticket_dir, repos_dir, "review-agent.log")
+    launch_specialist("ticket-review", ticket_dir, repos_dir)
     if not wait_for_sentinel("ticket-review", sentinel):
         report_failure(key, "ticket-review did not complete within 900s", auth)
         return
@@ -393,7 +405,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     notes.unlink(missing_ok=True)  # always run fresh
     sentinel.unlink(missing_ok=True)
 
-    launch_specialist("ticket-merge", ticket_dir, repos_dir, "merge-agent.log")
+    launch_specialist("ticket-merge", ticket_dir, repos_dir)
     if not wait_for_sentinel("ticket-merge", sentinel):
         report_failure(key, "ticket-merge did not complete within 900s", auth)
         return

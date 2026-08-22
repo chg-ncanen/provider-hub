@@ -19,8 +19,9 @@ your job is:
    invocation straight through as real input, so there's no context file to
    read here.
 2. Run `worker.py` with that path as its one argument.
-3. Report its output (stdout/stderr, already going to `session.log` via the
-   orchestrator's redirect).
+3. Report its output (stdout/stderr, already redirected by the orchestrator
+   to `<KEY>.log` — in `AGENT_CHILD_LOG_DIR` if that env var is set, in this
+   ticket's own directory otherwise).
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" "$REPOS_DIR"
@@ -130,9 +131,9 @@ tracked status/stage/timestamps in a local JSON file. None of it was ever
 read back by anything — not the orchestrator (which only ever checks the
 lock), and not this worker's own routing either, which is driven entirely by
 fresh Jira status and artifact/sentinel-file existence. Removed rather than
-carried forward half-trusted. Use `session.log` (this session's own
-stdout/stderr, which the orchestrator redirects there) for anything a human
-needs to reconstruct after the fact.
+carried forward half-trusted. Use this session's own log (its stdout/stderr,
+which the orchestrator redirects to `<KEY>.log` — see "How to run" above)
+for anything a human needs to reconstruct after the fact.
 
 ### Status → path
 

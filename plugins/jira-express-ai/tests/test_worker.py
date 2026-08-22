@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -308,10 +309,19 @@ class TestWaitForSentinel(TempDirTestCase):
 
 
 class TestLaunchSpecialist(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved_log_dir = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def tearDown(self) -> None:
+        if self._saved_log_dir is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved_log_dir
+        super().tearDown()
+
     def test_builds_expected_command(self) -> None:
         with patch.object(worker.subprocess, "Popen") as mock_popen:
             mock_popen.return_value.pid = 4242
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, "discovery-agent.log")
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
 
         args, kwargs = mock_popen.call_args
         cmd = args[0]
@@ -321,12 +331,49 @@ class TestLaunchSpecialist(TempDirTestCase):
         self.assertIn(f"/ticket-discovery Repos directory: {self.repos_dir}", cmd)
         self.assertEqual(kwargs["cwd"], str(self.ticket_dir))
 
+    def test_logs_to_ticket_dir_by_default(self) -> None:
+        with patch.object(worker.subprocess, "Popen") as mock_popen:
+            mock_popen.return_value.pid = 4242
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+        log_file = mock_popen.call_args.kwargs["stdout"]
+        expected_name = f"{self.ticket_dir.name}-ticket-discovery.log"
+        self.assertEqual(Path(log_file.name), self.ticket_dir / expected_name)
+
+    def test_logs_to_agent_child_log_dir_when_set(self) -> None:
+        # Nested inside self.ticket_dir (the managed tempdir itself) so
+        # tearDown's cleanup() removes it — self.ticket_dir.parent is the
+        # shared system /tmp, not something this test should write into.
+        external_dir = self.ticket_dir / "collected-logs"
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(external_dir)
+        with patch.object(worker.subprocess, "Popen") as mock_popen:
+            mock_popen.return_value.pid = 4242
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+        log_file = mock_popen.call_args.kwargs["stdout"]
+        expected_name = f"{self.ticket_dir.name}-ticket-discovery.log"
+        self.assertEqual(Path(log_file.name), external_dir / expected_name)
+        self.assertTrue(external_dir.is_dir())  # created if missing
+
+    def test_relaunch_reuses_the_same_name_and_appends(self) -> None:
+        # No timestamp — a relaunch of the same skill for the same ticket
+        # must reuse the same session name and accumulate into the same
+        # external log file, exactly like the local default already does.
+        external_dir = self.ticket_dir / "collected-logs"
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(external_dir)
+        with patch.object(worker.subprocess, "Popen") as mock_popen:
+            mock_popen.return_value.pid = 1
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            first_name = mock_popen.call_args.args[0][1]  # "--name=..."
+            mock_popen.return_value.pid = 2
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            second_name = mock_popen.call_args.args[0][1]
+        self.assertEqual(first_name, second_name)
+
 
 class TestRunDiscovery(TempDirTestCase):
     def test_launches_when_sentinel_missing_and_transitions_on_success(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
 
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             artifact.write_text("**Status:** OK\n**Date:** 2026-01-01\n")
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
@@ -393,7 +440,7 @@ class TestRunImplementation(TempDirTestCase):
     def test_first_pass_success_transitions_to_in_review_with_pr_url(self) -> None:
         (self.ticket_dir / "review-context.md").write_text("**PR:** #7\n**PR URL:** https://x/7\n")
 
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             self.assertEqual(skill, "ticket-implementation")
             (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
 
@@ -413,7 +460,7 @@ class TestRunImplementation(TempDirTestCase):
     def test_first_pass_missing_review_context_reports_failure(self) -> None:
         # No review-context.md written — the specialist claims done but
         # didn't produce the artifact run_implementation actually needs.
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
@@ -431,7 +478,7 @@ class TestRunImplementation(TempDirTestCase):
         mock_transition.assert_not_called()
 
     def test_first_pass_blocked(self) -> None:
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             (ticket_dir / "implementation-notes.md").write_text(
                 "**Status:** BLOCKED\n\n## Blocker\n\nno access\n"
             )
@@ -454,7 +501,7 @@ class TestRunImplementation(TempDirTestCase):
         (self.ticket_dir / "review-notes.md").write_text("stale")
         (self.ticket_dir / ".review-agent-done").touch()
 
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             self.assertEqual(skill, "ticket-review")
             (ticket_dir / "review-notes.md").write_text("**Status:** OK\n")
 
@@ -513,7 +560,7 @@ class TestRunImplementation(TempDirTestCase):
 
 class TestRunMerge(TempDirTestCase):
     def _run(self, notes_content):
-        def fake_launch(skill, ticket_dir, repos_dir, log_name):
+        def fake_launch(skill, ticket_dir, repos_dir):
             (ticket_dir / "merge-notes.md").write_text(notes_content)
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):

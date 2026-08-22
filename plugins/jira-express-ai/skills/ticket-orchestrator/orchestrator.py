@@ -479,6 +479,12 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
     pass_fds hands its fd to the child across the exec boundary, and closing
     our own reference afterward is what makes the lock live exactly as long
     as the child does, with no gap.
+
+    Logs to AGENT_CHILD_LOG_DIR/<key>.log if that env var is set — the
+    calling system wants sessions' output collected centrally — or to
+    ticket_dir/<key>.log otherwise, so a resumed session's output keeps
+    accumulating into the same file (opened in append mode) regardless of
+    which directory it lands in.
     """
     if is_new:
         cmd = ["claude", f"--name={key}"]
@@ -490,7 +496,9 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
         f"--add-dir={repos_dir}",
         "-p", f"/ticket-worker Repos directory: {repos_dir}",
     ]
-    log_file = open(ticket_dir / "session.log", "a")
+    log_dir = Path(os.environ.get("AGENT_CHILD_LOG_DIR") or ticket_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_dir / f"{key}.log", "a")
     proc = subprocess.Popen(
         cmd,
         cwd=str(ticket_dir),

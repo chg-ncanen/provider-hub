@@ -413,6 +413,12 @@ class TestLaunchSession(TempDirTestCase):
         self.repos_dir.mkdir(parents=True)
         self.lock_fh = orchestrator.try_acquire_lock(self.ticket_dir)
         self.assertIsNotNone(self.lock_fh)
+        self._saved_log_dir = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def tearDown(self) -> None:
+        if self._saved_log_dir is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved_log_dir
+        super().tearDown()
 
     def test_fresh_launch_uses_name_not_resume(self) -> None:
         with patch.object(orchestrator.subprocess, "Popen") as mock_popen:
@@ -456,6 +462,23 @@ class TestLaunchSession(TempDirTestCase):
             mock_popen.return_value.pid = 42424
             pid = orchestrator.launch_session("PDE-1", self.ticket_dir, self.repos_dir, True, self.lock_fh)
         self.assertEqual(pid, 42424)
+
+    def test_logs_to_ticket_dir_by_default(self) -> None:
+        with patch.object(orchestrator.subprocess, "Popen") as mock_popen:
+            mock_popen.return_value.pid = 999
+            orchestrator.launch_session("PDE-1", self.ticket_dir, self.repos_dir, True, self.lock_fh)
+        log_file = mock_popen.call_args.kwargs["stdout"]
+        self.assertEqual(Path(log_file.name), self.ticket_dir / "PDE-1.log")
+
+    def test_logs_to_agent_child_log_dir_when_set(self) -> None:
+        external_dir = self.tmp_path / "collected-logs"
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(external_dir)
+        with patch.object(orchestrator.subprocess, "Popen") as mock_popen:
+            mock_popen.return_value.pid = 999
+            orchestrator.launch_session("PDE-1", self.ticket_dir, self.repos_dir, True, self.lock_fh)
+        log_file = mock_popen.call_args.kwargs["stdout"]
+        self.assertEqual(Path(log_file.name), external_dir / "PDE-1.log")
+        self.assertTrue(external_dir.is_dir())  # created if missing
 
 
 class TestMainDispatch(TempDirTestCase):
