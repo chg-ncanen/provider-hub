@@ -17,6 +17,11 @@ way to hand that off), write the results to `implementation-notes.md` and
 
 You do not transition Jira tickets or manage state files.
 
+This session runs non-interactively — before running anything that might
+take a while (installs, builds, test suites), read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md`. It governs how
+to actually wait for a long-running command to finish here.
+
 ---
 
 ## Setup

@@ -18,7 +18,8 @@ your job is:
    Verified directly that Claude Code passes text following a skill
    invocation straight through as real input, so there's no context file to
    read here.
-2. Run `worker.py` with that path as its one argument.
+2. Run `worker.py` with that path as its one argument, and see it through to
+   actual completion before doing anything else.
 3. Report its output (stdout/stderr, already redirected by the orchestrator
    to `<KEY>.log` — in `AGENT_CHILD_LOG_DIR` if that env var is set, in this
    ticket's own directory otherwise).
@@ -31,6 +32,16 @@ python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" "$REPOS_DIR"
 (the orchestrator always launches this session with that as its cwd), reads
 and reasons about Jira status, and exits after routing to exactly one path —
 see "Design reference" below for what it actually does.
+
+**This call routinely outlives the default Bash tool timeout — that's
+expected, not an error.** `worker.py` polls each specialist's sentinel file
+for up to 15 minutes per stage (see "Sub-agent launch and validation" below),
+so the Bash call running it will often get auto-moved to a background task
+before `worker.py` returns. Before running it, read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md` — it governs how
+you must wait for that (and any other long-running command) to actually
+finish in this headless session. Only once it reports the process has
+genuinely exited should you move on to step 3.
 
 ### Why this stays a skill, not a direct script launch
 

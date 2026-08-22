@@ -18,6 +18,11 @@ moved the ticket to UAT Review. Your job:
 
 You do not address review comments or transition Jira tickets.
 
+This session runs non-interactively — before running anything that might
+take a while (waiting on CI, monitoring the merge), read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md`. It governs how
+to actually wait for a long-running command to finish here.
+
 ---
 
 ## Setup

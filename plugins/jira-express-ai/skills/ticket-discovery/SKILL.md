@@ -14,6 +14,11 @@ Jira tickets, manage state files, or do any implementation work.
 
 When complete, write `.discovery-agent-done` to signal the worker.
 
+This session runs non-interactively — before running anything that might
+take a while (e.g. `npm ci`, `npm audit`), read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md`. It governs how
+to actually wait for a long-running command to finish here.
+
 ---
 
 ## Setup
