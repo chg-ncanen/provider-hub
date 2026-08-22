@@ -384,12 +384,20 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     sentinel = ticket_dir / ".discovery-agent-done"
     artifact = ticket_dir / "discovery.md"
 
-    if not sentinel.exists():
-        artifact.unlink(missing_ok=True)  # ensure the specialist starts fresh
-        launch_specialist("ticket-discovery", ticket_dir, repos_dir, auth)
-        if not wait_for_sentinel("ticket-discovery", sentinel):
-            report_failure(key, "ticket-discovery did not complete within 900s", auth)
-            return
+    # Always run fresh — including the sentinel. A stale sentinel left over
+    # from a prior discovery pass (e.g. a human rejected the ticket back
+    # from QA Review to In Discovery) must not skip a redo: this status is
+    # only ever reached again via that rejection path, so every visit here
+    # is a legitimate request to re-run discovery, not a repeat within the
+    # same invocation. discovery.md is deliberately NOT deleted first
+    # (unlike review/merge's artifacts) — the specialist reads its own
+    # prior discovery.md to know this is a revision; see
+    # ticket-discovery/SKILL.md.
+    sentinel.unlink(missing_ok=True)
+    launch_specialist("ticket-discovery", ticket_dir, repos_dir, auth)
+    if not wait_for_sentinel("ticket-discovery", sentinel):
+        report_failure(key, "ticket-discovery did not complete within 900s", auth)
+        return
 
     if not artifact.exists():
         report_failure(key, "ticket-discovery finished but discovery.md is missing", auth)

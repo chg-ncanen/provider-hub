@@ -520,22 +520,68 @@ class TestRunDiscovery(TempDirTestCase):
         mock_transition.assert_called_once_with("PDE-1", "QA Review", self.auth)
         mock_comment.assert_called_once()
 
-    def test_skips_launch_when_sentinel_already_present(self) -> None:
+    def test_always_relaunches_even_when_sentinel_and_artifact_already_exist(self) -> None:
+        # A stale sentinel left over from a prior discovery pass (e.g. a
+        # human rejected the ticket back from QA Review to In Discovery)
+        # must not skip a redo — see run_discovery()'s comment for why.
         (self.ticket_dir / ".discovery-agent-done").touch()
-        (self.ticket_dir / "discovery.md").write_text("**Status:** OK\n")
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** OK\n(prior version)\n")
 
-        with patch.object(worker, "launch_specialist") as mock_launch, \
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            artifact.write_text("**Status:** OK\n(revised)\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker, "jira_comment"):
+            worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_called_once()
+        mock_transition.assert_called_once_with("PDE-1", "QA Review", self.auth)
+
+    def test_does_not_delete_prior_artifact_before_relaunch(self) -> None:
+        # Deliberately NOT deleted before relaunch (unlike review/merge's
+        # artifacts) — the specialist reads its own prior discovery.md to
+        # know this is a revision, not a first pass; see
+        # ticket-discovery/SKILL.md.
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** OK\n(prior version)\n")
+        seen_before_launch = {}
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            seen_before_launch["content"] = artifact.read_text() if artifact.exists() else None
+            artifact.write_text("**Status:** OK\n(revised)\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment"):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
-        mock_launch.assert_not_called()
+        self.assertEqual(seen_before_launch["content"], "**Status:** OK\n(prior version)\n")
 
     def test_blocked_artifact_applies_blocked_routing(self) -> None:
-        (self.ticket_dir / ".discovery-agent-done").touch()
-        (self.ticket_dir / "discovery.md").write_text("**Status:** BLOCKED\n\n## Blocker\n\nneed input\n")
+        artifact = self.ticket_dir / "discovery.md"
 
-        with patch.object(worker, "apply_blocked_routing") as mock_blocked, \
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            artifact.write_text("**Status:** BLOCKED\n\n## Blocker\n\nneed input\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "apply_blocked_routing") as mock_blocked, \
              patch.object(worker, "jira_transition") as mock_transition:
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -554,8 +600,9 @@ class TestRunDiscovery(TempDirTestCase):
         mock_transition.assert_not_called()
 
     def test_missing_artifact_after_done_reports_failure(self) -> None:
-        (self.ticket_dir / ".discovery-agent-done").touch()  # no discovery.md written
-        with patch.object(worker, "report_failure") as mock_fail:
+        with patch.object(worker, "launch_specialist"), \
+             patch.object(worker, "wait_for_sentinel", return_value=True), \
+             patch.object(worker, "report_failure") as mock_fail:
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
         mock_fail.assert_called_once()
 

@@ -55,6 +55,16 @@ jira_get() {
 
 ## Steps
 
+### Step 0 — Check for a prior discovery.md
+
+The worker deliberately does not delete `discovery.md` before launching you —
+if it already exists in this directory, that means a human reviewed it,
+rejected it from QA Review, and moved the ticket back to In Discovery. Read
+it now. This is a revision, not a first pass: reconcile your prior findings
+with the rejection feedback you find in Step 1's comments (which is *why* it
+was rejected) rather than re-researching from scratch. If `discovery.md`
+doesn't exist yet, this is the first pass — proceed normally.
+
 ### Step 1 — Fetch ticket details from Jira
 
 ```bash
@@ -108,7 +118,8 @@ Log what you find:
 
 ### Step 3 — Write discovery.md
 
-Write `discovery.md` to the ticket directory with this structure:
+Write `discovery.md` to the ticket directory with this structure, overwriting
+any prior version from Step 0 in full — not appending to it:
 
 ```markdown
 # Discovery: <KEY>
