@@ -94,7 +94,15 @@ if [ ! -d "$VENV_DIR" ]; then
   # rest of venv creation "succeeds" (verified against a real Claude Code
   # SessionStart hook run — pip and its installed console scripts showed up
   # fine, but bin/python and bin/python3 were the only things missing).
-  "$system_python" -m venv --copies "$VENV_DIR"
+  #
+  # `|| true` is required, not cosmetic: on a system where ensurepip's wheel
+  # data isn't installed (e.g. Debian/Ubuntu without python3.X-venv), this
+  # command still creates the directory and the python binary but exits
+  # non-zero — under `set -e` that would otherwise kill the script right
+  # here, before it ever reaches the get-pip.py self-heal below, forcing a
+  # second invocation to actually finish the job (verified: a real run
+  # needed to be run twice to produce a working venv without this).
+  "$system_python" -m venv --copies "$VENV_DIR" || true
 fi
 
 # On Python 3.14 + a UTF-8 filesystem, this venv's bin/ will also contain a
