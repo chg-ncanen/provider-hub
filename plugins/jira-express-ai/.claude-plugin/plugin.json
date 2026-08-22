@@ -19,12 +19,6 @@
       "description": "API token from https://id.atlassian.com/manage-profile/security/api-tokens",
       "required": true,
       "sensitive": true
-    },
-    "PDE_PROJECT_DIR": {
-      "type": "string",
-      "title": "PDE project directory",
-      "description": "Absolute path to the project root that contains tickets/ and the repo clones. The orchestrator and worker read this instead of relying on the invoking shell's working directory, so /jexpress:ticket-orchestrator works regardless of which directory it's run from.",
-      "required": true
     }
   }
 }
