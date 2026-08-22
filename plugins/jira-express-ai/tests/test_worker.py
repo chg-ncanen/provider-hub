@@ -671,6 +671,30 @@ class TestRunImplementation(TempDirTestCase):
         mock_blocked.assert_called_once()
         self.assertEqual(mock_blocked.call_args.args[2], "ticket-implementation")
 
+    def test_first_pass_relaunches_even_with_stale_sentinel_from_a_broken_prior_attempt(self) -> None:
+        # A prior attempt that reported done without producing
+        # implementation-notes.md (a bug in that specialist, not something
+        # expected in normal operation) must not make a retry skip
+        # relaunching and just repeat the same failure forever.
+        (self.ticket_dir / ".implementation-agent-done").touch()
+        (self.ticket_dir / "review-context.md").write_text("**PR URL:** https://x/7\n")
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker, "jira_comment"):
+            worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_called_once()
+        mock_transition.assert_called_once_with("PDE-1", "In Review", self.auth)
+
     def test_review_pass_runs_when_implementation_notes_already_exist(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
         (self.ticket_dir / "review-context.md").write_text("**PR:** #7\n**PR URL:** https://x/7\n")
@@ -706,19 +730,6 @@ class TestRunImplementation(TempDirTestCase):
         mock_fail.assert_called_once()
         self.assertIn("ticket-implementation did not complete within 900s", mock_fail.call_args.args[1])
         mock_transition.assert_not_called()
-
-    def test_first_pass_skips_relaunch_when_sentinel_exists_but_notes_still_missing(self) -> None:
-        # A prior attempt crashed after touching the sentinel but before
-        # actually writing implementation-notes.md — don't relaunch (the
-        # sentinel says done), but still fail rather than silently continue.
-        (self.ticket_dir / ".implementation-agent-done").touch()
-        with patch.object(worker, "launch_specialist") as mock_launch, \
-             patch.object(worker, "report_failure") as mock_fail:
-            worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
-
-        mock_launch.assert_not_called()
-        mock_fail.assert_called_once()
-        self.assertIn("implementation-notes.md is missing", mock_fail.call_args.args[1])
 
     def test_review_pass_timeout_reports_failure(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")

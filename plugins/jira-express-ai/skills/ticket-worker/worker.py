@@ -429,12 +429,20 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> Non
 
 
 def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth) -> None:
+    # Always run fresh — including the sentinel. A stale sentinel left over
+    # from a prior attempt that reported done without producing
+    # implementation-notes.md (a bug in that specialist, not something
+    # expected in normal operation) must not skip a retry and just repeat
+    # the same failure forever — see run_discovery()'s identical fix for
+    # the full reasoning. notes itself needs no unlinking here: this
+    # function only runs while notes.exists() is already False (see
+    # run_implementation()'s dispatch).
     sentinel = ticket_dir / ".implementation-agent-done"
-    if not sentinel.exists():
-        launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
-        if not wait_for_sentinel("ticket-implementation", sentinel):
-            report_failure(key, "ticket-implementation did not complete within 900s", auth)
-            return
+    sentinel.unlink(missing_ok=True)
+    launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
+    if not wait_for_sentinel("ticket-implementation", sentinel):
+        report_failure(key, "ticket-implementation did not complete within 900s", auth)
+        return
 
     if not notes.exists():
         report_failure(key, "ticket-implementation finished but implementation-notes.md is missing", auth)
