@@ -246,8 +246,60 @@ def repo_lock(repos_dir: Path, repo: str):
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
+def remove_worktrees(label: str, ticket_dir: Path, repos_dir: Path) -> None:
+    """Find and properly `git worktree remove` every git worktree directly
+    under ticket_dir, wherever it's called from.
+
+    This has to be more than "delete the directory": a worktree's `.git` is a
+    *file* pointing back at the shared main clone's `.git/worktrees/<name>/`
+    metadata — a plain directory delete (or an archive move, or the 7-day
+    purge's rmtree) never touches that shared metadata, leaving the main
+    clone with a dangling worktree registration pointing at a path that no
+    longer exists, forever, since nothing else in this design runs `git
+    worktree prune` on that main clone independently. `git worktree remove`
+    cleans up both sides in one step, so it's worth running unconditionally
+    on every subdirectory that actually looks like a worktree (a `.git`
+    *file*, not directory — a real repo clone's .git is a directory), not
+    just when review-context.md happens to name one.
+
+    Locked the same way ticket-implementation locks `git worktree add` —
+    removal touches the same shared metadata as creation, and a concurrent
+    add (some other ticket setting up on this same repo right now) can race
+    against it just the same.
+    """
+    if not ticket_dir.exists():
+        return
+    for entry in ticket_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        git_marker = entry / ".git"
+        if not git_marker.is_file():
+            continue  # not a worktree
+        repo = entry.name
+        main_clone = repos_dir / repo
+        if not main_clone.exists():
+            continue
+        try:
+            with repo_lock(repos_dir, repo):
+                subprocess.run(
+                    ["git", "-C", str(main_clone), "worktree", "remove", str(entry), "--force"],
+                    check=True, timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(main_clone), "worktree", "prune"],
+                    check=True, timeout=30,
+                )
+            log.info(f"{label}: removed worktree {entry}")
+        except Exception as e:
+            log.warning(f"{label}: failed to remove worktree {entry} — {e}")
+
+
 def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
-    """Close open PR, delete branch, and remove git worktree if review-context.md exists."""
+    """Remove any git worktree(s), and close the open PR + delete the branch
+    if review-context.md exists (it's needed for the PR number/branch name;
+    worktree removal itself doesn't depend on it)."""
+    remove_worktrees(key, ticket_dir, repos_dir)
+
     review_context = ticket_dir / "review-context.md"
     if not review_context.exists():
         return
@@ -265,28 +317,6 @@ def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
     pr_number = pr_match.group(1)
     repo = repo_match.group(1)
     branch = branch_match.group(1) if branch_match else None
-
-    # Remove git worktree (ticket's isolated checkout). Locked the same way
-    # ticket-implementation locks `git worktree add` — removal touches the
-    # same shared .git/worktrees/ metadata as creation, and a concurrent add
-    # (some other ticket setting up on this same repo right now) can race
-    # against it just the same.
-    worktree_path = ticket_dir / repo
-    main_clone = repos_dir / repo
-    if worktree_path.exists() and main_clone.exists():
-        try:
-            with repo_lock(repos_dir, repo):
-                subprocess.run(
-                    ["git", "-C", str(main_clone), "worktree", "remove", str(worktree_path), "--force"],
-                    check=True, timeout=30,
-                )
-                subprocess.run(
-                    ["git", "-C", str(main_clone), "worktree", "prune"],
-                    check=True, timeout=30,
-                )
-            log.info(f"{key}: removed worktree {worktree_path}")
-        except Exception as e:
-            log.warning(f"{key}: failed to remove worktree — {e}")
 
     try:
         result = subprocess.run(
@@ -360,12 +390,19 @@ def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], re
                 # for every ticket this run, every run, forever.
                 log.error(f"{key}: failed to archive — {e}", exc_info=True)
 
-    # Purge archives older than ARCHIVE_MAX_DAYS
+    # Purge archives older than ARCHIVE_MAX_DAYS. archive_ticket() already
+    # removes any worktree properly (via remove_worktrees(), unconditionally,
+    # not just when review-context.md exists) before moving a ticket here —
+    # this is a defensive fallback for whatever slips past that anyway (a
+    # transient git failure at archive time, or an archive folder left over
+    # from before that fix existed), so a plain rmtree here doesn't leave the
+    # shared main clone with a dangling worktree registration.
     if archive_dir.exists():
         cutoff = time.time() - (ARCHIVE_MAX_DAYS * 86400)
         for folder in archive_dir.iterdir():
             try:
                 if folder.is_dir() and folder.stat().st_mtime < cutoff:
+                    remove_worktrees(folder.name, folder, repos_dir)
                     shutil.rmtree(folder)
                     log.info(f"{folder.name}: purged archive (>{ARCHIVE_MAX_DAYS} days old)")
             except Exception as e:

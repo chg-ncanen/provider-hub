@@ -276,6 +276,7 @@ done
 
 if [ ! -f "<SENTINEL>" ]; then
   echo "[worker] TIMEOUT: <SKILL> did not complete within ${MAX_WAIT}s"
+  # Report it — see "Reporting a failure" below, not just a local log line.
   exit 1
 fi
 ```
@@ -307,6 +308,58 @@ If `STATUS == BLOCKED`:
 4. Log it: `echo "[<stage>] BLOCKED: <short reason>"`
 5. Exit — do not continue the path.
 
+This is a specialist *deliberately* saying it can't proceed — always escalate
+immediately, on the first occurrence. Contrast with "Reporting a failure"
+below, for cases nobody decided anything about — a timeout, a crashed
+validation — where retrying automatically is worth trying a couple of times
+before giving up.
+
+---
+
+## Reporting a failure (timeouts, crashed validation)
+
+Unlike `BLOCKED` above, a sub-agent timing out or a validation check failing
+(a required artifact missing or empty after a sub-agent claimed to finish)
+isn't a deliberate signal — it's just something that didn't work, and it
+might not happen again on retry. So: comment and keep the ticket exactly
+where it is (**no Jira transition**) for the first two occurrences, letting
+the next orchestrator run resume and retry automatically — same principle as
+`PENDING` in the merge path. Only escalate to `Blocked` once the *same kind
+of thing* has now failed three times in a row with no progress in between,
+since at that point retrying again isn't going to help without a human
+looking at it.
+
+Every place that hits a timeout or a crashed validation check runs this
+instead of just logging locally and exiting:
+
+1. **Post a comment marking the failure** — always prefixed `🤖 ⚠️`, not just
+   `🤖`, so it's distinguishable from a normal progress comment when counting
+   below:
+   ```
+   🤖 ⚠️ <KEY>: <short reason, e.g. "ticket-implementation did not complete
+   within 900s"> — will retry automatically.
+   ```
+
+2. **Count how many of the most recent comments are consecutive failures.**
+   Fetch recent comments (the same Jira read already used elsewhere), take
+   them most-recent-first, and count starting from the one just posted: how
+   many *in a row* start with `🤖 ⚠️`, stopping at the first comment that
+   doesn't (a normal `🤖` progress comment, or a human comment) — that's a
+   sign of real progress since the last failure, so don't count past it.
+
+3. **If that count reaches 3:** this stage has now failed three times with
+   nothing in between — transition to Blocked (ID: 21), post one more comment:
+   ```
+   🤖 <KEY> has failed 3 times in a row with no progress — stopping automatic
+   retries. See the recent comments above and session.log for details.
+   ```
+   then exit. `Blocked` isn't in the orchestrator's actionable set, so this
+   ticket won't be retried again until a human moves it.
+
+4. **Otherwise** (1st or 2nd occurrence): log it locally and exit normally,
+   with **no Jira transition**. The ticket stays exactly where it is; the
+   next orchestrator run resumes this worker and retries the same stage.
+
 ---
 
 ## Path: Discovery (To Do or In Discovery)
@@ -324,7 +377,7 @@ If `STATUS == BLOCKED`:
    - Sentinel: `.discovery-agent-done`
    - Log: `discovery-agent.log`
 
-4. **Check status** in `discovery.md`. If `BLOCKED` → apply blocked routing (see above). Otherwise validate it is non-empty; if missing, log the error and exit non-zero.
+4. **Check status** in `discovery.md`. If `BLOCKED` → apply blocked routing (see above). Otherwise validate it is non-empty; if missing, report the failure (see "Reporting a failure" below) and exit.
 
 5. **Transition to QA Review** (ID: 301).
 
@@ -353,14 +406,14 @@ First, check whether implementation has already been done:
    - Sentinel: `.implementation-agent-done`
    - Log: `implementation-agent.log`
 
-2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, log the error and exit non-zero.
+2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, report the failure (see "Reporting a failure" below) and exit.
 
 3. **Validate `review-context.md` exists.** The implementation agent writes this
    itself now — it's the only one with direct knowledge of which repo(s) and
    branch(es) it actually touched, which `implementation-notes.md`'s prose
    isn't a reliable way to hand off. If it's missing after a non-`BLOCKED` run,
    that's a bug in the implementation agent, not something to work around
-   here — log the error and exit non-zero.
+   here — report the failure (see "Reporting a failure" below) and exit.
 
 4. **Read the PR URL from `review-context.md`** for the comment below:
    ```bash
@@ -394,7 +447,7 @@ First, check whether implementation has already been done:
    - Sentinel: `.review-agent-done`
    - Log: `review-agent.log`
 
-3. **Check status** in `review-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, log the error and exit non-zero.
+3. **Check status** in `review-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, report the failure (see "Reporting a failure" below) and exit.
 
 4. **Transition to In Review** (ID: 291).
 
@@ -418,7 +471,7 @@ First, check whether implementation has already been done:
    - Sentinel: `.merge-agent-done`
    - Log: `merge-agent.log`
 
-3. **Validate** `merge-notes.md` exists. If missing, log the error and exit non-zero.
+3. **Validate** `merge-notes.md` exists. If missing, report the failure (see "Reporting a failure" below) and exit.
 
 4. **Read `merge-notes.md`** status and route:
 

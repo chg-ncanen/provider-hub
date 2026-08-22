@@ -41,7 +41,11 @@ one behavioral difference that conversion introduced.
 
 Every sub-agent signals completion with a sentinel file (`.discovery-agent-done`, etc.) and has a
 `BLOCKED` path for anything requiring human judgment — the worker transitions the ticket to
-`Blocked` and posts a comment rather than guessing.
+`Blocked` and posts a comment rather than guessing. A sub-agent timeout or a crashed validation
+check (not a deliberate `BLOCKED`, just something that didn't work) instead posts a `🤖 ⚠️`-marked
+comment and leaves the ticket where it is for the first two occurrences, letting the next
+orchestrator run retry automatically — only escalating to `Blocked` on the third consecutive
+failure with no progress in between. All comments this plugin posts start with 🤖.
 
 ## Ticket status → action
 
