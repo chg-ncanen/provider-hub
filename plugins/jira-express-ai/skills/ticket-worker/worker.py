@@ -248,10 +248,13 @@ def get_recent_comments_text(key: str, auth, limit: int = 20) -> list[str]:
 
 # ── Artifact parsing ──────────────────────────────────────────────────────────
 
-def extract_status(artifact_path: Path) -> str:
-    content = artifact_path.read_text()
+def _extract_status_text(content: str) -> str:
     m = re.search(r"^\*\*Status:\*\*\s*(\w+)", content, re.MULTILINE)
     return m.group(1).upper() if m else "UNKNOWN"
+
+
+def extract_status(artifact_path: Path) -> str:
+    return _extract_status_text(artifact_path.read_text())
 
 
 def extract_bold_field(content: str, name: str) -> str:
@@ -262,6 +265,34 @@ def extract_bold_field(content: str, name: str) -> str:
 def extract_section(content: str, heading: str) -> str:
     m = re.search(rf"##\s*{re.escape(heading)}\s*\n+(.*?)(?:\n##|\Z)", content, re.DOTALL)
     return m.group(1).strip() if m else ""
+
+
+def build_qa_review_comment(key: str, artifact: Path) -> str:
+    """QA Review handoff comment, shared by the end of the discovery path
+    and by a resumed re-entry into the QA Review gate — so both stay in
+    sync automatically. Leads with the action needed (a reviewer who reads
+    only the first line still knows what to do), then a short summary
+    pulled straight from discovery.md, then a pointer to the full file.
+    Action line varies: discovery can recommend closing outright
+    (NO_CHANGES_NEEDED) instead of the default hand-off to implementation."""
+    content = artifact.read_text()
+    status = _extract_status_text(content)
+    summary = extract_section(content, "Summary") or "(no summary found in discovery.md)"
+
+    if status == "NO_CHANGES_NEEDED":
+        action = (
+            f"🤖 {key}: discovery found no code changes are needed — recommends closing this ticket.\n"
+            f"• Approve: move to Done\n"
+            f"• Reject: move back to In Discovery with a comment explaining what to revisit"
+        )
+    else:
+        action = (
+            f"🤖 {key}: discovery is complete and ready for review.\n"
+            f"• Approve: move to In Progress\n"
+            f"• Reject: move back to In Discovery with a comment explaining what to revisit"
+        )
+
+    return f"{action}\n\nSummary: {summary}\n\nSee discovery.md for full findings."
 
 # ── Sub-agent launch ──────────────────────────────────────────────────────────
 
@@ -408,13 +439,7 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         return
 
     jira_transition(key, "QA Review", auth)
-    jira_comment(
-        key,
-        f"🤖 Discovery complete for {key}. Please review discovery.md and either:\n"
-        f"• Approve: move to In Progress\n"
-        f"• Reject: move back to In Discovery with a comment explaining what to revisit",
-        auth,
-    )
+    jira_comment(key, build_qa_review_comment(key, artifact), auth)
     log.info(f"{key}: waiting for QA review")
 
 
@@ -547,16 +572,13 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         report_failure(key, f"ticket-merge returned unrecognized status '{status}'", auth)
 
 
-def run_qa_review_gate(key: str, auth) -> None:
+def run_qa_review_gate(key: str, ticket_dir: Path, auth) -> None:
     """Human gate, resumed directly into QA Review — re-post the same
-    handoff comment as the end of the discovery path."""
-    jira_comment(
-        key,
-        f"🤖 Discovery complete for {key}. Please review discovery.md and either:\n"
-        f"• Approve: move to In Progress\n"
-        f"• Reject: move back to In Discovery with a comment explaining what to revisit",
-        auth,
-    )
+    handoff comment as the end of the discovery path. discovery.md is
+    guaranteed to exist here: reaching this status already passed
+    sanity_check_and_rewind()'s stage-completion check."""
+    artifact = ticket_dir / "discovery.md"
+    jira_comment(key, build_qa_review_comment(key, artifact), auth)
     log.info(f"{key}: re-posted QA Review comment, waiting")
 
 
@@ -634,7 +656,7 @@ def main() -> None:
     if status == "In Discovery":
         run_discovery(key, ticket_dir, repos_dir, auth)
     elif status == "QA Review":
-        run_qa_review_gate(key, auth)
+        run_qa_review_gate(key, ticket_dir, auth)
     elif status == "In Progress":
         run_implementation(key, ticket_dir, repos_dir, auth)
     elif status == "In Review":

@@ -131,6 +131,7 @@ any prior version from Step 0 in full — not appending to it:
 
 **Ticket:** <summary>
 **Date:** <ISO date>
+**Status:** READY
 
 ## Summary
 
@@ -156,6 +157,16 @@ any prior version from Step 0 in full — not appending to it:
 ### Human Guidance Incorporated
 <any feedback from Jira comments that shaped this discovery>
 ```
+
+Set `**Status:**` to `NO_CHANGES_NEEDED` instead of `READY` when your research
+concludes this ticket requires no code change at all — e.g. the vulnerable
+version named in the ticket isn't actually present, or the behavior described
+is already correct. The worker reads this field to change what it tells the
+reviewer at the QA Review gate (approve straight to Done instead of handing
+off to implementation), since implementation cannot manufacture a meaningful
+PR from a no-op. Keep the rest of the template the same either way — the
+Summary and Proposed Approach are what justify the recommendation, and
+`Proposed Approach` should say plainly that no implementation step applies.
 
 ### Step 4 — Signal completion
 
@@ -202,6 +213,8 @@ echo "[discovery-agent] BLOCKED — discovery.md written with blocker details"
 ## Rules
 
 - Write `discovery.md` and `.discovery-agent-done` — those are your only outputs.
+- Always include `**Status:**` — `READY` (normal), `NO_CHANGES_NEEDED` (research
+  shows no code change is required), or `BLOCKED` (see below).
 - Do not transition any Jira ticket.
 - Do not modify any source files.
 - If you cannot find relevant code, document that in discovery.md and still complete — missing code is not a blocker.
