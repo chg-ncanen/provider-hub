@@ -26,7 +26,9 @@ one behavioral difference that conversion introduced.
   `.session.state` purely for its own use (the orchestrator never reads or writes it).
 - **`skills/ticket-discovery/`** — sub-agent: researches the ticket, writes `discovery.md`.
 - **`skills/ticket-implementation/`** — sub-agent: implements `discovery.md`'s plan in an isolated
-  git worktree, writes `implementation-notes.md`.
+  git worktree, pushes the branch and opens the PR itself (it's the only one with direct
+  knowledge of which repo/branch it actually touched), writes `implementation-notes.md` and
+  `review-context.md`.
 - **`skills/ticket-review/`** — sub-agent: replies to open PR review comments, pushes fixes if
   needed, writes `review-notes.md`.
 - **`skills/ticket-merge/`** — sub-agent: checks CI/approval gates, merges the PR, monitors

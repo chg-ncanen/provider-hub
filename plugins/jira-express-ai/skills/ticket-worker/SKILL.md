@@ -312,39 +312,21 @@ First, check whether implementation has already been done:
 
 2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing exit with `status: crashed`.
 
-3. **Create the PR** (worker does this, not the implementation agent):
-   Read `implementation-notes.md` to find the repo name. Then, from the ticket's
-   own **worktree** — `$TICKET_DIR/<repo-name>`, not `$REPOS_DIR/<repo-name>` —
-   since that's where `ticket-implementation` actually created the feature
-   branch and committed to it; the shared clone under `$REPOS_DIR` stays on
-   `main` by design (see `ticket-implementation/SKILL.md`'s worktree-isolation
-   section). Reading the branch from `$REPOS_DIR` instead would report `main`
-   and produce a PR with head==base:
+3. **Validate `review-context.md` exists.** The implementation agent writes this
+   itself now — it's the only one with direct knowledge of which repo(s) and
+   branch(es) it actually touched, which `implementation-notes.md`'s prose
+   isn't a reliable way to hand off. If it's missing after a non-`BLOCKED` run,
+   that's a bug in the implementation agent, not something to work around
+   here — exit with `status: crashed`.
+
+4. **Read the PR URL from `review-context.md`** for the comment below:
    ```bash
-   cd $TICKET_DIR/<repo-name>
-   BRANCH=$(git branch --show-current)
-   git push origin HEAD 2>/dev/null || true
-   EXISTING_PR=$(gh pr list --head "$BRANCH" --json number --jq '.[0].number' 2>/dev/null)
-   if [ -z "$EXISTING_PR" ]; then
-     PR_URL=$(gh pr create \
-       --title "PDE: $KEY — <summary from implementation-notes.md>" \
-       --body "$(cat $TICKET_DIR/implementation-notes.md)" \
-       --base main)
-     PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-   else
-     PR_NUMBER=$EXISTING_PR
-     PR_URL=$(gh pr view $PR_NUMBER --json url --jq '.url')
-   fi
-   ```
-
-4. **Write `review-context.md`** so the merge agent can find the PR:
-   ```markdown
-   # Review Context
-
-   **PR:** #<number>
-   **PR URL:** <url>
-   **Repo:** <repo-name>
-   **Branch:** <branch>
+   PR_URL=$(python3 -c "
+   import re
+   content = open('review-context.md').read()
+   m = re.search(r'\*\*PR URL:\*\* (.+)', content)
+   print(m.group(1).strip() if m else '')
+   ")
    ```
 
 5. **Transition to In Review** (ID: 291).
