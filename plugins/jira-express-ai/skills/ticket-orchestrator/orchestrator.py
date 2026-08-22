@@ -21,6 +21,7 @@ Optional env vars:
                            script's sibling skill files regardless of cwd.
 """
 
+import contextlib
 import fcntl
 import logging
 import os
@@ -223,6 +224,26 @@ def try_acquire_lock(ticket_dir: Path):
         return None
     return fh
 
+@contextlib.contextmanager
+def repo_lock(repos_dir: Path, repo: str):
+    """Hold the same per-repo flock ticket-implementation/SKILL.md takes
+    around `git worktree add` (see its "Repo setup" section) — at the same
+    path, $REPOS_DIR/.repo-locks/<repo>.lock — around any other operation
+    that touches that repo's shared .git/worktrees/ metadata. `git worktree
+    remove`/`prune` (below) is exactly such an operation: it's easy to assume
+    only *creating* a worktree touches shared state, but removing one does
+    too, and a concurrent add+remove on the same repo can race on it just
+    the same. Blocks and waits rather than skipping if held — unlike the
+    per-ticket worker lock, this isn't optional to act on, just brief."""
+    lock_dir = repos_dir / ".repo-locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir / f"{repo}.lock", "a+") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
 def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
@@ -245,19 +266,24 @@ def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
     repo = repo_match.group(1)
     branch = branch_match.group(1) if branch_match else None
 
-    # Remove git worktree (ticket's isolated checkout)
+    # Remove git worktree (ticket's isolated checkout). Locked the same way
+    # ticket-implementation locks `git worktree add` — removal touches the
+    # same shared .git/worktrees/ metadata as creation, and a concurrent add
+    # (some other ticket setting up on this same repo right now) can race
+    # against it just the same.
     worktree_path = ticket_dir / repo
     main_clone = repos_dir / repo
     if worktree_path.exists() and main_clone.exists():
         try:
-            subprocess.run(
-                ["git", "-C", str(main_clone), "worktree", "remove", str(worktree_path), "--force"],
-                check=True, timeout=30,
-            )
-            subprocess.run(
-                ["git", "-C", str(main_clone), "worktree", "prune"],
-                check=True, timeout=30,
-            )
+            with repo_lock(repos_dir, repo):
+                subprocess.run(
+                    ["git", "-C", str(main_clone), "worktree", "remove", str(worktree_path), "--force"],
+                    check=True, timeout=30,
+                )
+                subprocess.run(
+                    ["git", "-C", str(main_clone), "worktree", "prune"],
+                    check=True, timeout=30,
+                )
             log.info(f"{key}: removed worktree {worktree_path}")
         except Exception as e:
             log.warning(f"{key}: failed to remove worktree — {e}")
