@@ -15,6 +15,14 @@ Usage:
 
 Required env vars: ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN (same
 CLAUDE_PLUGIN_OPTION_* fallback as ticket-orchestrator/orchestrator.py).
+
+Optional env vars:
+    AGENT_CHILD_LOG_DIR   If set, specialist session logs are collected here
+                          (named after their session name) instead of inside
+                          this ticket's own directory — see
+                          launch_specialist(). Resolved to an absolute path
+                          and re-exported at startup so it means the same
+                          location regardless of this process's own cwd.
 """
 
 import logging
@@ -97,6 +105,20 @@ def _auth() -> tuple[str, str]:
         log.error("ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN must be set (directly, or via this plugin's userConfig)")
         sys.exit(1)
     return (email, token)
+
+
+def _normalize_agent_child_log_dir() -> None:
+    """Resolve AGENT_CHILD_LOG_DIR to an absolute path and re-export it. A
+    relative value would otherwise resolve against whichever process reads
+    it — this worker's own cwd (tickets/<KEY>/) already differs from the
+    orchestrator's, so the same relative string would silently land in two
+    different directories, defeating centralized log collection with no
+    warning. Idempotent (resolving an already-absolute path is a no-op), so
+    this is safe to call whether or not the orchestrator already did it
+    before launching — including when worker.py is run standalone."""
+    value = os.environ.get("AGENT_CHILD_LOG_DIR")
+    if value:
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).resolve())
 
 
 def read_status(key: str, auth) -> str:
@@ -182,7 +204,7 @@ def extract_section(content: str, heading: str) -> str:
 
 # ── Sub-agent launch ──────────────────────────────────────────────────────────
 
-def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path) -> None:
+def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     """Launch a one-shot specialist session. Never resumed across separate
     launches, so --name is a cosmetic display label only (prompt box,
     /resume picker, terminal title) — no --session-id/--resume needed, and
@@ -198,8 +220,16 @@ def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path) -> None:
     orchestrator.py's launch_session() uses for the worker's own log."""
     agent_name = f"{ticket_dir.name}-{skill}"
     log_dir = Path(os.environ.get("AGENT_CHILD_LOG_DIR") or ticket_dir)
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_dir / f"{agent_name}.log", "a")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_dir / f"{agent_name}.log", "a")
+    except OSError as e:
+        # A misconfigured AGENT_CHILD_LOG_DIR (unwritable, or a path that's
+        # already a plain file) must not crash this session with a bare
+        # traceback and no Jira trail — every other failure in this script
+        # goes through report_failure() so a human always sees something.
+        report_failure(ticket_dir.name, f"could not prepare a log file for {skill} at {log_dir} ({e})", auth)
+        return  # unreachable — report_failure() always exits
     proc = subprocess.Popen(
         ["claude", f"--name={agent_name}",
          "--permission-mode=bypassPermissions",
@@ -291,7 +321,7 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
 
     if not sentinel.exists():
         artifact.unlink(missing_ok=True)  # ensure the specialist starts fresh
-        launch_specialist("ticket-discovery", ticket_dir, repos_dir)
+        launch_specialist("ticket-discovery", ticket_dir, repos_dir, auth)
         if not wait_for_sentinel("ticket-discovery", sentinel):
             report_failure(key, "ticket-discovery did not complete within 900s", auth)
             return
@@ -328,7 +358,7 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> Non
 def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth) -> None:
     sentinel = ticket_dir / ".implementation-agent-done"
     if not sentinel.exists():
-        launch_specialist("ticket-implementation", ticket_dir, repos_dir)
+        launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
         if not wait_for_sentinel("ticket-implementation", sentinel):
             report_failure(key, "ticket-implementation did not complete within 900s", auth)
             return
@@ -374,7 +404,7 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
     notes.unlink(missing_ok=True)
     sentinel.unlink(missing_ok=True)
 
-    launch_specialist("ticket-review", ticket_dir, repos_dir)
+    launch_specialist("ticket-review", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-review", sentinel):
         report_failure(key, "ticket-review did not complete within 900s", auth)
         return
@@ -405,7 +435,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     notes.unlink(missing_ok=True)  # always run fresh
     sentinel.unlink(missing_ok=True)
 
-    launch_specialist("ticket-merge", ticket_dir, repos_dir)
+    launch_specialist("ticket-merge", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-merge", sentinel):
         report_failure(key, "ticket-merge did not complete within 900s", auth)
         return
@@ -506,6 +536,7 @@ def main() -> None:
     ticket_dir = Path.cwd()
     key = ticket_dir.name
     auth = _auth()
+    _normalize_agent_child_log_dir()
 
     log.info(f"Session started for {key}")
 

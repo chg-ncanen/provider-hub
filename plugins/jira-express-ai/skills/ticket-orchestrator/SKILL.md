@@ -239,6 +239,12 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    real input, so no context file is needed to hand it over:
    ```bash
    REPOS_DIR="$(pwd)"
+   # The real Python implementation creates this directory first
+   # (log_dir.mkdir(parents=True, exist_ok=True)) — without it, a
+   # not-yet-existing AGENT_CHILD_LOG_DIR would make the redirect below fail
+   # with "No such file or directory" inside this backgrounded subshell,
+   # silently.
+   mkdir -p "${AGENT_CHILD_LOG_DIR:-$TICKET_DIR}"
    # $! must be read inside the same subshell that backgrounds the process —
    # capturing it via `echo $!` in a command substitution, not outside a
    # plain (...) group, which would already have exited by the time $! is read.

@@ -321,7 +321,7 @@ class TestLaunchSpecialist(TempDirTestCase):
     def test_builds_expected_command(self) -> None:
         with patch.object(worker.subprocess, "Popen") as mock_popen:
             mock_popen.return_value.pid = 4242
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
 
         args, kwargs = mock_popen.call_args
         cmd = args[0]
@@ -334,7 +334,7 @@ class TestLaunchSpecialist(TempDirTestCase):
     def test_logs_to_ticket_dir_by_default(self) -> None:
         with patch.object(worker.subprocess, "Popen") as mock_popen:
             mock_popen.return_value.pid = 4242
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
         log_file = mock_popen.call_args.kwargs["stdout"]
         expected_name = f"{self.ticket_dir.name}-ticket-discovery.log"
         self.assertEqual(Path(log_file.name), self.ticket_dir / expected_name)
@@ -347,7 +347,7 @@ class TestLaunchSpecialist(TempDirTestCase):
         os.environ["AGENT_CHILD_LOG_DIR"] = str(external_dir)
         with patch.object(worker.subprocess, "Popen") as mock_popen:
             mock_popen.return_value.pid = 4242
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
         log_file = mock_popen.call_args.kwargs["stdout"]
         expected_name = f"{self.ticket_dir.name}-ticket-discovery.log"
         self.assertEqual(Path(log_file.name), external_dir / expected_name)
@@ -361,19 +361,61 @@ class TestLaunchSpecialist(TempDirTestCase):
         os.environ["AGENT_CHILD_LOG_DIR"] = str(external_dir)
         with patch.object(worker.subprocess, "Popen") as mock_popen:
             mock_popen.return_value.pid = 1
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
             first_name = mock_popen.call_args.args[0][1]  # "--name=..."
             mock_popen.return_value.pid = 2
-            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir)
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
             second_name = mock_popen.call_args.args[0][1]
         self.assertEqual(first_name, second_name)
+
+    def test_logging_setup_failure_reports_failure_instead_of_crashing(self) -> None:
+        # A misconfigured AGENT_CHILD_LOG_DIR (here: a path that already
+        # exists as a plain file, so mkdir(exist_ok=True) still raises) must
+        # not crash this session with a bare traceback and no Jira trail.
+        blocked_path = self.ticket_dir / "blocked-log-dir"
+        blocked_path.write_text("I'm a file, not a directory")
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(blocked_path)
+
+        with patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.subprocess, "Popen") as mock_popen:
+            worker.launch_specialist("ticket-discovery", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_fail.assert_called_once()
+        self.assertEqual(mock_fail.call_args.args[0], self.ticket_dir.name)
+        self.assertIn("ticket-discovery", mock_fail.call_args.args[1])
+        mock_popen.assert_not_called()  # never got far enough to actually launch anything
+
+
+class TestNormalizeAgentChildLogDir(unittest.TestCase):
+    def setUp(self) -> None:
+        self._saved = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def tearDown(self) -> None:
+        if self._saved is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved
+        else:
+            os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def test_noop_when_unset(self) -> None:
+        worker._normalize_agent_child_log_dir()
+        self.assertNotIn("AGENT_CHILD_LOG_DIR", os.environ)
+
+    def test_resolves_relative_path_to_absolute(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "some-relative-dir"
+        worker._normalize_agent_child_log_dir()
+        self.assertTrue(Path(os.environ["AGENT_CHILD_LOG_DIR"]).is_absolute())
+
+    def test_idempotent_on_already_absolute_path(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "/tmp/already-absolute"
+        worker._normalize_agent_child_log_dir()
+        self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/already-absolute")
 
 
 class TestRunDiscovery(TempDirTestCase):
     def test_launches_when_sentinel_missing_and_transitions_on_success(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
 
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             artifact.write_text("**Status:** OK\n**Date:** 2026-01-01\n")
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
@@ -440,7 +482,7 @@ class TestRunImplementation(TempDirTestCase):
     def test_first_pass_success_transitions_to_in_review_with_pr_url(self) -> None:
         (self.ticket_dir / "review-context.md").write_text("**PR:** #7\n**PR URL:** https://x/7\n")
 
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             self.assertEqual(skill, "ticket-implementation")
             (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
 
@@ -460,7 +502,7 @@ class TestRunImplementation(TempDirTestCase):
     def test_first_pass_missing_review_context_reports_failure(self) -> None:
         # No review-context.md written — the specialist claims done but
         # didn't produce the artifact run_implementation actually needs.
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
@@ -478,7 +520,7 @@ class TestRunImplementation(TempDirTestCase):
         mock_transition.assert_not_called()
 
     def test_first_pass_blocked(self) -> None:
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             (ticket_dir / "implementation-notes.md").write_text(
                 "**Status:** BLOCKED\n\n## Blocker\n\nno access\n"
             )
@@ -501,7 +543,7 @@ class TestRunImplementation(TempDirTestCase):
         (self.ticket_dir / "review-notes.md").write_text("stale")
         (self.ticket_dir / ".review-agent-done").touch()
 
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             self.assertEqual(skill, "ticket-review")
             (ticket_dir / "review-notes.md").write_text("**Status:** OK\n")
 
@@ -560,7 +602,7 @@ class TestRunImplementation(TempDirTestCase):
 
 class TestRunMerge(TempDirTestCase):
     def _run(self, notes_content):
-        def fake_launch(skill, ticket_dir, repos_dir):
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
             (ticket_dir / "merge-notes.md").write_text(notes_content)
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):

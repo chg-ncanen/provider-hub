@@ -241,6 +241,17 @@ class TestCloseRemoteArtifacts(TempDirTestCase):
 
 
 class TestArchiveTicket(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved_log_dir = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def tearDown(self) -> None:
+        if self._saved_log_dir is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved_log_dir
+        else:
+            os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+        super().tearDown()
+
     def test_moves_directory_and_avoids_collisions(self) -> None:
         ticket_dir = self.tmp_path / "tickets" / "PDE-1"
         ticket_dir.mkdir(parents=True)
@@ -257,6 +268,107 @@ class TestArchiveTicket(TempDirTestCase):
         mock_close.assert_called_once()
         self.assertFalse(ticket_dir.exists())
         self.assertTrue((archive_dir / f"PDE-1-{date.today()}-1").exists())
+
+    def test_moves_external_logs_into_the_archive_folder_too(self) -> None:
+        ticket_dir = self.tmp_path / "tickets" / "PDE-1"
+        ticket_dir.mkdir(parents=True)
+        archive_dir = self.tmp_path / "tickets" / "archive"
+        archive_dir.mkdir(parents=True)
+        log_dir = self.tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "PDE-1.log").write_text("worker log")
+        (log_dir / "PDE-1-ticket-discovery.log").write_text("specialist log")
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(log_dir)
+
+        with patch.object(orchestrator, "close_remote_artifacts"):
+            orchestrator.archive_ticket("PDE-1", ticket_dir, archive_dir, self.tmp_path / "repos")
+
+        from datetime import date
+        dest = archive_dir / f"PDE-1-{date.today()}"
+        # Moved, not deleted — they persist until this archive folder itself
+        # is purged (see cleanup_pass), same lifetime as every other artifact.
+        self.assertEqual((dest / "PDE-1.log").read_text(), "worker log")
+        self.assertEqual((dest / "PDE-1-ticket-discovery.log").read_text(), "specialist log")
+        self.assertFalse((log_dir / "PDE-1.log").exists())
+
+
+class TestMoveExternalLogs(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved_log_dir = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+        self.dest = self.tmp_path / "dest"
+        self.dest.mkdir()
+
+    def tearDown(self) -> None:
+        if self._saved_log_dir is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved_log_dir
+        else:
+            os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+        super().tearDown()
+
+    def test_noop_when_env_var_unset(self) -> None:
+        orchestrator.move_external_logs("PDE-1", self.dest)  # must not raise
+        self.assertEqual(list(self.dest.iterdir()), [])
+
+    def test_noop_when_log_dir_does_not_exist(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(self.tmp_path / "does-not-exist")
+        orchestrator.move_external_logs("PDE-1", self.dest)  # must not raise
+
+    def test_moves_worker_and_specialist_logs(self) -> None:
+        log_dir = self.tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "PDE-1.log").write_text("worker log")
+        (log_dir / "PDE-1-ticket-discovery.log").write_text("specialist log")
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(log_dir)
+
+        orchestrator.move_external_logs("PDE-1", self.dest)
+
+        self.assertEqual((self.dest / "PDE-1.log").read_text(), "worker log")
+        self.assertEqual((self.dest / "PDE-1-ticket-discovery.log").read_text(), "specialist log")
+        self.assertFalse((log_dir / "PDE-1.log").exists())
+        self.assertFalse((log_dir / "PDE-1-ticket-discovery.log").exists())
+
+    def test_does_not_touch_other_tickets_with_a_shared_prefix(self) -> None:
+        # "PDE-1" is a literal string prefix of "PDE-10"/"PDE-100" — moving
+        # PDE-1's logs must not sweep up either of theirs.
+        log_dir = self.tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "PDE-1.log").write_text("PDE-1")
+        (log_dir / "PDE-10.log").write_text("PDE-10")
+        (log_dir / "PDE-10-ticket-discovery.log").write_text("PDE-10 specialist")
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(log_dir)
+
+        orchestrator.move_external_logs("PDE-1", self.dest)
+
+        self.assertFalse((self.dest / "PDE-10.log").exists())
+        self.assertFalse((self.dest / "PDE-10-ticket-discovery.log").exists())
+        self.assertTrue((log_dir / "PDE-10.log").exists())
+        self.assertTrue((log_dir / "PDE-10-ticket-discovery.log").exists())
+
+
+class TestNormalizeAgentChildLogDir(unittest.TestCase):
+    def setUp(self) -> None:
+        self._saved = os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def tearDown(self) -> None:
+        if self._saved is not None:
+            os.environ["AGENT_CHILD_LOG_DIR"] = self._saved
+        else:
+            os.environ.pop("AGENT_CHILD_LOG_DIR", None)
+
+    def test_noop_when_unset(self) -> None:
+        orchestrator._normalize_agent_child_log_dir()
+        self.assertNotIn("AGENT_CHILD_LOG_DIR", os.environ)
+
+    def test_resolves_relative_path_to_absolute(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "some-relative-dir"
+        orchestrator._normalize_agent_child_log_dir()
+        self.assertTrue(Path(os.environ["AGENT_CHILD_LOG_DIR"]).is_absolute())
+
+    def test_idempotent_on_already_absolute_path(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "/tmp/already-absolute"
+        orchestrator._normalize_agent_child_log_dir()
+        self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/already-absolute")
 
 
 class TestCleanupPass(TempDirTestCase):

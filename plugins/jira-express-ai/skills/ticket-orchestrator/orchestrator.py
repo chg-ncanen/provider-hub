@@ -19,6 +19,13 @@ Optional env vars:
     CLAUDE_PLUGIN_ROOT    This plugin's install location (set automatically by
                            Claude Code / Copilot CLI). Used to find this
                            script's sibling skill files regardless of cwd.
+    AGENT_CHILD_LOG_DIR   If set, worker session logs are collected here
+                           (named after their session name) instead of
+                           inside tickets/<KEY>/ — see launch_session().
+                           Resolved to an absolute path and re-exported at
+                           startup so every subprocess (including whatever
+                           a launched worker spawns) agrees on the same
+                           location regardless of its own cwd.
 """
 
 import fcntl
@@ -119,6 +126,20 @@ def _auth() -> tuple[str, str]:
     os.environ["ATLASSIAN_EMAIL"] = email
     os.environ["ATLASSIAN_API_TOKEN"] = token
     return (email, token)
+
+
+def _normalize_agent_child_log_dir() -> None:
+    """Resolve AGENT_CHILD_LOG_DIR to an absolute path and re-export it. A
+    relative value would otherwise resolve against whichever process reads
+    it — this orchestrator's own cwd differs from a launched worker's
+    (tickets/<KEY>/), so the same relative string would silently land in two
+    different directories, defeating centralized log collection with no
+    warning. Idempotent (resolving an already-absolute path is a no-op).
+    worker.py does the identical thing for its own specialist launches — see
+    its _normalize_agent_child_log_dir()."""
+    value = os.environ.get("AGENT_CHILD_LOG_DIR")
+    if value:
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).resolve())
 
 
 def _jira_get(path: str, auth, **params) -> dict:
@@ -365,6 +386,37 @@ def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
             log.warning(f"{key}: failed to delete branch {branch} — {e}")
 
 
+def move_external_logs(key: str, dest: Path) -> None:
+    """If AGENT_CHILD_LOG_DIR is set, move this ticket's worker/specialist
+    logs into its archive folder alongside everything else, rather than
+    leaving them behind in the live log directory.
+
+    This deliberately doesn't delete them — a log's lifetime should match
+    the rest of the ticket's artifacts (which persist in the archive for
+    ARCHIVE_MAX_DAYS and only disappear when cleanup_pass()'s purge loop
+    actually removes that archive folder), not get wiped the instant the
+    ticket is archived. Moving them here, into `dest`, means they naturally
+    persist exactly that long and no longer, via the same rmtree() the purge
+    loop already runs — no separate cleanup logic needed.
+
+    Not knowing specialist skill names is deliberate (orchestrator.py has no
+    other reason to know worker-domain concepts like "ticket-discovery") —
+    matched purely by filename pattern instead. The pattern for specialist
+    logs is anchored on a trailing hyphen (f"{key}-*.log") specifically so
+    e.g. archiving PDE-1 can't accidentally sweep up PDE-10's or PDE-100's
+    logs, which share PDE-1 as a literal string prefix.
+    """
+    child_log_dir = os.environ.get("AGENT_CHILD_LOG_DIR")
+    if not child_log_dir:
+        return
+    log_dir = Path(child_log_dir)
+    if not log_dir.is_dir():
+        return
+    matches = list(log_dir.glob(f"{key}.log")) + list(log_dir.glob(f"{key}-*.log"))
+    for src in matches:
+        shutil.move(str(src), str(dest / src.name))
+
+
 def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Path) -> None:
     """Close remote artifacts and move ticket_dir to a timestamped archive folder."""
     close_remote_artifacts(key, ticket_dir, repos_dir)
@@ -374,6 +426,7 @@ def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Pat
         suffix += 1
         dest = archive_dir / f"{key}-{date.today()}-{suffix}"
     shutil.move(str(ticket_dir), str(dest))
+    move_external_logs(key, dest)
     log.info(f"{key}: archived → {dest}")
 
 
@@ -582,6 +635,7 @@ def main() -> None:
     cwd = Path.cwd()
     repos_dir = Path(os.environ["REPOS_DIR"]) if "REPOS_DIR" in os.environ else cwd
     auth = _auth()
+    _normalize_agent_child_log_dir()
 
     log.info(f"Repos directory: {repos_dir}")
     try:
