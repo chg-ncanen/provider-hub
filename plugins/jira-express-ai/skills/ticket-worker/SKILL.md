@@ -83,8 +83,9 @@ Always check HTTP status — log the failure and exit non-zero on non-2xx.
 
 ### Transition IDs for PDE tickets
 
-`ticket-orchestrator/orchestrator.py`'s `JIRA_TRANSITION_IDS` dict is the same
-data — keep this table in sync with it by hand when a transition ID changes.
+This is the only copy of this table — `orchestrator.py` makes no Jira writes
+at all (it only decides whether to launch/resume via the lock), so there's
+nothing else to keep in sync with anymore.
 
 | Target status | Transition ID |
 |---|---|
@@ -145,7 +146,46 @@ Run these steps at the beginning of every session, in order:
    echo "[startup] Transitioned $KEY to In Discovery"
    ```
 
-6. Route to the appropriate path below based on `JIRA_STATUS`.
+6. **Sanity-check `JIRA_STATUS` against what's actually in this directory, and
+   self-correct if a human moved it further than the real work supports.**
+   This used to happen at the orchestrator level, but it requires knowing
+   which artifact proves which stage is done — domain knowledge that belongs
+   here, not in a generic dispatcher.
+
+   Check stages in order — a stage only counts as done if the one before it
+   also does:
+   - Discovery done ⇔ `discovery.md` exists
+   - Implementation done ⇔ `implementation-notes.md` exists
+
+   | `JIRA_STATUS` | Requires |
+   |---|---|
+   | `In Discovery` | nothing |
+   | `QA Review` | discovery done |
+   | `In Progress` | discovery done |
+   | `In Review` | discovery + implementation done |
+   | `UAT Review` | discovery + implementation done |
+
+   (`To Do` is handled by step 5 above, not here. Statuses not in this table —
+   `Backlog`, `Cancelled`, `Released`, `Done` — aren't checked; they're
+   terminal/ignored regardless of what's on disk.)
+
+   `review-notes.md` is deliberately **not** a gated stage — it's an optional
+   artifact from a second implementation pass (addressing PR comments), never
+   produced when a ticket is approved straight through to `UAT Review` on the
+   first pass. Requiring it would make a legitimately-complete ticket look
+   incomplete and self-correct into a loop.
+
+   If the requirement isn't met, transition Jira to the earliest stage that's
+   actually missing (`In Discovery` if `discovery.md` is absent, `In Progress`
+   if only `implementation-notes.md` is missing), log the correction, and use
+   *that* corrected status for routing in step 7 instead of the one Jira
+   originally reported:
+   ```bash
+   echo "[startup] Jira says '$JIRA_STATUS' but only N/M prerequisite stage(s) are done — rewinding to 'X'"
+   ```
+
+7. Route to the appropriate path below based on `JIRA_STATUS` (or the
+   corrected status from step 6, if it rewound).
 
 **Why there's no `.session.state` file (removed for v1):** an earlier version
 of this design tracked `status`/`stage`/timestamps in a local JSON file. None

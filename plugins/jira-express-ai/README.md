@@ -14,18 +14,21 @@ one behavioral difference that conversion introduced.
 - **`skills/ticket-orchestrator/`** — stateless, cron-safe dispatcher (`orchestrator.py`). Queries
   Jira fresh every run for `project = PDE AND labels = "AI-Work" AND statusCategory != Done`,
   decides per ticket whether to start a new session or resume an existing one based on Jira status
-  + whether the ticket's `.worker.lock` is currently held, sanity-checks Jira's status against
-  what's actually been done (rewind), archives tickets no longer active in Jira, and launches a
-  `ticket-worker` session per ticket. Owns nothing else inside a ticket's directory — no context
-  file, no copied skill files, no state file, just the lock. Run this on a schedule (cron every
-  5–15 minutes) from inside the project directory being automated — see that skill's `SKILL.md`
-  for the exact invocation and required env vars.
+  + whether the ticket's `.worker.lock` is currently held, archives tickets no longer active in
+  Jira, and launches a `ticket-worker` session per ticket. Makes no Jira writes at all, and owns
+  nothing else inside a ticket's directory — no context file, no copied skill files, no state
+  file, just the lock. Sanity-checking Jira's status against what's actually been done (rewind)
+  is the worker's job, not the orchestrator's — see that skill's entry below. Run this on a
+  schedule (cron every 5–15 minutes) from inside the project directory being automated — see that
+  skill's `SKILL.md` for the exact invocation and required env vars.
 - **`skills/ticket-worker/`** — the lifecycle/state-machine manager for one ticket. Doesn't do any
-  discovery/implementation/review/merge work itself; reads Jira status, launches the matching
-  sub-agent below, validates its output artifact, and transitions Jira. No local state file — an
-  earlier version tracked status/stage/timestamps in `.session.state`, but nothing ever read any
-  of it back (not the orchestrator, not the worker's own routing), so it was removed for v1 rather
-  than carried forward unverified. Jira's own status is the only state that matters.
+  discovery/implementation/review/merge work itself; reads Jira status, sanity-checks it against
+  what's actually in its own directory (rewinding Jira if a human skipped a stage — moved here
+  from the orchestrator, since it requires knowing worker-domain artifact filenames), launches the
+  matching sub-agent below, validates its output artifact, and transitions Jira. No local state
+  file — an earlier version tracked status/stage/timestamps in `.session.state`, but nothing ever
+  read any of it back (not the orchestrator, not the worker's own routing), so it was removed for
+  v1 rather than carried forward unverified. Jira's own status is the only state that matters.
 - **`skills/ticket-discovery/`** — sub-agent: researches the ticket, writes `discovery.md`.
 - **`skills/ticket-implementation/`** — sub-agent: implements `discovery.md`'s plan in an isolated
   git worktree, pushes the branch and opens the PR itself (it's the only one with direct
@@ -46,16 +49,16 @@ Every sub-agent signals completion with a sentinel file (`.discovery-agent-done`
 |---|---|
 | To Do | `ticket-orchestrator` starts a new session (only if assigned to the current user) |
 | In Discovery | Resume → `ticket-discovery` |
-| QA Review | Human gate — orchestrator does nothing |
+| QA Review | Human gate — orchestrator does nothing (the worker re-posts the handoff comment only if resumed directly into this status) |
 | In Progress | Resume → `ticket-implementation`, or `ticket-review` if implementation is already done |
-| In Review | Human gate — orchestrator re-posts the review comment and waits |
+| In Review | Human gate — orchestrator does nothing. A human addresses PR comments by moving the ticket back to `In Progress`, not by anything happening at `In Review` itself |
 | UAT Review | Resume → `ticket-merge` |
 | Done / Backlog / Cancelled / Released | Terminal — untouched |
 
 If a human manually moves a ticket ahead of its actual completed stages (e.g. straight to
-`In Progress` with no `discovery.md` present), the orchestrator rewinds Jira to the earliest
-incomplete stage rather than skipping work. See `ticket-orchestrator/SKILL.md` for the full
-worker-lock mechanism, transition-ID table, and rewind logic.
+`In Progress` with no `discovery.md` present), the **worker** rewinds Jira to the earliest
+incomplete stage rather than skipping work — see `ticket-worker/SKILL.md`'s Startup section.
+See `ticket-orchestrator/SKILL.md` for the worker-lock mechanism this plugin dispatches on instead.
 
 ## Scope note: PDE-specific by design
 

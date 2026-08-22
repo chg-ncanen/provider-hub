@@ -96,37 +96,21 @@ context file, no copied skill files, no state file. The lock is the only
 thing it owns in there; everything else belongs to the worker and its
 specialists.
 
-## Status rewind (human may set any status)
+## Status rewind moved to the worker
 
-Humans can manually move a ticket to any Jira status. Before acting, the
-orchestrator checks whether the ticket's local artifacts confirm all prerequisite
-stages are done. If not, it **rewrites the effective status to the earliest
-incomplete stage** and transitions Jira accordingly.
+Humans can manually move a ticket to any Jira status, including one that's
+ahead of what's actually been done (e.g. `In Progress` with no `discovery.md`
+yet). Sanity-checking that and self-correcting Jira used to happen here, but
+it required knowing which artifact filenames prove which stage is done
+(`discovery.md`, `implementation-notes.md`) — domain knowledge that belongs
+to the worker and its specialists, not to a generic dispatcher. Fresh-vs-resume
+here is now decided purely by whether a directory already exists for the
+ticket (see "The two signals" above) — no artifact inspection needed at all.
 
-| Stage completed | Earliest incomplete | Deliverable checked |
-|---|---|---|
-| None | In Discovery | `discovery.md` |
-| Discovery only | In Progress | `implementation-notes.md` |
-
-`review-notes.md` is deliberately **not** a gated stage here — it's an optional
-artifact from a second implementation pass (addressing PR comments after
-`In Review`), never produced when a ticket is approved straight through to
-`UAT Review` on the first pass. Reaching `UAT Review` only requires
-`discovery.md` + `implementation-notes.md` (2 completed stages); a ticket that
-legitimately has both never rewinds, `review-notes.md` or not.
-
-**Examples:**
-- Ticket manually moved to `In Progress` before any work → rewind to `In Discovery`,
-  transition Jira → `In Discovery`, treat as `In Discovery` this run.
-- Ticket manually moved to `UAT Review` with only discovery done → rewind to
-  `In Progress`, transition Jira → `In Progress`.
-- Ticket at `UAT Review` with `discovery.md` + `implementation-notes.md` present
-  (no `review-notes.md`, because it was approved on the first pass) → no rewind,
-  `UAT Review` stands as-is.
-- No ticket directory exists at all → treat as fresh `In Discovery` (like `To Do`
-  but session name already exists or didn't exist yet).
-
-The rewind is logged: `"<KEY>: Jira says 'X' but only N/M prerequisite stage(s) are done — rewinding to 'Y'"`
+The rewind check itself still happens, just one level down: see
+`ticket-worker/SKILL.md`'s Startup section for how the worker validates
+Jira's status against its own directory before routing, and self-corrects
+if a human skipped a stage.
 
 ## Status → action table
 
@@ -316,11 +300,12 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
   Cancelled/Released/Backlog-ed or lost its `AI-Work` label counts too. The
   only exception is a genuinely in-flight session (lock held) — leave that
   alone rather than archiving out from under it.
-- Sanity-check Jira's status against what's actually been done (rewind), and
-  correct Jira if a human moved it further than the real work supports.
 - Decide whether to launch or resume, and do it — via the worker's lock file
-  alone; never anything else in the ticket directory, which belongs entirely
-  to the worker.
+  and whether a directory already exists, alone; never anything else in the
+  ticket directory, which belongs entirely to the worker. Does not
+  sanity-check Jira's status against what's actually been done — that's the
+  worker's job now (see below), since it requires knowing worker-domain
+  artifact filenames the orchestrator has no other reason to know.
 - **Exit after dispatching every ticket this run** — no waiting, no polling,
   no long-running blocking of any kind.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).
@@ -335,5 +320,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
   No local state file — see `ticket-worker/SKILL.md`'s Startup section for
   why one existed before and was removed.
 - Transition Jira tickets as work progresses or fails, and decide what
-  "success" and "failure" mean for each stage — the orchestrator only ever
-  corrects a status via rewind, it never drives the real lifecycle.
+  "success" and "failure" mean for each stage. This includes sanity-checking
+  Jira's status against what's actually in its own directory and
+  self-correcting (rewinding) if a human skipped a stage — the orchestrator
+  never does this, it only decides whether to launch or resume.

@@ -452,110 +452,6 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
     return proc.pid
 
 
-# ── Stage rewind ─────────────────────────────────────────────────────────────
-
-# Jira transition IDs for PDE workflow
-JIRA_TRANSITION_IDS = {
-    "To Do":          251,
-    "In Discovery":   421,
-    "QA Review":      301,
-    "In Progress":    331,
-    "In Review":      291,
-    "UAT Review":     311,
-    "Done":           231,
-    "Blocked":         21,
-    "Backlog":        271,
-}
-
-# Ordered stages with their deliverable artifacts.
-# A stage is "done" if and only if its deliverable exists in ticket_dir.
-# review-notes.md is deliberately NOT a stage here: it's an optional artifact
-# from a second implementation pass (addressing PR comments), never produced
-# when a ticket goes straight from In Review to UAT Review on first approval.
-# Treating it as a required 3rd stage made rewind_if_needed compute
-# STAGE_ORDER[2][0] == "UAT Review" for a ticket that had legitimately already
-# reached UAT Review — a self-transition, firing every run.
-STAGE_ORDER = [
-    ("In Discovery",  "discovery.md"),
-    ("In Progress",   "implementation-notes.md"),
-]
-
-# Which statuses imply that certain stages should already be done. Only
-# covers statuses rewind_if_needed is actually called for — the ACTIONABLE_STATUSES
-# rewind_if_needed's caller (process_ticket) is invoked for. "QA Review" and
-# "In Review" are human-gate statuses that never reach rewind_if_needed at
-# all (process_ticket only runs for ACTIONABLE_STATUSES), so they don't
-# belong here — this table used to carry both anyway, silently unreachable.
-# Map: jira_status → number of stages that must be completed before reaching it
-STAGES_REQUIRED_BEFORE = {
-    # Status          min completed stages needed
-    "In Discovery":   0,
-    "In Progress":    1,   # discovery must be done
-    "UAT Review":     2,   # discovery + implementation must be done
-}
-
-
-def transition_ticket(key: str, target_status: str, auth) -> None:
-    transition_id = JIRA_TRANSITION_IDS.get(target_status)
-    if not transition_id:
-        log.warning(f"{key}: no transition ID known for '{target_status}' — skipping transition")
-        return
-    r = requests.post(
-        f"{JIRA_BASE}/issue/{key}/transitions",
-        json={"transition": {"id": str(transition_id)}},
-        auth=auth,
-        headers={"Content-Type": "application/json"},
-        timeout=20,
-    )
-    r.raise_for_status()
-    log.info(f"{key}: transitioned → {target_status}")
-
-
-def count_completed_stages(ticket_dir: Path) -> int:
-    """Return how many stages have their deliverable artifact in ticket_dir."""
-    if not ticket_dir.exists():
-        return 0
-    count = 0
-    for _, artifact in STAGE_ORDER:
-        if (ticket_dir / artifact).exists():
-            count += 1
-        else:
-            break  # stages must complete in order
-    return count
-
-
-def rewind_if_needed(
-    key: str,
-    jira_status: str,
-    ticket_dir: Path,
-    auth,
-) -> str:
-    """
-    Check whether the ticket's Jira status is ahead of its actual completed stages.
-    If so, transition Jira to the earliest incomplete stage's status and return
-    the corrected status. Otherwise return jira_status unchanged.
-    """
-    required = STAGES_REQUIRED_BEFORE.get(jira_status)
-    if required is None:
-        return jira_status  # To Do or unknown — no rewind logic needed
-
-    completed = count_completed_stages(ticket_dir)
-
-    if completed >= required:
-        return jira_status  # ticket is where it should be
-
-    effective_status = STAGE_ORDER[completed][0]
-
-    log.warning(
-        f"{key}: Jira says '{jira_status}' but only {completed}/{required} prerequisite "
-        f"stage(s) are done — rewinding to '{effective_status}'"
-    )
-    try:
-        transition_ticket(key, effective_status, auth)
-    except Exception as e:
-        log.error(f"{key}: failed to rewind Jira to '{effective_status}': {e}")
-        # Still use the corrected status locally even if Jira call fails
-    return effective_status
 
 
 # ── Per-ticket processing ─────────────────────────────────────────────────────
@@ -563,11 +459,8 @@ def rewind_if_needed(
 def process_ticket(
     key: str,
     jira_status: str,
-    assignee: dict | None,
     cwd: Path,
     repos_dir: Path,
-    auth,
-    current_user_id: str | None,
 ) -> Path | None:
     """Launch (or resume) this ticket's session if warranted. Returns the
     ticket_dir if a session was actually launched this call, None otherwise
@@ -589,17 +482,15 @@ def process_ticket(
         log.info(f"{key}: session already running — skipping")
         return None
 
-    # ── Stage rewind check ───────────────────────────────────────────────────
-    # The human may have manually moved the ticket to a status that skips earlier
-    # stages. Detect that and rewind Jira (and our local effective_status) to the
-    # earliest stage that hasn't been done yet.
-    jira_status = rewind_if_needed(key, jira_status, ticket_dir, auth)
-
-    # If there is no prior directory and this isn't already "To Do", treat it
-    # as a fresh start — the human may have manually set a mid-pipeline status
-    # on a brand new ticket, or we rewound to a stage that was never started.
-    no_prior_session = not had_prior_dir
-    is_new = jira_status == "To Do" or (no_prior_session and jira_status == "In Discovery")
+    # Fresh vs resume is decided purely by whether a directory already exists
+    # for this ticket — not by inspecting which artifacts are inside it. A
+    # human may have set any status directly on a brand new ticket (skipping
+    # To Do/In Discovery entirely); that's fine, since it's the *worker* that
+    # now sanity-checks Jira's status against what's actually been done and
+    # self-corrects if a stage was skipped (see ticket-worker/SKILL.md's
+    # Startup section) — the orchestrator doesn't need to know discovery.md
+    # or implementation-notes.md exist to make this decision.
+    is_new = jira_status == "To Do" or not had_prior_dir
 
     if is_new:
         # Rename any stale claude session still holding this ticket's plain
@@ -715,7 +606,7 @@ def main() -> None:
 
         log.info(f"{key}: processing ({jira_status})")
         try:
-            process_ticket(key, jira_status, assignee, cwd, repos_dir, auth, current_user_id)
+            process_ticket(key, jira_status, cwd, repos_dir)
         except Exception as e:
             log.error(f"{key}: unhandled error — {e}", exc_info=True)
 
