@@ -568,11 +568,18 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
     The repos directory rides along as plain text after the skill invocation
     in the same prompt — verified directly that Claude Code passes text
     following a skill name straight through as real input. No context file
-    needed. ticket-worker is invoked by its bare name, not namespaced under
-    this plugin — verified directly that an installed plugin's skills
-    resolve by bare name too, as long as it's unambiguous, so there's also
-    no need to copy its (or any specialist's) SKILL.md into this ticket
-    directory first; the installed plugin is already globally reachable.
+    needed. ticket-worker is invoked as /jexpress:ticket-worker (namespaced
+    under this plugin), not by its bare name, so resolution never depends on
+    ambiguity with some other plugin's identically-named skill.
+
+    This namespacing does NOT, on its own, work around plugin enablement
+    being scoped to an exact registered directory with no ancestor-directory
+    walk — verified directly that /jexpress:ticket-worker still fails with
+    "Unknown command" from a cwd where the plugin isn't enabled, exactly like
+    the bare name did. Since this launches with cwd=ticket_dir (a
+    subdirectory of wherever this plugin was actually enabled), jexpress
+    needs to be enabled at a scope that isn't tied to one exact directory
+    (e.g. user scope) for this launch to succeed at all.
 
     lock_fh is the already-held worker lock (see try_acquire_lock()) —
     pass_fds hands its fd to the child across the exec boundary, and closing
@@ -593,7 +600,7 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
         "--permission-mode=bypassPermissions",
         f"--add-dir={ticket_dir}",
         f"--add-dir={repos_dir}",
-        "-p", f"/ticket-worker Repos directory: {repos_dir}",
+        "-p", f"/jexpress:ticket-worker Repos directory: {repos_dir}",
     ]
     log_dir = Path(os.environ.get("AGENT_CHILD_LOG_DIR") or ticket_dir)
     log_dir.mkdir(parents=True, exist_ok=True)

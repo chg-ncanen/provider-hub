@@ -251,7 +251,11 @@ def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, auth) -> No
     Logs to AGENT_CHILD_LOG_DIR/<session-name>.log if that env var is set —
     the calling system wants sessions' output collected centrally — or to
     ticket_dir/<session-name>.log otherwise. Same convention
-    orchestrator.py's launch_session() uses for the worker's own log."""
+    orchestrator.py's launch_session() uses for the worker's own log.
+
+    Each specialist is invoked as /jexpress:<skill> (namespaced), not by its
+    bare name — see orchestrator.py's launch_session() docstring for why,
+    and for why this alone doesn't fix plugin-enablement scoping."""
     agent_name = f"{ticket_dir.name}-{skill}"
     log_dir = Path(os.environ.get("AGENT_CHILD_LOG_DIR") or ticket_dir)
     try:
@@ -268,7 +272,7 @@ def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, auth) -> No
         ["claude", f"--name={agent_name}",
          "--permission-mode=bypassPermissions",
          f"--add-dir={ticket_dir}", f"--add-dir={repos_dir}",
-         "-p", f"/{skill} Repos directory: {repos_dir}"],
+         "-p", f"/jexpress:{skill} Repos directory: {repos_dir}"],
         cwd=str(ticket_dir),
         stdout=log_file, stderr=log_file,
         start_new_session=True,

@@ -626,7 +626,7 @@ class TestLaunchSession(TempDirTestCase):
         cmd, kwargs = mock_popen.call_args.args[0], mock_popen.call_args.kwargs
         self.assertEqual(kwargs["cwd"], str(self.ticket_dir))
         self.assertIn("-p", cmd)
-        self.assertIn(f"/ticket-worker Repos directory: {self.repos_dir}", cmd)
+        self.assertIn(f"/jexpress:ticket-worker Repos directory: {self.repos_dir}", cmd)
 
     def test_hands_off_lock_fd_and_closes_own_reference(self) -> None:
         lock_fd = self.lock_fh.fileno()

@@ -362,7 +362,7 @@ class TestLaunchSpecialist(TempDirTestCase):
         self.assertIn(f"--add-dir={self.ticket_dir}", cmd)
         self.assertIn(f"--add-dir={self.repos_dir}", cmd)
         self.assertIn("-p", cmd)
-        self.assertIn(f"/ticket-discovery Repos directory: {self.repos_dir}", cmd)
+        self.assertIn(f"/jexpress:ticket-discovery Repos directory: {self.repos_dir}", cmd)
         self.assertEqual(kwargs["cwd"], str(self.ticket_dir))
 
     def test_logs_to_ticket_dir_by_default(self) -> None:
