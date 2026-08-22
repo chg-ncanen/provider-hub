@@ -122,30 +122,24 @@ Run these steps at the beginning of every session, in order:
    skill invocation straight through as real input, so there's no context
    file to read here at all.
 
-3. **Read state file** (create if missing):
+3. **Read state file** (create if missing), and log that you've started —
+   plainly, in your own output, not as a state-file field. This ends up in
+   `session.log` (the orchestrator redirects your stdout/stderr there), which
+   is what "when did this actually start" means in practice; nothing ever
+   reads a timestamp back out of `.session.state` programmatically, so
+   there's no reason to maintain one there:
    ```python
    import json, os
    f = ".session.state"
    s = json.load(open(f)) if os.path.exists(f) else {}
+   ```
+   ```bash
+   echo "[startup] Session started for $KEY at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
    ```
    This file is entirely yours — the orchestrator never reads or writes it.
    It only ever checks whether your lock (see below) is currently held.
 
-4. **Write `picked_up_at` immediately** — do this before any other work:
-   ```python
-   import json, os
-   from datetime import datetime, timezone
-   f = ".session.state"
-   s = json.load(open(f)) if os.path.exists(f) else {}
-   now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-   if not s.get("started_at"):
-       s["started_at"] = now
-   s["picked_up_at"] = now
-   s["updated_at"] = now
-   json.dump(s, open(f, "w"), indent=2)
-   ```
-
-5. **Read Jira status:**
+4. **Read Jira status:**
    ```bash
    RESPONSE=$(curl -s -w "\n%{http_code}" \
      "$BASE/issue/$KEY?fields=summary,status" $AUTH -H "Accept: application/json")
@@ -155,10 +149,10 @@ Run these steps at the beginning of every session, in order:
    echo "[startup] Ticket $KEY: status=$JIRA_STATUS"
    ```
 
-6. **If `To Do`: transition to In Discovery immediately (ID: 421)** before entering workflow.
+5. **If `To Do`: transition to In Discovery immediately (ID: 421)** before entering workflow.
    Update state: `"stage": "discovery"`.
 
-7. Route to the appropriate path below based on `JIRA_STATUS`.
+6. Route to the appropriate path below based on `JIRA_STATUS`.
 
 ---
 
@@ -177,17 +171,18 @@ Run these steps at the beginning of every session, in order:
 
 ---
 
-## Reading human feedback on resume
+## Human feedback on resume is each specialist's own job
 
-When the worker resumes after a human gate, feedback may come from **any combination** of:
-
-- **Jira comments** — the most common channel; read all comments since last agent run
-- **Jira ticket fields** — description, acceptance criteria, or other fields may have been edited
-- **Artifact files** — `discovery.md`, `implementation-notes.md`, or other `.md` files in `$TICKET_DIR` may have been directly edited by the developer
-- **Code changes** — the developer may have pushed commits to the branch (new commits, fixups, rebases)
-- **PR comments** — inline or general comments on the PR in GitHub
-
-Always check all relevant channels before running the next sub-agent. Pass a summary of what changed to the sub-agent as context so it can incorporate the feedback rather than starting from scratch.
+A human gate can leave feedback in several places — Jira comments, edited
+ticket fields, a hand-edited artifact file, new commits pushed to the
+branch, PR comments — but figuring out what changed and incorporating it is
+real work on the ticket, not lifecycle management, so it belongs to whichever
+specialist is about to run next, not to you. Launch it the same way
+regardless of whether this is a first run or a resume; don't try to gather
+or summarize feedback yourself first. (Most specialists already check their
+own relevant channel as their first step — `ticket-discovery` reads all Jira
+comments, `ticket-implementation` re-reads `discovery.md` fresh plus new Jira
+comments, `ticket-review` reads PR comments directly.)
 
 ---
 
@@ -412,14 +407,14 @@ Re-post the QA Review handoff comment and exit waiting:
 ## State file schema
 
 This file is entirely yours to maintain — the orchestrator never reads or
-writes it; liveness is answered by the lock, not by anything in here.
+writes it; liveness is answered by the lock, not by anything in here. No
+timestamps live here either — nothing ever reads one back out
+programmatically, so "when did this happen" belongs in your logged output
+(`session.log`), not a state-file field maintained for its own sake.
 
 ```json
 {
   "status": "running | waiting | done | crashed",
-  "started_at": "2026-07-15T10:00:00Z",
-  "picked_up_at": "2026-07-15T10:00:05Z",
-  "updated_at": "2026-07-15T10:04:22Z",
   "stage": "discovery | waiting-qa | implementation | waiting-review | merge | waiting-merge | merge-blocked | complete"
 }
 ```
