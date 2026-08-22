@@ -21,14 +21,17 @@ one behavioral difference that conversion introduced.
   is the worker's job, not the orchestrator's — see that skill's entry below. Run this on a
   schedule (cron every 5–15 minutes) from inside the project directory being automated — see that
   skill's `SKILL.md` for the exact invocation and required env vars.
-- **`skills/ticket-worker/`** — the lifecycle/state-machine manager for one ticket. Doesn't do any
-  discovery/implementation/review/merge work itself; reads Jira status, sanity-checks it against
-  what's actually in its own directory (rewinding Jira if a human skipped a stage — moved here
-  from the orchestrator, since it requires knowing worker-domain artifact filenames), launches the
-  matching sub-agent below, validates its output artifact, and transitions Jira. No local state
-  file — an earlier version tracked status/stage/timestamps in `.session.state`, but nothing ever
-  read any of it back (not the orchestrator, not the worker's own routing), so it was removed for
-  v1 rather than carried forward unverified. Jira's own status is the only state that matters.
+- **`skills/ticket-worker/`** — the lifecycle/state-machine manager for one ticket. Its dispatch
+  logic runs as `worker.py` (mirroring `ticket-orchestrator`'s own script-backed design), not AI
+  inference — reads Jira status, sanity-checks it against what's actually in its own directory
+  (rewinding Jira if a human skipped a stage — moved here from the orchestrator, since it requires
+  knowing worker-domain artifact filenames), launches the matching sub-agent below, validates its
+  output artifact, and transitions Jira. Kept as a genuine `claude -p` session rather than a direct
+  script launch, unlike the orchestrator — see `ticket-worker/SKILL.md`'s "Why this stays a skill"
+  for why. Doesn't do any discovery/implementation/review/merge work itself. No local state file —
+  an earlier version tracked status/stage/timestamps in `.session.state`, but nothing ever read any
+  of it back (not the orchestrator, not the worker's own routing), so it was removed for v1 rather
+  than carried forward unverified. Jira's own status is the only state that matters.
 - **`skills/ticket-discovery/`** — sub-agent: researches the ticket, writes `discovery.md`.
 - **`skills/ticket-implementation/`** — sub-agent: implements `discovery.md`'s plan in an isolated
   git worktree, pushes the branch and opens the PR itself (it's the only one with direct
@@ -133,9 +136,9 @@ the worker's territory alone.
 - **Claude Code CLI** (`claude`) on `PATH` — the orchestrator and worker launch sub-agent sessions
   through it (`claude -p "/<skill>" --permission-mode=bypassPermissions ...`, detached with
   `nohup`).
-- Python 3 with the `requests` package installed on the machine running `orchestrator.py` (not yet
-  automated via a bootstrap hook the way `pde-mcp`'s venv is — install it yourself for now:
-  `pip install requests`).
+- Python 3 with the `requests` package installed on the machine running `orchestrator.py` and
+  `worker.py` (not yet automated via a bootstrap hook the way `pde-mcp`'s venv is — install it
+  yourself for now: `pip install requests`).
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
   `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
@@ -145,6 +148,24 @@ the worker's territory alone.
 - A target project directory containing (or able to clone) the repos being worked on, plus a
   writable `tickets/` subdirectory — this is where the orchestrator is run *from* (see
   `ticket-orchestrator/SKILL.md`'s "Working directory" section).
+
+## Tests
+
+`orchestrator.py` and `worker.py` are both plain, deterministic Python — no LLM involved in the
+logic itself — so they're covered by a real `unittest` suite under `tests/`: locks (including a
+regression guard for a real concurrency bug an earlier version of `try_repo_lock()` had), cleanup/
+archival, the rewind/sanity-check table, sub-agent dispatch, artifact parsing, and the 3-strikes
+failure-escalation counting. Everything that touches Jira, `git`/`gh`, or the `claude` CLI is
+mocked — the suite never makes a real network call or spawns a real subprocess.
+
+```bash
+cd plugins/jira-express-ai
+python3 -m unittest discover -s tests -t . -q
+```
+
+The four specialist skills (`ticket-discovery`, `ticket-implementation`, `ticket-review`,
+`ticket-merge`) are genuine LLM-driven `SKILL.md` prose, not scripts, so there's nothing to unit
+test there — verifying those means an actual end-to-end run against a real ticket.
 
 ## Installing
 
