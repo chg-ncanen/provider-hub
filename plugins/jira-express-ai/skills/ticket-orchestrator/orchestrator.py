@@ -171,7 +171,11 @@ def _repos_dir(default: Path) -> Path:
         os.environ.get("REPOS_DIR", "").strip()
         or os.environ.get("CLAUDE_PLUGIN_OPTION_REPOS_DIR", "").strip()
     )
-    return Path(raw).resolve() if raw else default
+    # .expanduser() before .resolve(): Path.resolve() alone does NOT expand a
+    # leading ~ — it treats it as a literal directory named "~", silently
+    # resolving e.g. "~/devtemp" to "<cwd>/~/devtemp" instead of the actual
+    # home directory (verified against a real misconfigured REPOS_DIR).
+    return Path(raw).expanduser().resolve() if raw else default
 
 
 def _normalize_agent_child_log_dir() -> None:
@@ -185,7 +189,7 @@ def _normalize_agent_child_log_dir() -> None:
     its _normalize_agent_child_log_dir()."""
     value = os.environ.get("AGENT_CHILD_LOG_DIR")
     if value:
-        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).resolve())
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).expanduser().resolve())
 
 
 def _jira_get(path: str, auth, **params) -> dict:

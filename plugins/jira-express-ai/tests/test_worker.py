@@ -444,6 +444,19 @@ class TestNormalizeAgentChildLogDir(unittest.TestCase):
         worker._normalize_agent_child_log_dir()
         self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/already-absolute")
 
+    def test_expands_tilde(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "~/logs"
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = "/tmp/fake-home"
+        try:
+            worker._normalize_agent_child_log_dir()
+            self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/fake-home/logs")
+        finally:
+            if saved_home is not None:
+                os.environ["HOME"] = saved_home
+            else:
+                os.environ.pop("HOME", None)
+
 
 class TestRunDiscovery(TempDirTestCase):
     def test_launches_when_sentinel_missing_and_transitions_on_success(self) -> None:

@@ -152,7 +152,7 @@ def _normalize_agent_child_log_dir() -> None:
     before launching — including when worker.py is run standalone."""
     value = os.environ.get("AGENT_CHILD_LOG_DIR")
     if value:
-        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).resolve())
+        os.environ["AGENT_CHILD_LOG_DIR"] = str(Path(value).expanduser().resolve())
 
 
 def read_status(key: str, auth) -> str:

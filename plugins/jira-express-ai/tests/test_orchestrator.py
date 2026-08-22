@@ -127,6 +127,21 @@ class TestReposDir(TempDirTestCase):
         os.environ["CLAUDE_PLUGIN_OPTION_REPOS_DIR"] = str(plugin_opt)
         self.assertEqual(orchestrator._repos_dir(self.default), plugin_opt)
 
+    def test_expands_tilde(self) -> None:
+        # A bare Path(...).resolve() does NOT expand ~ — it resolves it as a
+        # literal directory named "~" relative to cwd instead of the home
+        # directory, silently pointing repos_dir at a nonexistent path.
+        os.environ["REPOS_DIR"] = "~/devtemp"
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.tmp_path)
+        try:
+            self.assertEqual(orchestrator._repos_dir(self.default), self.tmp_path / "devtemp")
+        finally:
+            if saved_home is not None:
+                os.environ["HOME"] = saved_home
+            else:
+                os.environ.pop("HOME", None)
+
 
 class TestWorkerLock(TempDirTestCase):
     def test_is_locked_false_when_no_lock_file(self) -> None:
@@ -440,6 +455,19 @@ class TestNormalizeAgentChildLogDir(unittest.TestCase):
         os.environ["AGENT_CHILD_LOG_DIR"] = "/tmp/already-absolute"
         orchestrator._normalize_agent_child_log_dir()
         self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/already-absolute")
+
+    def test_expands_tilde(self) -> None:
+        os.environ["AGENT_CHILD_LOG_DIR"] = "~/logs"
+        saved_home = os.environ.get("HOME")
+        os.environ["HOME"] = "/tmp/fake-home"
+        try:
+            orchestrator._normalize_agent_child_log_dir()
+            self.assertEqual(os.environ["AGENT_CHILD_LOG_DIR"], "/tmp/fake-home/logs")
+        finally:
+            if saved_home is not None:
+                os.environ["HOME"] = saved_home
+            else:
+                os.environ.pop("HOME", None)
 
 
 class TestCleanupPass(TempDirTestCase):
