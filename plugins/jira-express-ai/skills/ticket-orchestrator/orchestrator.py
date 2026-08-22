@@ -7,15 +7,21 @@ resume worker sessions, exit.
 Safe to run on a schedule (cron every 5-15 minutes).
 
 Usage:
-    cd /path/to/pde-ops-agent   # target project root — tickets/, repo clones live here
     python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
+
+No cd required first — PDE_PROJECT_DIR (below) is the source of truth for
+where tickets/ and the repo clones live, independent of this process's own
+cwd. Safe to invoke from any directory.
 
 Required env vars:
     ATLASSIAN_EMAIL       Atlassian account email
     ATLASSIAN_API_TOKEN   Atlassian API token
+    PDE_PROJECT_DIR       Project root — tickets/, repo clones live here (or
+                           the plugin's userConfig equivalent, see
+                           _project_dir())
 
 Optional env vars:
-    REPOS_DIR             Directory containing repo clones (default: cwd)
+    REPOS_DIR             Directory containing repo clones (default: PDE_PROJECT_DIR)
     CLAUDE_PLUGIN_ROOT    This plugin's install location (set automatically by
                            Claude Code / Copilot CLI). Used to find this
                            script's sibling skill files regardless of cwd.
@@ -89,6 +95,27 @@ def _plugin_root() -> Path:
 
 
 PLUGIN_ROOT = _plugin_root()
+
+
+# The project root that owns tickets/ and the repo clones — never the process's
+# actual cwd. Required so this script can be invoked from anywhere (a human's
+# shell, a cron job, a plugin skill session in an unrelated project) without
+# first cd-ing into place. Follows the same bare-env-var-first, then
+# CLAUDE_PLUGIN_OPTION_-prefixed userConfig fallback as _auth().
+def _project_dir() -> Path:
+    raw = (
+        os.environ.get("PDE_PROJECT_DIR", "").strip()
+        or os.environ.get("CLAUDE_PLUGIN_OPTION_PDE_PROJECT_DIR", "").strip()
+    )
+    if not raw:
+        log.error("PDE_PROJECT_DIR must be set (directly, or via this plugin's userConfig)")
+        sys.exit(1)
+    path = Path(raw).resolve()
+    if not path.is_dir():
+        log.error(f"PDE_PROJECT_DIR does not exist or is not a directory: {path}")
+        sys.exit(1)
+    return path
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -571,7 +598,7 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
 def process_ticket(
     key: str,
     jira_status: str,
-    cwd: Path,
+    project_dir: Path,
     repos_dir: Path,
 ) -> Path | None:
     """Launch (or resume) this ticket's session if warranted. Returns the
@@ -587,7 +614,7 @@ def process_ticket(
     implementation/review/merge artifacts — belongs entirely to the worker
     and its specialists; this function never reads or writes any of it.
     """
-    ticket_dir = cwd / "tickets" / key
+    ticket_dir = project_dir / "tickets" / key
     had_prior_dir = ticket_dir.exists()
 
     if had_prior_dir and is_locked(ticket_dir):
@@ -611,7 +638,7 @@ def process_ticket(
         # rename_stale_session()'s docstring for why this is necessary.
         rename_stale_session(key)
         if had_prior_dir:
-            archive_ticket(key, ticket_dir, cwd / "tickets" / "archive", repos_dir)
+            archive_ticket(key, ticket_dir, project_dir / "tickets" / "archive", repos_dir)
 
     # Ensure directory exists — the lock file has to live inside it.
     ticket_dir.mkdir(parents=True, exist_ok=True)
@@ -632,8 +659,8 @@ def process_ticket(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    cwd = Path.cwd()
-    repos_dir = Path(os.environ["REPOS_DIR"]) if "REPOS_DIR" in os.environ else cwd
+    project_dir = _project_dir()
+    repos_dir = Path(os.environ["REPOS_DIR"]) if "REPOS_DIR" in os.environ else project_dir
     auth = _auth()
     _normalize_agent_child_log_dir()
 
@@ -650,8 +677,8 @@ def main() -> None:
     if not issues:
         log.info("No AI-Work tickets found")
         active_keys = set()
-        tickets_dir = cwd / "tickets"
-        archive_dir = cwd / "tickets" / "archive"
+        tickets_dir = project_dir / "tickets"
+        archive_dir = project_dir / "tickets" / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         try:
             cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
@@ -675,8 +702,8 @@ def main() -> None:
     # Cleanup pass (archive done, purge old archives). Wrapped like each
     # per-ticket dispatch below — a failure here must not abort dispatch for
     # every ticket this run, and must not recur forever on every future run.
-    tickets_dir = cwd / "tickets"
-    archive_dir = cwd / "tickets" / "archive"
+    tickets_dir = project_dir / "tickets"
+    archive_dir = project_dir / "tickets" / "archive"
     archive_dir.mkdir(parents=True, exist_ok=True)
     try:
         cleanup_pass(tickets_dir, archive_dir, active_keys, repos_dir)
@@ -719,7 +746,7 @@ def main() -> None:
 
         log.info(f"{key}: processing ({jira_status})")
         try:
-            process_ticket(key, jira_status, cwd, repos_dir)
+            process_ticket(key, jira_status, project_dir, repos_dir)
         except Exception as e:
             log.error(f"{key}: unhandled error — {e}", exc_info=True)
 

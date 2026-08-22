@@ -57,6 +57,43 @@ class TestAuth(unittest.TestCase):
             orchestrator._auth()
 
 
+class TestProjectDir(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved = {
+            k: os.environ.pop(k, None)
+            for k in ("PDE_PROJECT_DIR", "CLAUDE_PLUGIN_OPTION_PDE_PROJECT_DIR")
+        }
+
+    def tearDown(self) -> None:
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        super().tearDown()
+
+    def test_prefers_bare_env_var(self) -> None:
+        other = self.tmp_path / "other"
+        other.mkdir()
+        os.environ["PDE_PROJECT_DIR"] = str(self.tmp_path)
+        os.environ["CLAUDE_PLUGIN_OPTION_PDE_PROJECT_DIR"] = str(other)
+        self.assertEqual(orchestrator._project_dir(), self.tmp_path)
+
+    def test_falls_back_to_plugin_option_env_var(self) -> None:
+        os.environ["CLAUDE_PLUGIN_OPTION_PDE_PROJECT_DIR"] = str(self.tmp_path)
+        self.assertEqual(orchestrator._project_dir(), self.tmp_path)
+
+    def test_missing_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            orchestrator._project_dir()
+
+    def test_nonexistent_path_exits(self) -> None:
+        os.environ["PDE_PROJECT_DIR"] = str(self.tmp_path / "does-not-exist")
+        with self.assertRaises(SystemExit):
+            orchestrator._project_dir()
+
+
 class TestWorkerLock(TempDirTestCase):
     def test_is_locked_false_when_no_lock_file(self) -> None:
         self.assertFalse(orchestrator.is_locked(self.tmp_path))
@@ -621,7 +658,7 @@ class TestMainDispatch(TempDirTestCase):
                 raise get_current_user_error
             return {"accountId": current_user_id} if current_user_id else {}
 
-        with patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+        with patch.object(orchestrator, "_project_dir", return_value=self.cwd), \
              patch.object(orchestrator, "_auth", return_value=("e", "t")), \
              patch.object(orchestrator, "search_tickets", return_value=issues), \
              patch.object(orchestrator, "cleanup_pass") as mock_cleanup, \
@@ -683,7 +720,7 @@ class TestMainDispatch(TempDirTestCase):
             if key == "PDE-1":
                 raise RuntimeError("boom")
 
-        with patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+        with patch.object(orchestrator, "_project_dir", return_value=self.cwd), \
              patch.object(orchestrator, "_auth", return_value=("e", "t")), \
              patch.object(orchestrator, "search_tickets", return_value=[
                  self._issue(key="PDE-1", assignee_id="user-1"),

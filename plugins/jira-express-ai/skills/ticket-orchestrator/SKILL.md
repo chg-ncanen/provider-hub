@@ -14,16 +14,16 @@ this skill is invoked, your only job is to run the script and report results.
 ## How to run
 
 ```bash
-cd /path/to/pde-ops-agent   # must be the target project root (tickets/, repo clones live here)
 python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 ```
 
+No `cd` required first — run this from wherever this session happens to be.
 `CLAUDE_PLUGIN_ROOT` (set by Claude Code and Copilot CLI to this plugin's install
-location) points the script at its own sibling skill files regardless of which
-project directory it's run from — see "Working directory" below for the
-separate, unrelated cwd requirement.
+location) points the script at its own sibling skill files, and `PDE_PROJECT_DIR`
+(below) points it at the actual target project — see "Working directory" below.
 
-Required env vars: `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`.
+Required env vars: `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`, `PDE_PROJECT_DIR`
+(each may instead come from this plugin's userConfig).
 
 The script is stateless and re-runnable — safe to schedule via cron.
 
@@ -33,13 +33,16 @@ The script is stateless and re-runnable — safe to schedule via cron.
 
 ## Working directory
 
-All relative paths (`tickets/`, `tickets/archive/`) are resolved relative to the
-**current working directory** where the orchestrator is invoked — not the skill
-directory. Ensure you are in the correct directory before running.
+The orchestrator never inspects or changes its own process cwd. All paths
+(`tickets/`, `tickets/archive/`, and the repos directory) are resolved against
+`PDE_PROJECT_DIR` — an absolute path supplied via env var or this plugin's
+userConfig, read by `_project_dir()`. This is what makes it safe to invoke the
+skill from any directory, including one with no relation to the target project.
 
-The **repos directory** defaults to the current working directory itself — repository
-clones are expected as direct subfolders of cwd (e.g., `./my-repo/`). There is no
-separate `repos/` subdirectory unless explicitly configured otherwise.
+The **repos directory** defaults to `PDE_PROJECT_DIR` itself — repository
+clones are expected as direct subfolders of it (e.g., `<PDE_PROJECT_DIR>/my-repo/`).
+There is no separate `repos/` subdirectory unless explicitly configured
+otherwise via `REPOS_DIR`.
 
 ## Run loop
 
