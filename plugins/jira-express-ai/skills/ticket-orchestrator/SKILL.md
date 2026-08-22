@@ -28,10 +28,12 @@ handles the things that look like blockers:
 - `tickets/` and `tickets/archive/` don't need to exist yet; the script
   creates them on its own (see `main()`).
 - `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` don't need to be set as shell env
-  vars — if this plugin's userConfig has them configured, `_auth()` picks
-  those up automatically (`CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL`/`_API_TOKEN`).
-  Only refuse if neither the env vars nor the userConfig values are set —
-  the script itself will error clearly in that case.
+  vars by hand — if this plugin's userConfig has them configured, a
+  `SessionStart` hook (`scripts/bootstrap-env.sh`) already mirrored them into
+  `.env` at this plugin's root, and `main()` loads that into the environment
+  before calling `_auth()` (see `_load_plugin_env()`). Only refuse if
+  `_auth()` itself errors — that means neither the env vars nor userConfig
+  are actually set.
 - Repo clones don't need to already exist just to run the dispatch loop —
   they only matter once there's an actual ticket to work, and the **repos
   directory** location itself is configurable (see below), not necessarily

@@ -13,15 +13,22 @@ Usage:
 tickets/ and tickets/archive/ are created automatically if they don't exist
 yet (see main()) — there's no separate setup step before the first run.
 
-Required env vars — each may instead come from this plugin's userConfig
-(see _auth()'s CLAUDE_PLUGIN_OPTION_ fallback):
+Required env vars — each may instead come from this plugin's userConfig:
     ATLASSIAN_EMAIL       Atlassian account email
     ATLASSIAN_API_TOKEN   Atlassian API token
+This script is run via a plain Bash tool call, not as a hook or an MCP
+server — the only two subprocess kinds Claude Code actually exports
+userConfig to (as CLAUDE_PLUGIN_OPTION_<KEY>). So _auth()'s
+CLAUDE_PLUGIN_OPTION_ check alone would never see a configured value here.
+_load_plugin_env() bridges the gap: bootstrap-env.sh (a SessionStart hook,
+which DOES get CLAUDE_PLUGIN_OPTION_*) mirrors userConfig into
+<plugin_root>/.env, and main() loads that file into os.environ before
+calling _auth() — see hooks/hooks.json and scripts/bootstrap-env.sh.
 
 Optional env vars:
     REPOS_DIR             Directory containing repo clones (default: cwd).
-                           May instead come from this plugin's userConfig —
-                           see _repos_dir()'s CLAUDE_PLUGIN_OPTION_ fallback.
+                           May instead come from this plugin's userConfig,
+                           via the same .env relay described above.
     CLAUDE_PLUGIN_ROOT    This plugin's install location (set automatically by
                            Claude Code / Copilot CLI). Used to find this
                            script's sibling skill files regardless of cwd.
@@ -95,6 +102,28 @@ def _plugin_root() -> Path:
 
 
 PLUGIN_ROOT = _plugin_root()
+
+
+def _load_plugin_env(plugin_root: Path) -> None:
+    # Claude Code exports userConfig only as CLAUDE_PLUGIN_OPTION_<KEY> env
+    # vars to hook processes and MCP/LSP server subprocesses — never to a
+    # Bash tool call made during skill execution, which is how this script
+    # actually gets run. bootstrap-env.sh (a SessionStart hook) mirrors those
+    # values into <plugin_root>/.env; this loads them into os.environ so
+    # _auth()'s bare-env-var check picks them up. Only fills in keys not
+    # already set, so an explicitly-exported env var always wins, and a
+    # missing .env (e.g. no userConfig configured, or Copilot CLI) is a
+    # silent no-op — _auth() gives the real error in that case.
+    env_file = plugin_root / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -649,6 +678,7 @@ def process_ticket(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _load_plugin_env(PLUGIN_ROOT)
     cwd = Path.cwd()
     repos_dir = _repos_dir(cwd)
     auth = _auth()

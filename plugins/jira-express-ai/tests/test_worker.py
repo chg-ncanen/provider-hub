@@ -23,6 +23,40 @@ class TempDirTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
 
+class TestLoadPluginEnv(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self._tmp.name)
+        self._saved = {
+            k: os.environ.pop(k, None)
+            for k in ("ATLASSIAN_EMAIL", "ATLASSIAN_API_TOKEN")
+        }
+
+    def tearDown(self) -> None:
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        self._tmp.cleanup()
+
+    def test_noop_when_env_file_missing(self) -> None:
+        worker._load_plugin_env(self.tmp_path)  # must not raise
+        self.assertNotIn("ATLASSIAN_EMAIL", os.environ)
+
+    def test_loads_keys_from_env_file(self) -> None:
+        (self.tmp_path / ".env").write_text("ATLASSIAN_EMAIL=from-file@example.com\nATLASSIAN_API_TOKEN=file-token\n")
+        worker._load_plugin_env(self.tmp_path)
+        self.assertEqual(os.environ["ATLASSIAN_EMAIL"], "from-file@example.com")
+        self.assertEqual(os.environ["ATLASSIAN_API_TOKEN"], "file-token")
+
+    def test_does_not_override_already_set_env_var(self) -> None:
+        os.environ["ATLASSIAN_EMAIL"] = "already-set@example.com"
+        (self.tmp_path / ".env").write_text("ATLASSIAN_EMAIL=from-file@example.com\n")
+        worker._load_plugin_env(self.tmp_path)
+        self.assertEqual(os.environ["ATLASSIAN_EMAIL"], "already-set@example.com")
+
+
 class TestArtifactParsing(unittest.TestCase):
     def test_extract_status_found(self) -> None:
         with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:

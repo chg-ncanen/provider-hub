@@ -93,9 +93,11 @@ script is right.
 `worker.py` calls the Jira REST API directly (via `requests`, the same
 library `orchestrator.py` uses), not an MCP server — this avoids depending on
 an MCP connector being configured for every nested session. It reads
-`ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` the same way `orchestrator.py` does
-(falling back to `CLAUDE_PLUGIN_OPTION_*` for a plugin-managed session), and
-exits non-zero if neither is set.
+`ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` the same way `orchestrator.py` does,
+including loading the `.env` this plugin's `SessionStart` hook wrote from
+userConfig before checking them (see `_load_plugin_env()` — a Bash-invoked
+script like this one never gets `CLAUDE_PLUGIN_OPTION_*` directly), and
+exits non-zero if neither ends up set.
 
 ### Startup sequence
 

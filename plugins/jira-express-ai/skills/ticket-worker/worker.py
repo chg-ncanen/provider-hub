@@ -13,8 +13,9 @@ Usage:
     cd tickets/<KEY>   # the ticket-worker session's own cwd
     python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" <repos-dir>
 
-Required env vars: ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN (same
-CLAUDE_PLUGIN_OPTION_* fallback as ticket-orchestrator/orchestrator.py).
+Required env vars: ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN — may instead come
+from this plugin's userConfig via the same .env relay as
+ticket-orchestrator/orchestrator.py (see _load_plugin_env()).
 
 Optional env vars:
     AGENT_CHILD_LOG_DIR   If set, specialist session logs are collected here
@@ -87,6 +88,39 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+# This plugin's install root — see orchestrator.py's _plugin_root() for why
+# CLAUDE_PLUGIN_ROOT/PLUGIN_ROOT/COPILOT_PLUGIN_ROOT are checked in that
+# order, and why deriving it from this file's own location is the fallback.
+def _plugin_root() -> Path:
+    env_root = (
+        os.environ.get("CLAUDE_PLUGIN_ROOT")
+        or os.environ.get("PLUGIN_ROOT")
+        or os.environ.get("COPILOT_PLUGIN_ROOT")
+    )
+    if env_root:
+        return Path(env_root).resolve()
+    return Path(__file__).resolve().parent.parent.parent
+
+
+PLUGIN_ROOT = _plugin_root()
+
+
+def _load_plugin_env(plugin_root: Path) -> None:
+    # See orchestrator.py's _load_plugin_env() for why this is needed: Claude
+    # Code never exports userConfig to a Bash tool call, only to hook
+    # processes and MCP/LSP server subprocesses, so bootstrap-env.sh (a
+    # SessionStart hook) mirrors it into <plugin_root>/.env instead.
+    env_file = plugin_root / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
 
 # ── Jira helpers ──────────────────────────────────────────────────────────────
 
@@ -529,6 +563,7 @@ def sanity_check_and_rewind(key: str, status: str, ticket_dir: Path, auth) -> st
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    _load_plugin_env(PLUGIN_ROOT)
     if len(sys.argv) != 2:
         log.error("usage: worker.py <repos-dir>")
         sys.exit(1)
