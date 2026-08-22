@@ -326,6 +326,58 @@ class TestCloseRemoteArtifacts(TempDirTestCase):
         self.assertTrue(any("git/refs/heads/feature/x" in " ".join(c) for c in calls))
 
 
+class TestClaudeProjectDir(TempDirTestCase):
+    def test_encodes_path_by_replacing_slashes_with_dashes(self) -> None:
+        claude_projects_dir = self.tmp_path / "projects"
+        cwd = Path("/home/x/tickets/PDE-1")
+        self.assertEqual(
+            orchestrator._claude_project_dir(cwd, claude_projects_dir),
+            claude_projects_dir / "-home-x-tickets-PDE-1",
+        )
+
+    def test_encodes_underscores_as_dashes_too(self) -> None:
+        # Not just "/" — verified directly against a real ~/.claude/projects/
+        # bucket that a cwd containing "_" (e.g. .../orch_run/tickets/PDE-1)
+        # is stored as .../orch-run-tickets-PDE-1, underscore included.
+        claude_projects_dir = self.tmp_path / "projects"
+        cwd = Path("/home/x/orch_run/tickets/PDE-1")
+        self.assertEqual(
+            orchestrator._claude_project_dir(cwd, claude_projects_dir),
+            claude_projects_dir / "-home-x-orch-run-tickets-PDE-1",
+        )
+
+
+class TestArchiveClaudeSessions(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.session_dir = self.tmp_path / "session-dir"
+        self.dest = self.tmp_path / "dest"
+        self.dest.mkdir()
+
+    def test_noop_when_session_dir_missing(self) -> None:
+        orchestrator._archive_claude_sessions(self.session_dir, self.dest)  # must not raise
+        self.assertFalse((self.dest / "claude-sessions").exists())
+
+    def test_copies_transcripts_and_removes_original(self) -> None:
+        self.session_dir.mkdir()
+        (self.session_dir / "abc123.jsonl").write_text("transcript content")
+
+        orchestrator._archive_claude_sessions(self.session_dir, self.dest)
+
+        self.assertEqual((self.dest / "claude-sessions" / "abc123.jsonl").read_text(), "transcript content")
+        self.assertFalse(self.session_dir.exists())
+
+    def test_swallows_errors_and_leaves_original_in_place(self) -> None:
+        self.session_dir.mkdir()
+        (self.session_dir / "abc123.jsonl").write_text("transcript content")
+
+        with patch.object(orchestrator.shutil, "copytree", side_effect=OSError("disk full")):
+            with self.assertLogs(orchestrator.log, level="WARNING"):
+                orchestrator._archive_claude_sessions(self.session_dir, self.dest)  # must not raise
+
+        self.assertTrue(self.session_dir.exists())  # not deleted since the copy never succeeded
+
+
 class TestArchiveTicket(TempDirTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -376,6 +428,27 @@ class TestArchiveTicket(TempDirTestCase):
         self.assertEqual((dest / "PDE-1.log").read_text(), "worker log")
         self.assertEqual((dest / "PDE-1-ticket-discovery.log").read_text(), "specialist log")
         self.assertFalse((log_dir / "PDE-1.log").exists())
+
+    def test_archives_claude_session_history_and_clears_it_from_live_storage(self) -> None:
+        ticket_dir = self.tmp_path / "tickets" / "PDE-1"
+        ticket_dir.mkdir(parents=True)
+        archive_dir = self.tmp_path / "tickets" / "archive"
+        archive_dir.mkdir(parents=True)
+        claude_projects_dir = self.tmp_path / "claude-projects"
+        session_dir = orchestrator._claude_project_dir(ticket_dir, claude_projects_dir)
+        session_dir.mkdir(parents=True)
+        (session_dir / "abc123.jsonl").write_text("transcript content")
+
+        with patch.object(orchestrator, "close_remote_artifacts"):
+            orchestrator.archive_ticket(
+                "PDE-1", ticket_dir, archive_dir, self.tmp_path / "repos",
+                claude_projects_dir=claude_projects_dir,
+            )
+
+        from datetime import date
+        dest = archive_dir / f"PDE-1-{date.today()}"
+        self.assertEqual((dest / "claude-sessions" / "abc123.jsonl").read_text(), "transcript content")
+        self.assertFalse(session_dir.exists())  # cleared from live storage, not left to collide with a future run
 
 
 class TestMoveExternalLogs(TempDirTestCase):

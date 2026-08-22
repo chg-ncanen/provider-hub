@@ -78,7 +78,16 @@ Each orchestrator run begins with a fresh Jira query — never a cached list.
      or the `AI-Work` label was removed — archive it to `tickets/archive/<KEY>/`
      and write log "<KEY>: archived to tickets/archive/<KEY>", **unless its lock
      is currently held** (a session is genuinely still running — leave it alone
-     rather than archiving out from under it).
+     rather than archiving out from under it). Also copies that ticket's Claude
+     Code session transcripts (worker + every specialist it launched, all
+     sharing `tickets/<KEY>/` as their cwd) into
+     `tickets/archive/<KEY>-<date>/claude-sessions/`, then clears them from
+     Claude Code's own storage — best-effort, since the storage location is
+     reverse-engineered rather than a documented API (see
+     `_claude_project_dir()`). Deletion isn't just tidiness: a future
+     relaunch of this same ticket key reuses the exact same `tickets/<KEY>/`
+     path, so leaving the old session history in place would mix a future
+     run's transcripts into the same bucket as this run's.
    - **Purge:** delete any `tickets/archive/<KEY>/` folder older than **7 days**,
      using the folder's own modification time. Write log
      "<KEY>: purged archive (older than 7 days)".

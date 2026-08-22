@@ -467,7 +467,54 @@ def move_external_logs(key: str, dest: Path) -> None:
         shutil.move(str(src), str(dest / src.name))
 
 
-def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Path) -> None:
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+
+
+def _claude_project_dir(cwd: Path, claude_projects_dir: Path) -> Path:
+    """Best-effort mapping from an absolute directory to the bucket Claude
+    Code itself uses to store sessions started with that directory as cwd.
+    Reverse-engineered, not a documented API — verified directly against
+    this machine's own ~/.claude/projects/ layout: a cwd is encoded by
+    replacing every character that isn't a letter or digit with "-" — not
+    just "/" (an earlier version of this got that wrong: .../orch_run/...
+    encodes with the underscore ALSO turned into a dash, not left alone).
+    If this guess is ever wrong for some path, the caller just finds nothing
+    there — never destructive on a miss."""
+    encoded = re.sub(r"[^A-Za-z0-9]", "-", str(cwd.resolve()))
+    return claude_projects_dir / encoded
+
+
+def _archive_claude_sessions(session_dir: Path, dest: Path) -> None:
+    """Copy this ticket's Claude Code session transcripts (the worker and
+    every specialist it launched all share ticket_dir as their cwd, so one
+    bucket covers the whole ticket) into the archived folder, then remove
+    them from Claude Code's own storage.
+
+    Deletion isn't just tidiness: ticket_dir is always project_dir/tickets/
+    <KEY> — the exact path a future re-launch of this same ticket key will
+    use again. Leaving the old bucket in place would mix that future run's
+    fresh session history into the same directory as this run's, defeating
+    "this archive holds exactly this run's transcripts" the next time this
+    key gets archived.
+
+    Best-effort and silent on a miss (see _claude_project_dir()) — swallows
+    and logs any failure rather than letting it abort the archive itself."""
+    if not session_dir.is_dir():
+        return
+    try:
+        shutil.copytree(session_dir, dest / "claude-sessions")
+        shutil.rmtree(session_dir)
+    except Exception as e:
+        log.warning(f"failed to archive/clear Claude session history at {session_dir}: {e}")
+
+
+def archive_ticket(
+    key: str,
+    ticket_dir: Path,
+    archive_dir: Path,
+    repos_dir: Path,
+    claude_projects_dir: Path = CLAUDE_PROJECTS_DIR,
+) -> None:
     """Close remote artifacts and move ticket_dir to a timestamped archive folder."""
     close_remote_artifacts(key, ticket_dir, repos_dir)
     dest = archive_dir / f"{key}-{date.today()}"
@@ -475,8 +522,10 @@ def archive_ticket(key: str, ticket_dir: Path, archive_dir: Path, repos_dir: Pat
     while dest.exists():
         suffix += 1
         dest = archive_dir / f"{key}-{date.today()}-{suffix}"
+    session_dir = _claude_project_dir(ticket_dir, claude_projects_dir)
     shutil.move(str(ticket_dir), str(dest))
     move_external_logs(key, dest)
+    _archive_claude_sessions(session_dir, dest)
     log.info(f"{key}: archived → {dest}")
 
 
