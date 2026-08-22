@@ -7,15 +7,21 @@ resume worker sessions, exit.
 Safe to run on a schedule (cron every 5-15 minutes).
 
 Usage:
-    cd /path/to/pde-ops-agent   # target project root — tickets/, repo clones live here
+    cd /path/to/pde-ops-agent   # target project root — tickets/ lives here
     python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 
-Required env vars:
+tickets/ and tickets/archive/ are created automatically if they don't exist
+yet (see main()) — there's no separate setup step before the first run.
+
+Required env vars — each may instead come from this plugin's userConfig
+(see _auth()'s CLAUDE_PLUGIN_OPTION_ fallback):
     ATLASSIAN_EMAIL       Atlassian account email
     ATLASSIAN_API_TOKEN   Atlassian API token
 
 Optional env vars:
-    REPOS_DIR             Directory containing repo clones (default: cwd)
+    REPOS_DIR             Directory containing repo clones (default: cwd).
+                           May instead come from this plugin's userConfig —
+                           see _repos_dir()'s CLAUDE_PLUGIN_OPTION_ fallback.
     CLAUDE_PLUGIN_ROOT    This plugin's install location (set automatically by
                            Claude Code / Copilot CLI). Used to find this
                            script's sibling skill files regardless of cwd.
@@ -126,6 +132,17 @@ def _auth() -> tuple[str, str]:
     os.environ["ATLASSIAN_EMAIL"] = email
     os.environ["ATLASSIAN_API_TOKEN"] = token
     return (email, token)
+
+
+def _repos_dir(default: Path) -> Path:
+    # Same bare-env-var-first, then CLAUDE_PLUGIN_OPTION_-prefixed userConfig
+    # fallback as _auth() — lets the repo clones location be configured once
+    # via this plugin's userConfig instead of always defaulting to cwd.
+    raw = (
+        os.environ.get("REPOS_DIR", "").strip()
+        or os.environ.get("CLAUDE_PLUGIN_OPTION_REPOS_DIR", "").strip()
+    )
+    return Path(raw).resolve() if raw else default
 
 
 def _normalize_agent_child_log_dir() -> None:
@@ -633,7 +650,7 @@ def process_ticket(
 
 def main() -> None:
     cwd = Path.cwd()
-    repos_dir = Path(os.environ["REPOS_DIR"]) if "REPOS_DIR" in os.environ else cwd
+    repos_dir = _repos_dir(cwd)
     auth = _auth()
     _normalize_agent_child_log_dir()
 

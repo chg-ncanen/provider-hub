@@ -57,6 +57,39 @@ class TestAuth(unittest.TestCase):
             orchestrator._auth()
 
 
+class TestReposDir(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved = {
+            k: os.environ.pop(k, None)
+            for k in ("REPOS_DIR", "CLAUDE_PLUGIN_OPTION_REPOS_DIR")
+        }
+        self.default = self.tmp_path / "default"
+
+    def tearDown(self) -> None:
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+        super().tearDown()
+
+    def test_falls_back_to_default_when_unset(self) -> None:
+        self.assertEqual(orchestrator._repos_dir(self.default), self.default)
+
+    def test_prefers_bare_env_var(self) -> None:
+        bare = self.tmp_path / "bare"
+        plugin_opt = self.tmp_path / "plugin-opt"
+        os.environ["REPOS_DIR"] = str(bare)
+        os.environ["CLAUDE_PLUGIN_OPTION_REPOS_DIR"] = str(plugin_opt)
+        self.assertEqual(orchestrator._repos_dir(self.default), bare)
+
+    def test_falls_back_to_plugin_option_env_var(self) -> None:
+        plugin_opt = self.tmp_path / "plugin-opt"
+        os.environ["CLAUDE_PLUGIN_OPTION_REPOS_DIR"] = str(plugin_opt)
+        self.assertEqual(orchestrator._repos_dir(self.default), plugin_opt)
+
+
 class TestWorkerLock(TempDirTestCase):
     def test_is_locked_false_when_no_lock_file(self) -> None:
         self.assertFalse(orchestrator.is_locked(self.tmp_path))
@@ -597,13 +630,20 @@ class TestMainDispatch(TempDirTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.cwd = self.tmp_path
-        # main() defaults repos_dir to cwd only when REPOS_DIR isn't set —
-        # make sure a real environment's value can't leak into these tests.
-        self._saved_repos_dir = os.environ.pop("REPOS_DIR", None)
+        # main() defaults repos_dir to cwd only when neither REPOS_DIR nor its
+        # userConfig equivalent is set — make sure a real environment's value
+        # can't leak into these tests.
+        self._saved_repos_dir = {
+            k: os.environ.pop(k, None)
+            for k in ("REPOS_DIR", "CLAUDE_PLUGIN_OPTION_REPOS_DIR")
+        }
 
     def tearDown(self) -> None:
-        if self._saved_repos_dir is not None:
-            os.environ["REPOS_DIR"] = self._saved_repos_dir
+        for k, v in self._saved_repos_dir.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
         super().tearDown()
 
     def _issue(self, key="PDE-1", status="In Progress", assignee_id="user-1"):

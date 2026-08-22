@@ -19,6 +19,12 @@
       "description": "API token from https://id.atlassian.com/manage-profile/security/api-tokens",
       "required": true,
       "sensitive": true
+    },
+    "REPOS_DIR": {
+      "type": "string",
+      "title": "Repo clones directory",
+      "description": "Absolute path to the directory containing this project's repo clones. Optional — if unset, defaults to the orchestrator's current working directory (repo clones expected as direct subfolders of it).",
+      "required": false
     }
   }
 }

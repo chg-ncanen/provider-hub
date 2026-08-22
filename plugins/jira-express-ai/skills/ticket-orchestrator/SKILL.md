@@ -14,7 +14,7 @@ this skill is invoked, your only job is to run the script and report results.
 ## How to run
 
 ```bash
-cd /path/to/pde-ops-agent   # must be the target project root (tickets/, repo clones live here)
+cd /path/to/pde-ops-agent   # target project root — tickets/ lives here
 python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 ```
 
@@ -23,7 +23,19 @@ location) points the script at its own sibling skill files regardless of which
 project directory it's run from — see "Working directory" below for the
 separate, unrelated cwd requirement.
 
-Required env vars: `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`.
+Don't pre-flight-check and refuse before running this — the script itself
+handles the things that look like blockers:
+- `tickets/` and `tickets/archive/` don't need to exist yet; the script
+  creates them on its own (see `main()`).
+- `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` don't need to be set as shell env
+  vars — if this plugin's userConfig has them configured, `_auth()` picks
+  those up automatically (`CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL`/`_API_TOKEN`).
+  Only refuse if neither the env vars nor the userConfig values are set —
+  the script itself will error clearly in that case.
+- Repo clones don't need to already exist just to run the dispatch loop —
+  they only matter once there's an actual ticket to work, and the **repos
+  directory** location itself is configurable (see below), not necessarily
+  cwd.
 
 The script is stateless and re-runnable — safe to schedule via cron.
 
@@ -38,8 +50,9 @@ All relative paths (`tickets/`, `tickets/archive/`) are resolved relative to the
 directory. Ensure you are in the correct directory before running.
 
 The **repos directory** defaults to the current working directory itself — repository
-clones are expected as direct subfolders of cwd (e.g., `./my-repo/`). There is no
-separate `repos/` subdirectory unless explicitly configured otherwise.
+clones are expected as direct subfolders of cwd (e.g., `./my-repo/`) — unless
+overridden via `REPOS_DIR` (env var or this plugin's userConfig equivalent,
+`CLAUDE_PLUGIN_OPTION_REPOS_DIR`; see `_repos_dir()`).
 
 ## Run loop
 
@@ -289,9 +302,6 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
      than starting over.
    - A fresh "To Do" restart's rename step (3b) already freed up the plain
      key name before this point, so `--name="<KEY>"` here can never collide.
-
-   > **Production note:** Run the orchestrator inside a dedicated VM. If a session
-   > executes destructive code, it only damages the VM — not the host machine.
 
 7. Log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket"
    and move on immediately. There's nothing to wait for or confirm: whatever
