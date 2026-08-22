@@ -22,8 +22,10 @@ one behavioral difference that conversion introduced.
   for the exact invocation and required env vars.
 - **`skills/ticket-worker/`** — the lifecycle/state-machine manager for one ticket. Doesn't do any
   discovery/implementation/review/merge work itself; reads Jira status, launches the matching
-  sub-agent below, validates its output artifact, transitions Jira, and maintains its own
-  `.session.state` purely for its own use (the orchestrator never reads or writes it).
+  sub-agent below, validates its output artifact, and transitions Jira. No local state file — an
+  earlier version tracked status/stage/timestamps in `.session.state`, but nothing ever read any
+  of it back (not the orchestrator, not the worker's own routing), so it was removed for v1 rather
+  than carried forward unverified. Jira's own status is the only state that matters.
 - **`skills/ticket-discovery/`** — sub-agent: researches the ticket, writes `discovery.md`.
 - **`skills/ticket-implementation/`** — sub-agent: implements `discovery.md`'s plan in an isolated
   git worktree, pushes the branch and opens the PR itself (it's the only one with direct

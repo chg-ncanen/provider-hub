@@ -14,10 +14,12 @@ launched you in a `tickets/<KEY>/` directory. Your job is:
 1. Determine what stage the ticket is in
 2. Launch the appropriate sub-agent to do the work
 3. Wait for the sub-agent to complete
-4. Validate the artifact, transition Jira, update state
+4. Validate the artifact and transition Jira
 
 You do **not** do discovery, implementation, or merge work yourself. Sub-agents
-handle all of that. You own the state machine.
+handle all of that. You own the state machine — Jira's status *is* the state;
+there's no separate local state file mirroring it (see "Startup" below for
+why one existed before and why it doesn't now).
 
 `user-invocable: true` here isn't an invitation for a human to run this
 directly — it's a requirement. Verified directly: Claude Code's `-p
@@ -77,7 +79,7 @@ curl -s -X POST "$BASE/issue/$KEY/comment" $AUTH \
   -d '{"body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "<MESSAGE>"}]}]}}'
 ```
 
-Always check HTTP status — exit with `status: crashed` on non-2xx.
+Always check HTTP status — log the failure and exit non-zero on non-2xx.
 
 ### Transition IDs for PDE tickets
 
@@ -122,22 +124,11 @@ Run these steps at the beginning of every session, in order:
    skill invocation straight through as real input, so there's no context
    file to read here at all.
 
-3. **Read state file** (create if missing), and log that you've started —
-   plainly, in your own output, not as a state-file field. This ends up in
-   `session.log` (the orchestrator redirects your stdout/stderr there), which
-   is what "when did this actually start" means in practice; nothing ever
-   reads a timestamp back out of `.session.state` programmatically, so
-   there's no reason to maintain one there:
-   ```python
-   import json, os
-   f = ".session.state"
-   s = json.load(open(f)) if os.path.exists(f) else {}
-   ```
+3. **Log that you've started:**
    ```bash
    echo "[startup] Session started for $KEY at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
    ```
-   This file is entirely yours — the orchestrator never reads or writes it.
-   It only ever checks whether your lock (see below) is currently held.
+   There is no local state file to read or create — see the note below.
 
 4. **Read Jira status:**
    ```bash
@@ -149,10 +140,28 @@ Run these steps at the beginning of every session, in order:
    echo "[startup] Ticket $KEY: status=$JIRA_STATUS"
    ```
 
-5. **If `To Do`: transition to In Discovery immediately (ID: 421)** before entering workflow.
-   Update state: `"stage": "discovery"`.
+5. **If `To Do`: transition to In Discovery immediately (ID: 421)** before entering workflow:
+   ```bash
+   echo "[startup] Transitioned $KEY to In Discovery"
+   ```
 
 6. Route to the appropriate path below based on `JIRA_STATUS`.
+
+**Why there's no `.session.state` file (removed for v1):** an earlier version
+of this design tracked `status`/`stage`/timestamps in a local JSON file. None
+of it was ever read back by anything — not the orchestrator (which only ever
+checks the lock), and not by this worker's own routing either, which is
+driven entirely by fresh Jira status and artifact/sentinel-file existence
+(`implementation-notes.md`, `.discovery-agent-done`, etc.). Every field in it
+was write-only, kept purely so a human glancing at the file could reconstruct
+what happened — and a mechanism nothing exercises or verifies is exactly
+where edge cases (a field that falls out of sync, a status that never gets
+cleared, a partial write) go unnoticed until they matter. Removed rather than
+carried forward half-trusted; if resumable structured state turns out to be
+genuinely needed later, it should be designed and hardened deliberately, not
+reintroduced by accident. Use `session.log` (your own stdout/stderr, which
+the orchestrator redirects there) for anything a human needs to reconstruct
+after the fact.
 
 ---
 
@@ -166,8 +175,8 @@ Run these steps at the beginning of every session, in order:
 | In Review | Human gate — re-post In Review comment, exit waiting |
 | UAT Review | Merge path |
 | QA Review | Human gate — re-post discovery handoff comment, exit waiting |
-| Done | Log "already done" → exit `status: done` |
-| Backlog / Cancelled / Released | Exit silently `status: done` |
+| Done | Log "already done" → exit |
+| Backlog / Cancelled / Released | Exit silently |
 
 ---
 
@@ -227,7 +236,6 @@ done
 
 if [ ! -f "<SENTINEL>" ]; then
   echo "[worker] TIMEOUT: <SKILL> did not complete within ${MAX_WAIT}s"
-  # update state status: crashed, then exit
   exit 1
 fi
 ```
@@ -256,7 +264,7 @@ If `STATUS == BLOCKED`:
    🤖 <Agent name> is blocked on <KEY>: <Blocker text>
    <Suggested Next Step text>
    ```
-4. Update state: `{ "stage": "<current-stage>-blocked", "status": "waiting" }`
+4. Log it: `echo "[<stage>] BLOCKED: <short reason>"`
 5. Exit — do not continue the path.
 
 ---
@@ -276,7 +284,7 @@ If `STATUS == BLOCKED`:
    - Sentinel: `.discovery-agent-done`
    - Log: `discovery-agent.log`
 
-4. **Check status** in `discovery.md`. If `BLOCKED` → apply blocked routing (see above). Otherwise validate it is non-empty; if missing exit with `status: crashed`.
+4. **Check status** in `discovery.md`. If `BLOCKED` → apply blocked routing (see above). Otherwise validate it is non-empty; if missing, log the error and exit non-zero.
 
 5. **Transition to QA Review** (ID: 301).
 
@@ -287,9 +295,9 @@ If `STATUS == BLOCKED`:
    • Reject: move back to In Discovery with a comment explaining what to revisit
    ```
 
-7. **Update state:**
-   ```json
-   { "stage": "waiting-qa", "status": "waiting" }
+7. **Log it and exit:**
+   ```bash
+   echo "[discovery] Waiting for QA review"
    ```
 
 ---
@@ -305,14 +313,14 @@ First, check whether implementation has already been done:
    - Sentinel: `.implementation-agent-done`
    - Log: `implementation-agent.log`
 
-2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing exit with `status: crashed`.
+2. **Check status** in `implementation-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, log the error and exit non-zero.
 
 3. **Validate `review-context.md` exists.** The implementation agent writes this
    itself now — it's the only one with direct knowledge of which repo(s) and
    branch(es) it actually touched, which `implementation-notes.md`'s prose
    isn't a reliable way to hand off. If it's missing after a non-`BLOCKED` run,
    that's a bug in the implementation agent, not something to work around
-   here — exit with `status: crashed`.
+   here — log the error and exit non-zero.
 
 4. **Read the PR URL from `review-context.md`** for the comment below:
    ```bash
@@ -333,7 +341,7 @@ First, check whether implementation has already been done:
    If you have comments to address, move back to In Progress.
    ```
 
-7. **Update state:** `{ "stage": "waiting-review", "status": "waiting" }`
+7. **Log it and exit:** `echo "[implementation] Waiting for PR review"`
 
 ---
 
@@ -346,7 +354,7 @@ First, check whether implementation has already been done:
    - Sentinel: `.review-agent-done`
    - Log: `review-agent.log`
 
-3. **Check status** in `review-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing exit with `status: crashed`.
+3. **Check status** in `review-notes.md`. If `BLOCKED` → apply blocked routing. Otherwise validate it exists; if missing, log the error and exit non-zero.
 
 4. **Transition to In Review** (ID: 291).
 
@@ -357,7 +365,7 @@ First, check whether implementation has already been done:
    If you have more comments, move back to In Progress.
    ```
 
-6. **Update state:** `{ "stage": "waiting-review", "status": "waiting" }`
+6. **Log it and exit:** `echo "[implementation] Waiting for PR approval"`
 
 ---
 
@@ -370,25 +378,25 @@ First, check whether implementation has already been done:
    - Sentinel: `.merge-agent-done`
    - Log: `merge-agent.log`
 
-3. **Validate** `merge-notes.md` exists. If missing, exit with `status: crashed`.
+3. **Validate** `merge-notes.md` exists. If missing, log the error and exit non-zero.
 
 4. **Read `merge-notes.md`** status and route:
 
    - **`SUCCESS`:**
      - Transition to Done (ID: 231)
      - Post comment: `🤖 Merge complete for <KEY>. Ticket resolved.`
-     - Update state: `{ "stage": "complete", "status": "done" }`
+     - Log it: `echo "[merge] Complete — ticket resolved"`
 
    - **`BLOCKED`:**
      - Transition to Blocked (ID: 21)
      - Post comment: `🤖 Merge blocked for <KEY>: <Reason from merge-notes.md>`
-     - Update state: `{ "stage": "merge-blocked", "status": "waiting" }`
+     - Log it: `echo "[merge] Blocked: <reason>"`
 
    - **`PENDING`:**
      - Nothing is wrong, just not ready yet (CI still running, approval still
        needed) — **do not transition Jira** and **do not post a comment**. The
        ticket stays at `UAT Review` exactly as it is.
-     - Update state: `{ "stage": "merge-pending", "status": "waiting" }`
+     - Log it: `echo "[merge] Pending: <reason> — will check again next run"`
      - Exit normally. The next orchestrator run resumes this session, re-enters
        this same path (step 1 always deletes stale `merge-notes.md` and runs
        the merge sub-agent fresh), and checks again.
@@ -400,26 +408,7 @@ First, check whether implementation has already been done:
 Re-post the QA Review handoff comment and exit waiting:
 
 1. Post comment (same as discovery path step 6)
-2. Update state: `{ "status": "waiting", "stage": "waiting-qa" }`
-
----
-
-## State file schema
-
-This file is entirely yours to maintain — the orchestrator never reads or
-writes it; liveness is answered by the lock, not by anything in here. No
-timestamps live here either — nothing ever reads one back out
-programmatically, so "when did this happen" belongs in your logged output
-(`session.log`), not a state-file field maintained for its own sake.
-
-```json
-{
-  "status": "running | waiting | done | crashed",
-  "stage": "discovery | waiting-qa | implementation | waiting-review | merge | waiting-merge | merge-blocked | complete"
-}
-```
-
-Always preserve existing fields when writing partial updates.
+2. Log it and exit: `echo "[worker] Re-posted QA Review comment, waiting"`
 
 ---
 

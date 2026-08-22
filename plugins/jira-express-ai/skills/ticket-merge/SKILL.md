@@ -16,7 +16,7 @@ moved the ticket to UAT Review. Your job:
 3. Monitor post-merge CI
 4. On any failure, diagnose and decide the best recovery action
 
-You do not address review comments, transition Jira tickets, or write to `.session.state`.
+You do not address review comments or transition Jira tickets.
 
 ---
 
@@ -233,4 +233,3 @@ echo "[merge-agent] Complete — merge-notes.md written with status: <STATUS>"
 - Always write `merge-notes.md` and `.merge-agent-done` regardless of outcome.
 - Do not transition any Jira ticket yourself — `ticket-worker` does that based
   on the status you write.
-- Do not write to `.session.state`.

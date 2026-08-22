@@ -289,6 +289,5 @@ echo "[implementation-agent] BLOCKED — implementation-notes.md written with bl
 - Commit your changes in the worktree before pushing — an uncommitted change never makes it into the PR.
 - Push and open the PR yourself, and write `review-context.md` — you're the only one with direct knowledge of which repo(s)/branch(es) you touched; don't leave that for the worker to guess.
 - Do not transition any Jira ticket.
-- Do not write to `.session.state`.
 - Write `implementation-notes.md`, `review-context.md`, and `.implementation-agent-done` — required outputs.
 - Only use the BLOCKED path when you genuinely cannot proceed without human input.

@@ -177,6 +177,5 @@ echo "[discovery-agent] BLOCKED — discovery.md written with blocker details"
 - Write `discovery.md` and `.discovery-agent-done` — those are your only outputs.
 - Do not transition any Jira ticket.
 - Do not modify any source files.
-- Do not write to `.session.state`.
 - If you cannot find relevant code, document that in discovery.md and still complete — missing code is not a blocker.
 - Only use the BLOCKED path when you genuinely cannot proceed without human input.

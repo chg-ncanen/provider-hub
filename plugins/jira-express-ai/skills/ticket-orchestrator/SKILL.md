@@ -318,8 +318,9 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
   alone rather than archiving out from under it.
 - Sanity-check Jira's status against what's actually been done (rewind), and
   correct Jira if a human moved it further than the real work supports.
-- Decide whether to launch or resume, and do it — via the worker's lock file,
-  never via `.session.state` or any other artifact the worker owns.
+- Decide whether to launch or resume, and do it — via the worker's lock file
+  alone; never anything else in the ticket directory, which belongs entirely
+  to the worker.
 - **Exit after dispatching every ticket this run** — no waiting, no polling,
   no long-running blocking of any kind.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).
@@ -329,9 +330,10 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
 - Hold the lock for its entire lifetime (inherited from the orchestrator at
   launch, released automatically — by the kernel, unconditionally — on any
   exit, clean or otherwise).
-- Own everything else inside its ticket directory: whatever state it wants
-  to track about itself, and every real artifact (research, implementation,
-  review, merge notes).
+- Own everything else inside its ticket directory: every real artifact
+  (research, implementation, review, merge notes) and its own logged output.
+  No local state file — see `ticket-worker/SKILL.md`'s Startup section for
+  why one existed before and was removed.
 - Transition Jira tickets as work progresses or fails, and decide what
   "success" and "failure" mean for each stage — the orchestrator only ever
   corrects a status via rewind, it never drives the real lifecycle.
