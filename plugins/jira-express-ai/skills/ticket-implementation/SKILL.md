@@ -1,6 +1,6 @@
 ---
 name: ticket-implementation
-description: "Standalone implementation agent for a PDE Jira ticket. Reads discovery.md, writes code changes, pushes and opens the PR, writes implementation-notes.md, review-context.md, and .implementation-agent-done sentinel file. Does NOT manage Jira transitions or state files."
+description: "[private] Standalone implementation agent for a PDE Jira ticket. Reads discovery.md, writes code changes, pushes and opens the PR, writes implementation-notes.md, review-context.md, and .implementation-agent-done sentinel file. Does NOT manage Jira transitions or state files."
 user-invocable: true
 ---
 

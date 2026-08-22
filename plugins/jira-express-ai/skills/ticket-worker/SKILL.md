@@ -1,6 +1,6 @@
 ---
 name: ticket-worker
-description: "Runs the AI-Work ticket lifecycle for PDE. Its dispatch logic (Jira transitions, rewind, sub-agent launching, failure/blocked routing) runs as worker.py, not AI inference — this skill's job is to run it and report results. Delegates actual work to discovery, implementation, review, and merge sub-agents."
+description: "[private] Runs the AI-Work ticket lifecycle for PDE. Its dispatch logic (Jira transitions, rewind, sub-agent launching, failure/blocked routing) runs as worker.py, not AI inference — this skill's job is to run it and report results. Delegates actual work to discovery, implementation, review, and merge sub-agents."
 user-invocable: true
 ---
 

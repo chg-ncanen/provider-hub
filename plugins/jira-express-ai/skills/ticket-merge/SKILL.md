@@ -1,6 +1,6 @@
 ---
 name: ticket-merge
-description: "Standalone merge agent for a PDE Jira ticket. Checks CI gates and approvals, merges if ready, monitors the merge, and on failure decides the appropriate recovery action. Writes merge-notes.md and .merge-agent-done."
+description: "[private] Standalone merge agent for a PDE Jira ticket. Checks CI gates and approvals, merges if ready, monitors the merge, and on failure decides the appropriate recovery action. Writes merge-notes.md and .merge-agent-done."
 user-invocable: true
 ---
 

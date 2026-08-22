@@ -1,6 +1,6 @@
 ---
 name: ticket-discovery
-description: "Standalone discovery research agent for a PDE Jira ticket. Fetches ticket details from Jira, explores the codebase, writes discovery.md and .discovery-agent-done sentinel file. Does NOT manage Jira transitions or state files."
+description: "[private] Standalone discovery research agent for a PDE Jira ticket. Fetches ticket details from Jira, explores the codebase, writes discovery.md and .discovery-agent-done sentinel file. Does NOT manage Jira transitions or state files."
 user-invocable: true
 ---
 

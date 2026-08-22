@@ -1,6 +1,6 @@
 ---
 name: ticket-review
-description: "Standalone review agent for a PDE Jira ticket. Reads open PR review comments, responds to them, and iterates with implementation if code changes are needed. Signals completion with .review-agent-done once all comments are resolved or acknowledged."
+description: "[private] Standalone review agent for a PDE Jira ticket. Reads open PR review comments, responds to them, and iterates with implementation if code changes are needed. Signals completion with .review-agent-done once all comments are resolved or acknowledged."
 user-invocable: true
 ---
 
