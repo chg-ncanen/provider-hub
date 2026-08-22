@@ -11,6 +11,12 @@ one behavioral difference that conversion introduced.
 
 ## Contents
 
+- **`JIRA_EXPRESS_AI_CONTRACT.md`** — the single source of truth for what any specialist
+  (`ticket-discovery`, `ticket-implementation`, `ticket-review`, `ticket-merge`) may
+  do with the shared `$REPOS_DIR`: clone a missing repo, pull an existing one to
+  latest, read code read-only, or create-if-missing its own git worktree to make
+  changes in — plus the per-repo locking each of those requires. Every specialist's
+  `SKILL.md` points here rather than restating the rules.
 - **`skills/ticket-orchestrator/`** — stateless, cron-safe dispatcher (`orchestrator.py`). Queries
   Jira fresh every run for `project = PDE AND labels = "AI-Work" AND statusCategory != Done`,
   decides per ticket whether to start a new session or resume an existing one based on Jira status

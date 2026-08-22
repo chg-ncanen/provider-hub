@@ -51,6 +51,12 @@ jira_get() {
 
 ## Repo setup (worktree isolation)
 
+Before touching `$REPOS_DIR` in any way, read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_CONTRACT.md` — it governs everything you may do
+with it. This section is the concrete implementation of that contract's operations 1
+(clone if missing), 2 (pull latest), and 4 (create-if-missing your own
+worktree), run together under one lock acquisition per repo.
+
 Each ticket works in its **own git worktree** under `$TICKET_DIR/<repo>/` so
 concurrent tickets never collide *once inside their worktree*. Setting that
 worktree up, though, means touching the **shared** clone at `$REPOS_DIR/<repo>/`

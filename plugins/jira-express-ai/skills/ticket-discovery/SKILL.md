@@ -78,12 +78,23 @@ Log any guidance found:
 
 ### Step 2 — Explore the codebase
 
+Before touching `$REPOS_DIR` in any way, read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_CONTRACT.md` — it governs everything you may do
+with it. You are read-only here (operation 3): you never edit, stage, or branch inside
+`$REPOS_DIR/<repo>` itself. You may, however:
+
+- **Clone a repo you need that isn't there yet** (operation 1) — the ticket's
+  component or system may name a repo with no local clone at all.
+- **Pull it to latest first** (operation 2) — never explore against a clone
+  that's fallen behind `main`.
+
 Use the information from the ticket to search for relevant code:
 
 - **Local clones first**: look in `$REPOS_DIR` for repository directories matching
-  the ticket's component or system. Read files directly.
-- **GitHub search fallback**: if local clones are absent or incomplete, use GitHub
-  MCP tools to search the org's repositories.
+  the ticket's component or system (cloning/updating per above if needed).
+  Read files directly.
+- **GitHub search fallback**: if the relevant repo can't be identified or
+  cloned, use GitHub MCP tools to search the org's repositories instead.
 
 Focus your exploration on:
 - The specific feature flag, component, or system named in the ticket

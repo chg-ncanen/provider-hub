@@ -49,6 +49,11 @@ prompt that invoked this skill (`/ticket-merge Repos directory: <path>`).
 Take the text following "Repos directory:" in your own initial prompt as
 its value.
 
+Before touching `$REPOS_DIR` in any way, read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_CONTRACT.md` — it governs everything you may do
+with it. The `cd` above is read-only usage (operation 3), purely so `gh` can resolve
+which repo it's talking about — this agent never edits file content at all.
+
 ---
 
 ## Steps

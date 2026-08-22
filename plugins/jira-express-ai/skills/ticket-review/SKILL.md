@@ -59,6 +59,12 @@ prompt that invoked this skill (`/ticket-review Repos directory: <path>`).
 Take the text following "Repos directory:" in your own initial prompt as
 its value.
 
+Before touching `$REPOS_DIR` in any way, read
+`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_CONTRACT.md` — it governs everything you may do
+with it. The `cd` below is read-only usage (operation 3), purely so `gh` can resolve
+which repo it's talking about — never edit or commit anything while inside
+`$REPOS_DIR/$REPO` itself.
+
 ---
 
 ## Steps
@@ -115,9 +121,12 @@ If any comments require code changes:
 
 1. Make the changes in the ticket's own **worktree** — `$TICKET_DIR/$REPO`, not
    `$REPOS_DIR/$REPO`. The shared clone under `$REPOS_DIR` stays on `main` by
-   design (see `ticket-implementation/SKILL.md`'s worktree-isolation section);
-   committing there would push straight onto `main`, and it isn't safe to touch
-   concurrently since it's shared across every ticket, not per-ticket.
+   design; committing there would push straight onto `main`, and it isn't safe
+   to touch concurrently since it's shared across every ticket, not
+   per-ticket. `ticket-implementation` already created this worktree, but
+   don't assume it's still there — apply the contract's operation 4
+   (create-if-missing, `$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_CONTRACT.md`) before
+   editing, so you self-heal instead of failing if it's ever missing.
 2. Commit and push:
    ```bash
    cd $TICKET_DIR/$REPO
