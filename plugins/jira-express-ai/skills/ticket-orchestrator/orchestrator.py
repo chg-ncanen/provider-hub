@@ -21,7 +21,6 @@ Optional env vars:
                            script's sibling skill files regardless of cwd.
 """
 
-import contextlib
 import fcntl
 import logging
 import os
@@ -224,25 +223,34 @@ def try_acquire_lock(ticket_dir: Path):
         return None
     return fh
 
-@contextlib.contextmanager
-def repo_lock(repos_dir: Path, repo: str):
-    """Hold the same per-repo flock ticket-implementation/SKILL.md takes
-    around `git worktree add` (see its "Repo setup" section) — at the same
-    path, $REPOS_DIR/.repo-locks/<repo>.lock — around any other operation
-    that touches that repo's shared .git/worktrees/ metadata. `git worktree
-    remove`/`prune` (below) is exactly such an operation: it's easy to assume
-    only *creating* a worktree touches shared state, but removing one does
-    too, and a concurrent add+remove on the same repo can race on it just
-    the same. Blocks and waits rather than skipping if held — unlike the
-    per-ticket worker lock, this isn't optional to act on, just brief."""
+def try_repo_lock(repos_dir: Path, repo: str):
+    """Non-blocking: try once to acquire the same per-repo flock
+    ticket-implementation/SKILL.md takes around `git worktree add` (see its
+    "Repo setup" section) — at the same path, $REPOS_DIR/.repo-locks/<repo>.lock
+    — around any other operation that touches that repo's shared
+    .git/worktrees/ metadata. `git worktree remove`/`prune` is exactly such an
+    operation: it's easy to assume only *creating* a worktree touches shared
+    state, but removing one does too, and a concurrent add+remove on the same
+    repo can race on it just the same.
+
+    Returns an open file object (caller must fcntl.flock(fh, LOCK_UN) and
+    close it) if acquired, or None if another process currently holds it.
+    Deliberately non-blocking, unlike the ticket lock's try_acquire_lock():
+    this is only ever used from cleanup, which must never stall the
+    orchestrator's own run waiting on someone else's in-progress worktree
+    setup on the same repo — that contradicts the "exit quickly, never
+    block" design the rest of the orchestrator depends on. A worktree whose
+    repo lock is held just gets picked up on the next cleanup pass instead.
+    """
     lock_dir = repos_dir / ".repo-locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with open(lock_dir / f"{repo}.lock", "a+") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(fh, fcntl.LOCK_UN)
+    fh = open(lock_dir / f"{repo}.lock", "a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 
@@ -279,19 +287,25 @@ def remove_worktrees(label: str, ticket_dir: Path, repos_dir: Path) -> None:
         main_clone = repos_dir / repo
         if not main_clone.exists():
             continue
+        lock_fh = try_repo_lock(repos_dir, repo)
+        if lock_fh is None:
+            log.info(f"{label}: {repo}'s lock is held (likely an active setup elsewhere) — skipping worktree removal for now, will retry next cleanup pass")
+            continue
         try:
-            with repo_lock(repos_dir, repo):
-                subprocess.run(
-                    ["git", "-C", str(main_clone), "worktree", "remove", str(entry), "--force"],
-                    check=True, timeout=30,
-                )
-                subprocess.run(
-                    ["git", "-C", str(main_clone), "worktree", "prune"],
-                    check=True, timeout=30,
-                )
+            subprocess.run(
+                ["git", "-C", str(main_clone), "worktree", "remove", str(entry), "--force"],
+                check=True, timeout=30,
+            )
+            subprocess.run(
+                ["git", "-C", str(main_clone), "worktree", "prune"],
+                check=True, timeout=30,
+            )
             log.info(f"{label}: removed worktree {entry}")
         except Exception as e:
             log.warning(f"{label}: failed to remove worktree {entry} — {e}")
+        finally:
+            fcntl.flock(lock_fh, fcntl.LOCK_UN)
+            lock_fh.close()
 
 
 def close_remote_artifacts(key: str, ticket_dir: Path, repos_dir: Path) -> None:
