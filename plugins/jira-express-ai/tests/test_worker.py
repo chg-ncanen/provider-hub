@@ -286,12 +286,12 @@ class TestSanityCheckAndRewind(TempDirTestCase):
 
 
 class TestReportFailure(unittest.TestCase):
-    def _run(self, recent_comments):
+    def _run(self, recent_comments, stage="ticket-discovery"):
         with patch.object(worker, "jira_comment") as mock_comment, \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "get_recent_comments_text", return_value=recent_comments):
             with self.assertRaises(SystemExit):
-                worker.report_failure("PDE-1", "something broke", ("e", "t"))
+                worker.report_failure("PDE-1", "something broke", ("e", "t"), stage=stage)
         return mock_comment, mock_transition
 
     def test_first_failure_does_not_escalate(self) -> None:
@@ -312,11 +312,13 @@ class TestReportFailure(unittest.TestCase):
             "🤖 ⚠️ PDE-1: something broke — will retry automatically.",
             "🤖 ⚠️ PDE-1: second failure — will retry automatically.",
             "🤖 ⚠️ PDE-1: first failure — will retry automatically.",
-        ])
+        ], stage="ticket-implementation")
         mock_transition.assert_called_once_with(
             "PDE-1", "Blocked", ("e", "t"), fields=worker._blocked_reason_field("something broke")
         )
         self.assertEqual(mock_comment.call_count, 2)
+        escalation_message = mock_comment.call_args.args[1]
+        self.assertIn("move back to In Progress", escalation_message)
 
     def test_stops_counting_at_first_non_failure_comment(self) -> None:
         _, mock_transition = self._run([
@@ -336,7 +338,7 @@ class TestReportFailure(unittest.TestCase):
              patch.object(worker, "get_recent_comments_text") as mock_recent:
             with self.assertLogs(worker.log, level="ERROR"):
                 with self.assertRaises(SystemExit):
-                    worker.report_failure("PDE-1", "something broke", ("e", "t"))
+                    worker.report_failure("PDE-1", "something broke", ("e", "t"), stage="ticket-discovery")
         mock_recent.assert_not_called()  # never got past the failed comment post
 
     def test_still_exits_cleanly_when_fetching_recent_comments_fails(self) -> None:
@@ -345,7 +347,7 @@ class TestReportFailure(unittest.TestCase):
              patch.object(worker, "jira_transition") as mock_transition:
             with self.assertLogs(worker.log, level="ERROR"):
                 with self.assertRaises(SystemExit):
-                    worker.report_failure("PDE-1", "something broke", ("e", "t"))
+                    worker.report_failure("PDE-1", "something broke", ("e", "t"), stage="ticket-discovery")
         mock_comment.assert_called_once()  # the failure comment itself did get posted
         mock_transition.assert_not_called()  # never got far enough to decide on escalation
 
@@ -370,6 +372,7 @@ class TestApplyBlockedRouting(TempDirTestCase):
         self.assertIn("Need clarification on scope.", message)
         self.assertIn("Ask the PM.", message)
         self.assertIn("ticket-discovery", message)
+        self.assertIn("move back to In Discovery", message)
 
 
 class TestWaitForSentinel(TempDirTestCase):
@@ -458,6 +461,7 @@ class TestLaunchSpecialist(TempDirTestCase):
         mock_fail.assert_called_once()
         self.assertEqual(mock_fail.call_args.args[0], self.ticket_dir.name)
         self.assertIn("ticket-discovery", mock_fail.call_args.args[1])
+        self.assertEqual(mock_fail.call_args.kwargs["stage"], "ticket-discovery")
         mock_popen.assert_not_called()  # never got far enough to actually launch anything
 
 
@@ -777,6 +781,7 @@ class TestRunMerge(TempDirTestCase):
             "PDE-1", "Blocked", self.auth, fields=worker._blocked_reason_field("merge conflicts")
         )
         self.assertIn("merge conflicts", mock_comment.call_args.args[1])
+        self.assertIn("move back to UAT Review", mock_comment.call_args.args[1])
         mock_fail.assert_not_called()
 
     def test_pending_does_not_transition_or_comment(self) -> None:
@@ -812,8 +817,11 @@ class TestRunMerge(TempDirTestCase):
 
 class TestHumanGates(TempDirTestCase):
     def test_qa_review_gate_reposts_handoff_comment(self) -> None:
+        (self.ticket_dir / "discovery.md").write_text(
+            "**Status:** OK\n\n## Summary\n\nDiscovery complete, ready for review.\n"
+        )
         with patch.object(worker, "jira_comment") as mock_comment:
-            worker.run_qa_review_gate("PDE-1", self.auth)
+            worker.run_qa_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("Discovery complete", mock_comment.call_args.args[1])
 
     def test_in_review_gate_includes_pr_url_when_available(self) -> None:

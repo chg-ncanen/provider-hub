@@ -207,6 +207,18 @@ def _blocked_reason_field(reason: str) -> dict:
     return {BLOCKED_REASON_FIELD: reason}
 
 
+# The status a ticket should be moved back to once its Blocked reason is
+# resolved — always the status it was in immediately before the Blocked
+# transition, i.e. wherever the given stage runs from. Keyed by the same
+# stage name used for the `stage`/`skill` argument at every call site below.
+RESUME_STATUS_FOR_STAGE = {
+    "ticket-discovery": "In Discovery",
+    "ticket-implementation": "In Progress",
+    "ticket-review": "In Progress",
+    "ticket-merge": "UAT Review",
+}
+
+
 def jira_comment(key: str, text: str, auth) -> None:
     r = requests.post(
         f"{JIRA_BASE}/issue/{key}/comment",
@@ -324,7 +336,7 @@ def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, auth) -> No
         # already a plain file) must not crash this session with a bare
         # traceback and no Jira trail — every other failure in this script
         # goes through report_failure() so a human always sees something.
-        report_failure(ticket_dir.name, f"could not prepare a log file for {skill} at {log_dir} ({e})", auth)
+        report_failure(ticket_dir.name, f"could not prepare a log file for {skill} at {log_dir} ({e})", auth, stage=skill)
         return  # unreachable — report_failure() always exits
     proc = subprocess.Popen(
         ["claude", f"--name={agent_name}",
@@ -351,7 +363,7 @@ def wait_for_sentinel(skill: str, sentinel_path: Path, timeout: int = SENTINEL_T
 
 # ── Failure / blocked routing ─────────────────────────────────────────────────
 
-def report_failure(key: str, reason: str, auth) -> None:
+def report_failure(key: str, reason: str, auth, stage: str) -> None:
     """A sub-agent timing out or a validation check failing isn't a
     deliberate signal like BLOCKED — it's just something that didn't work,
     and it might not happen again on retry. Comment and leave the ticket
@@ -378,7 +390,8 @@ def report_failure(key: str, reason: str, auth) -> None:
             jira_comment(
                 key,
                 f"🤖 {key} has failed 3 times in a row with no progress — stopping "
-                f"automatic retries. See the recent comments above and this session's logs for details.",
+                f"automatic retries. See the recent comments above and this session's logs for details.\n"
+                f"Once resolved, move back to {RESUME_STATUS_FOR_STAGE[stage]} to continue.",
                 auth,
             )
             log.error(f"{key}: escalated to Blocked after 3 consecutive failures")
@@ -404,6 +417,7 @@ def apply_blocked_routing(key: str, artifact_path: Path, stage: str, auth) -> No
     message = f"🤖 {stage} is blocked on {key}: {blocker}"
     if next_step:
         message += f"\n{next_step}"
+    message += f"\nOnce resolved, move back to {RESUME_STATUS_FOR_STAGE[stage]} to continue."
     jira_comment(key, message, auth)
 
     log.warning(f"{key}: BLOCKED ({stage}) — {blocker}")
@@ -427,11 +441,11 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     sentinel.unlink(missing_ok=True)
     launch_specialist("ticket-discovery", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-discovery", sentinel):
-        report_failure(key, "ticket-discovery did not complete within 900s", auth)
+        report_failure(key, "ticket-discovery did not complete within 900s", auth, stage="ticket-discovery")
         return
 
     if not artifact.exists():
-        report_failure(key, "ticket-discovery finished but discovery.md is missing", auth)
+        report_failure(key, "ticket-discovery finished but discovery.md is missing", auth, stage="ticket-discovery")
         return
 
     if extract_status(artifact) == "BLOCKED":
@@ -466,11 +480,11 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
     sentinel.unlink(missing_ok=True)
     launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-implementation", sentinel):
-        report_failure(key, "ticket-implementation did not complete within 900s", auth)
+        report_failure(key, "ticket-implementation did not complete within 900s", auth, stage="ticket-implementation")
         return
 
     if not notes.exists():
-        report_failure(key, "ticket-implementation finished but implementation-notes.md is missing", auth)
+        report_failure(key, "ticket-implementation finished but implementation-notes.md is missing", auth, stage="ticket-implementation")
         return
 
     if extract_status(notes) == "BLOCKED":
@@ -482,7 +496,7 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
     # Missing after a non-BLOCKED run is a bug in that agent, not something
     # to work around here.
     if not review_context.exists():
-        report_failure(key, "ticket-implementation finished but review-context.md is missing", auth)
+        report_failure(key, "ticket-implementation finished but review-context.md is missing", auth, stage="ticket-implementation")
         return
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL")
@@ -512,11 +526,11 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
 
     launch_specialist("ticket-review", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-review", sentinel):
-        report_failure(key, "ticket-review did not complete within 900s", auth)
+        report_failure(key, "ticket-review did not complete within 900s", auth, stage="ticket-review")
         return
 
     if not notes.exists():
-        report_failure(key, "ticket-review finished but review-notes.md is missing", auth)
+        report_failure(key, "ticket-review finished but review-notes.md is missing", auth, stage="ticket-review")
         return
 
     if extract_status(notes) == "BLOCKED":
@@ -543,11 +557,11 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
 
     launch_specialist("ticket-merge", ticket_dir, repos_dir, auth)
     if not wait_for_sentinel("ticket-merge", sentinel):
-        report_failure(key, "ticket-merge did not complete within 900s", auth)
+        report_failure(key, "ticket-merge did not complete within 900s", auth, stage="ticket-merge")
         return
 
     if not notes.exists():
-        report_failure(key, "ticket-merge finished but merge-notes.md is missing", auth)
+        report_failure(key, "ticket-merge finished but merge-notes.md is missing", auth, stage="ticket-merge")
         return
 
     content = notes.read_text()
@@ -560,7 +574,12 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     elif status == "BLOCKED":
         reason = extract_section(content, "Blocker") or "(no Blocker section found)"
         jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(reason))
-        jira_comment(key, f"🤖 Merge blocked for {key}: {reason}", auth)
+        jira_comment(
+            key,
+            f"🤖 Merge blocked for {key}: {reason}\n"
+            f"Once resolved, move back to {RESUME_STATUS_FOR_STAGE['ticket-merge']} to continue.",
+            auth,
+        )
         log.warning(f"{key}: merge blocked — {reason}")
     elif status == "PENDING":
         # Nothing is wrong, just not ready yet — no Jira transition, no
@@ -569,7 +588,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         reason = extract_section(content, "Reason")
         log.info(f"{key}: merge pending — {reason} — will check again next run")
     else:
-        report_failure(key, f"ticket-merge returned unrecognized status '{status}'", auth)
+        report_failure(key, f"ticket-merge returned unrecognized status '{status}'", auth, stage="ticket-merge")
 
 
 def run_qa_review_gate(key: str, ticket_dir: Path, auth) -> None:
