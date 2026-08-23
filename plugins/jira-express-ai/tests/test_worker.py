@@ -9,6 +9,7 @@ _SKILL_DIR = Path(__file__).resolve().parent.parent / "skills" / "ticket-worker"
 sys.path.insert(0, str(_SKILL_DIR))
 
 import worker  # noqa: E402
+import confluence_sync  # noqa: E402
 
 
 class TempDirTestCase(unittest.TestCase):
@@ -581,6 +582,7 @@ class TestRunDiscovery(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -607,6 +609,7 @@ class TestRunDiscovery(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -634,6 +637,7 @@ class TestRunDiscovery(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -653,6 +657,7 @@ class TestRunDiscovery(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/x") as mock_push:
             worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -672,7 +677,8 @@ class TestRunDiscovery(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "apply_blocked_routing") as mock_blocked, \
-             patch.object(worker, "jira_transition") as mock_transition:
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_blocked.assert_called_once()
@@ -683,7 +689,8 @@ class TestRunDiscovery(TempDirTestCase):
         with patch.object(worker, "launch_specialist"), \
              patch.object(worker, "wait_for_sentinel", return_value=False), \
              patch.object(worker, "report_failure") as mock_fail, \
-             patch.object(worker, "jira_transition") as mock_transition:
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_fail.assert_called_once()
@@ -692,9 +699,56 @@ class TestRunDiscovery(TempDirTestCase):
     def test_missing_artifact_after_done_reports_failure(self) -> None:
         with patch.object(worker, "launch_specialist"), \
              patch.object(worker, "wait_for_sentinel", return_value=True), \
-             patch.object(worker, "report_failure") as mock_fail:
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
         mock_fail.assert_called_once()
+
+    def test_pulls_prior_confluence_content_before_launching_specialist(self) -> None:
+        # Not resume-specific: this runs on every invocation, but a human's
+        # Confluence edit must overwrite the local .md file's content before
+        # the specialist reads it, whether this is the ticket's first-ever
+        # run (pull() returns None, a no-op) or a revision.
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** READY\n\n## Summary\n\nOriginal AI findings.\n")
+
+        launched_with_content = {}
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            launched_with_content["at_launch"] = artifact.read_text()
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", return_value=True), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "pull", return_value="## Summary\n\nHuman-edited findings.\n**Status:** READY\n") as mock_pull, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
+            worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_pull.assert_called_once_with("PDE-1234", "discovery", self.auth)
+        self.assertIn("Human-edited findings.", launched_with_content["at_launch"])
+
+    def test_skip_confluence_pull_flag_skips_the_pull(self) -> None:
+        with patch.object(worker, "launch_specialist"), \
+             patch.object(worker, "wait_for_sentinel", return_value=False), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull") as mock_pull:
+            worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth, skip_confluence_pull=True)
+
+        mock_pull.assert_not_called()
+        mock_fail.assert_called_once()
+
+    def test_confluence_pull_error_routes_through_report_failure_and_skips_launch(self) -> None:
+        with patch.object(worker, "launch_specialist") as mock_launch, \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull", side_effect=confluence_sync.ConfluencePullError("timeout")):
+            worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_not_called()
+        mock_fail.assert_called_once()
+        args, kwargs = mock_fail.call_args
+        self.assertEqual(kwargs.get("stage"), "ticket-discovery")
+        self.assertIn("Confluence", args[1])
 
 
 class TestRunImplementation(TempDirTestCase):
@@ -719,6 +773,7 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -740,6 +795,7 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/z") as mock_push:
             worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -759,7 +815,8 @@ class TestRunImplementation(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "report_failure") as mock_fail, \
-             patch.object(worker, "jira_transition") as mock_transition:
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_fail.assert_called_once()
@@ -778,7 +835,8 @@ class TestRunImplementation(TempDirTestCase):
 
         with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
-             patch.object(worker, "apply_blocked_routing") as mock_blocked:
+             patch.object(worker, "apply_blocked_routing") as mock_blocked, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
         mock_blocked.assert_called_once()
         self.assertEqual(mock_blocked.call_args.args[2], "ticket-implementation")
@@ -801,6 +859,7 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "report_failure") as mock_fail, \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -822,6 +881,7 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/nc") as mock_push:
             worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -847,7 +907,8 @@ class TestRunImplementation(TempDirTestCase):
 
         with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
-             patch.object(worker, "report_failure") as mock_fail:
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_launch.assert_called_once()
@@ -877,6 +938,7 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "pull", return_value=None), \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -938,12 +1000,56 @@ class TestRunImplementation(TempDirTestCase):
         with patch.object(worker, "launch_specialist"), \
              patch.object(worker, "wait_for_sentinel", return_value=False), \
              patch.object(worker, "report_failure") as mock_fail, \
-             patch.object(worker, "jira_transition") as mock_transition:
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker.confluence_sync, "pull", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_fail.assert_called_once()
         self.assertIn("ticket-implementation did not complete within 900s", mock_fail.call_args.args[1])
         mock_transition.assert_not_called()
+
+    def test_first_pass_pulls_prior_confluence_content_before_launching_specialist(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+
+        launched_with_content = {}
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            launched_with_content["at_launch"] = notes.read_text() if notes.exists() else None
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", return_value=True), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull", return_value="**Status:** OK\n\nHuman-edited notes.\n") as mock_pull:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_pull.assert_called_once_with("PDE-1234", "implementation", self.auth)
+        self.assertIn("Human-edited notes.", launched_with_content["at_launch"])
+        # No notes.md written by the fake launch — falls through to the
+        # "implementation-notes.md is missing" failure, which is fine: this
+        # test only cares that the pulled content was in place before launch.
+        mock_fail.assert_called_once()
+
+    def test_first_pass_skip_confluence_pull_flag_skips_the_pull(self) -> None:
+        with patch.object(worker, "launch_specialist"), \
+             patch.object(worker, "wait_for_sentinel", return_value=False), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull") as mock_pull:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth, skip_confluence_pull=True)
+
+        mock_pull.assert_not_called()
+        mock_fail.assert_called_once()
+
+    def test_first_pass_confluence_pull_error_routes_through_report_failure_and_skips_launch(self) -> None:
+        with patch.object(worker, "launch_specialist") as mock_launch, \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull", side_effect=confluence_sync.ConfluencePullError("timeout")):
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_not_called()
+        mock_fail.assert_called_once()
+        args, kwargs = mock_fail.call_args
+        self.assertEqual(kwargs.get("stage"), "ticket-implementation")
+        self.assertIn("Confluence", args[1])
 
     def test_review_pass_timeout_reports_failure(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
@@ -1142,13 +1248,14 @@ class TestHumanGates(TempDirTestCase):
 
 
 class TestMainDispatch(TempDirTestCase):
-    def _run_main(self, jira_status, rewound_status=None):
+    def _run_main(self, jira_status, rewound_status=None, extra_argv=None):
         # main() reassigns "To Do" to "In Discovery" itself before calling
         # sanity_check_and_rewind() — that's the status the mock actually
         # sees and must default to returning unchanged, not the raw
         # jira_status passed in for this case.
         effective_status = "In Discovery" if jira_status == "To Do" else jira_status
-        with patch.object(sys, "argv", ["worker.py", str(self.repos_dir)]), \
+        argv = ["worker.py", *(extra_argv or []), str(self.repos_dir)]
+        with patch.object(sys, "argv", argv), \
              patch.object(worker.Path, "cwd", return_value=self.ticket_dir), \
              patch.object(worker, "_auth", return_value=self.auth), \
              patch.object(worker, "read_status", return_value=jira_status) as mock_read, \
@@ -1158,7 +1265,8 @@ class TestMainDispatch(TempDirTestCase):
              patch.object(worker, "run_qa_review_gate") as mock_qa, \
              patch.object(worker, "run_implementation") as mock_impl, \
              patch.object(worker, "run_in_review_gate") as mock_in_review, \
-             patch.object(worker, "run_merge") as mock_merge:
+             patch.object(worker, "run_merge") as mock_merge, \
+             patch.object(worker.confluence_sync, "clear_all") as mock_clear:
             worker.main()
         return {
             "read_status": mock_read,
@@ -1169,6 +1277,7 @@ class TestMainDispatch(TempDirTestCase):
             "impl": mock_impl,
             "in_review": mock_in_review,
             "merge": mock_merge,
+            "clear": mock_clear,
         }
 
     def test_to_do_transitions_then_routes_to_discovery(self) -> None:
@@ -1176,6 +1285,49 @@ class TestMainDispatch(TempDirTestCase):
         mocks["transition"].assert_called_once_with(self.ticket_dir.name, "In Discovery", self.auth)
         mocks["rewind"].assert_called_once_with(self.ticket_dir.name, "In Discovery", self.ticket_dir, self.auth)
         mocks["discovery"].assert_called_once()
+
+    def test_fresh_to_do_clears_confluence_pages_before_transitioning(self) -> None:
+        mocks = self._run_main("To Do")
+        mocks["clear"].assert_called_once_with(self.ticket_dir.name, self.auth)
+
+    def test_clear_confluence_not_called_when_not_a_fresh_to_do(self) -> None:
+        for status in ("In Discovery", "QA Review", "In Progress", "In Review", "UAT Review", "Done"):
+            mocks = self._run_main(status)
+            mocks["clear"].assert_not_called()
+
+    def test_skip_confluence_pull_flag_threaded_to_discovery(self) -> None:
+        mocks = self._run_main("In Discovery", extra_argv=["--skip-confluence-pull"])
+        mocks["discovery"].assert_called_once_with(
+            self.ticket_dir.name, self.ticket_dir, self.repos_dir, self.auth, True
+        )
+
+    def test_without_flag_discovery_called_with_skip_confluence_pull_false(self) -> None:
+        mocks = self._run_main("In Discovery")
+        mocks["discovery"].assert_called_once_with(
+            self.ticket_dir.name, self.ticket_dir, self.repos_dir, self.auth, False
+        )
+
+    def test_skip_confluence_pull_flag_threaded_to_implementation(self) -> None:
+        mocks = self._run_main("In Progress", extra_argv=["--skip-confluence-pull"])
+        mocks["impl"].assert_called_once_with(
+            self.ticket_dir.name, self.ticket_dir, self.repos_dir, self.auth, True
+        )
+
+    def test_skip_confluence_pull_flag_recognized_after_the_positional_repos_dir(self) -> None:
+        # The flag must be recognized anywhere in argv, not just before the
+        # required positional repos-dir argument.
+        with patch.object(sys, "argv", ["worker.py", str(self.repos_dir), "--skip-confluence-pull"]), \
+             patch.object(worker.Path, "cwd", return_value=self.ticket_dir), \
+             patch.object(worker, "_auth", return_value=self.auth), \
+             patch.object(worker, "read_status", return_value="In Discovery"), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "sanity_check_and_rewind", return_value="In Discovery"), \
+             patch.object(worker, "run_discovery") as mock_discovery, \
+             patch.object(worker.confluence_sync, "clear_all"):
+            worker.main()
+        mock_discovery.assert_called_once_with(
+            self.ticket_dir.name, self.ticket_dir, self.repos_dir, self.auth, True
+        )
 
     def test_in_discovery_routes_to_discovery(self) -> None:
         mocks = self._run_main("In Discovery")

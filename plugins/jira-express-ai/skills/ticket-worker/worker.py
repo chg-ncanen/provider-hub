@@ -469,9 +469,22 @@ def apply_blocked_routing(key: str, artifact_path: Path, stage: str, auth) -> No
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
+def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth, skip_confluence_pull: bool = False) -> None:
     sentinel = ticket_dir / ".discovery-agent-done"
     artifact = ticket_dir / "discovery.md"
+
+    # Unconditional, not resume-specific: on this ticket's very first-ever
+    # discovery pass no Confluence page exists yet, so pull() returns None
+    # and this is a no-op. Same code path handles "first run" and "revision
+    # after a QA rejection" without needing to tell them apart.
+    if not skip_confluence_pull:
+        try:
+            pulled = confluence_sync.pull(key, "discovery", auth)
+        except confluence_sync.ConfluencePullError as e:
+            report_failure(key, f"could not fetch prior discovery.md content from Confluence: {e}", auth, stage="ticket-discovery")
+            return
+        if pulled is not None:
+            artifact.write_text(pulled)
 
     # Always run fresh — including the sentinel. A stale sentinel left over
     # from a prior discovery pass (e.g. a human rejected the ticket back
@@ -502,7 +515,7 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     log.info(f"{key}: waiting for QA review")
 
 
-def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
+def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth, skip_confluence_pull: bool = False) -> None:
     notes = ticket_dir / "implementation-notes.md"
     review_context = ticket_dir / "review-context.md"
 
@@ -512,12 +525,24 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> Non
     # review agent, which has nothing to review here). Route it through the
     # same fresh-implementation path as a first attempt.
     if not notes.exists() or extract_status(notes) == "NO_CHANGES_NEEDED":
-        _run_first_implementation_pass(key, ticket_dir, repos_dir, notes, review_context, auth)
+        _run_first_implementation_pass(key, ticket_dir, repos_dir, notes, review_context, auth, skip_confluence_pull)
     else:
         _run_review_pass(key, ticket_dir, repos_dir, review_context, auth)
 
 
-def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth) -> None:
+def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth, skip_confluence_pull: bool = False) -> None:
+    # Unconditional, not resume-specific — same reasoning as run_discovery's
+    # pull: a genuine first attempt has no Confluence page yet, so pull()
+    # returns None and this is a no-op.
+    if not skip_confluence_pull:
+        try:
+            pulled = confluence_sync.pull(key, "implementation", auth)
+        except confluence_sync.ConfluencePullError as e:
+            report_failure(key, f"could not fetch prior implementation-notes.md content from Confluence: {e}", auth, stage="ticket-implementation")
+            return
+        if pulled is not None:
+            notes.write_text(pulled)
+
     # Always run fresh — including the sentinel. A stale sentinel left over
     # from a prior attempt that reported done without producing
     # implementation-notes.md (a bug in that specialist, not something
@@ -714,10 +739,13 @@ def sanity_check_and_rewind(key: str, status: str, ticket_dir: Path, auth) -> st
 
 def main() -> None:
     _load_plugin_env(PLUGIN_ROOT)
-    if len(sys.argv) != 2:
-        log.error("usage: worker.py <repos-dir>")
+    args = sys.argv[1:]
+    skip_confluence_pull = "--skip-confluence-pull" in args
+    positional = [a for a in args if not a.startswith("--")]
+    if len(positional) != 1:
+        log.error("usage: worker.py [--skip-confluence-pull] <repos-dir>")
         sys.exit(1)
-    repos_dir = Path(sys.argv[1])
+    repos_dir = Path(positional[0])
     ticket_dir = Path.cwd()
     key = ticket_dir.name
     auth = _auth()
@@ -729,17 +757,21 @@ def main() -> None:
     log.info(f"Ticket {key}: status={status}")
 
     if status == "To Do":
+        # Best-effort: blanks (doesn't delete) any of this key's existing
+        # Confluence child pages from a prior attempt, so a restart doesn't
+        # leave stale content visible under a page that looks current.
+        confluence_sync.clear_all(key, auth)
         jira_transition(key, "In Discovery", auth)
         status = "In Discovery"
 
     status = sanity_check_and_rewind(key, status, ticket_dir, auth)
 
     if status == "In Discovery":
-        run_discovery(key, ticket_dir, repos_dir, auth)
+        run_discovery(key, ticket_dir, repos_dir, auth, skip_confluence_pull)
     elif status == "QA Review":
         run_qa_review_gate(key, ticket_dir, auth)
     elif status == "In Progress":
-        run_implementation(key, ticket_dir, repos_dir, auth)
+        run_implementation(key, ticket_dir, repos_dir, auth, skip_confluence_pull)
     elif status == "In Review":
         run_in_review_gate(key, ticket_dir, auth)
     elif status == "UAT Review":
