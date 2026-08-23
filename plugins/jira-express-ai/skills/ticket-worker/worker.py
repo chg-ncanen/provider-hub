@@ -311,29 +311,31 @@ def build_qa_review_comment(key: str, artifact: Path, confluence_url: str | None
     return f"{action}\n\nSummary: {summary}\n\n{pointer}"
 
 
-def build_in_review_comment(key: str, notes: Path, review_context: Path) -> str:
+def build_in_review_comment(key: str, notes: Path, review_context: Path, confluence_url: str | None) -> str:
     """In Review handoff comment, shared by the end of the implementation
     path and by a resumed re-entry into the In Review gate — so both stay
-    in sync automatically, mirroring build_qa_review_comment()'s pattern.
-    Action line varies: implementation can recommend closing outright
+    in sync, mirroring build_qa_review_comment()'s pattern. Action line
+    varies: implementation can recommend closing outright
     (NO_CHANGES_NEEDED) instead of the default hand-off to PR review."""
     content = notes.read_text()
     status = _extract_status_text(content)
 
     if status == "NO_CHANGES_NEEDED":
         summary = extract_section(content, "PR Readiness") or "(no summary found in implementation-notes.md)"
+        pointer = f"Full details: {confluence_url}" if confluence_url else "See implementation-notes.md for full findings."
         return (
             f"🤖 {key}: implementation found no code changes are needed — recommends closing this ticket.\n"
             f"• Approve: move to Done\n"
             f"• Reject: move back to In Progress with a comment explaining what to revisit\n\n"
-            f"Summary: {summary}\n\nSee implementation-notes.md for full findings."
+            f"Summary: {summary}\n\n{pointer}"
         )
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
     suffix = f": {pr_url}" if pr_url else ""
+    pointer = f" Full details: {confluence_url}" if confluence_url else ""
     return (
         f"🤖 {key} is ready for review{suffix}. When approved, move to UAT Review "
-        f"to trigger merge. If you have comments to address, move back to In Progress."
+        f"to trigger merge. If you have comments to address, move back to In Progress.{pointer}"
     )
 
 # ── Sub-agent launch ──────────────────────────────────────────────────────────
@@ -530,8 +532,9 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
         return
 
     if status == "NO_CHANGES_NEEDED":
+        confluence_url = confluence_sync.push(key, "implementation", notes.read_text(), auth)
         jira_transition(key, "In Review", auth)
-        jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
+        jira_comment(key, build_in_review_comment(key, notes, review_context, confluence_url), auth)
         log.info(f"{key}: implementation found no changes needed — waiting for human decision")
         return
 
@@ -543,8 +546,9 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
         report_failure(key, "ticket-implementation finished but review-context.md is missing", auth, stage="ticket-implementation")
         return
 
+    confluence_url = confluence_sync.push(key, "implementation", notes.read_text(), auth)
     jira_transition(key, "In Review", auth)
-    jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
+    jira_comment(key, build_in_review_comment(key, notes, review_context, confluence_url), auth)
     log.info(f"{key}: waiting for PR review")
 
 
@@ -575,12 +579,14 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
         return
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
+    confluence_url = confluence_sync.push(key, "review", notes.read_text(), auth)
+    pointer = f" Full details: {confluence_url}" if confluence_url else ""
     jira_transition(key, "In Review", auth)
     jira_comment(
         key,
         f"🤖 PR review pass complete for {key}. PR: {pr_url}\n"
         f"Comments addressed. Ready for approval — move to UAT Review when approved.\n"
-        f"If you have more comments, move back to In Progress.",
+        f"If you have more comments, move back to In Progress.{pointer}",
         auth,
     )
     log.info(f"{key}: waiting for PR approval")
@@ -643,15 +649,16 @@ def run_qa_review_gate(key: str, ticket_dir: Path, auth) -> None:
 def run_in_review_gate(key: str, ticket_dir: Path, auth) -> None:
     """Human gate, resumed directly into In Review with no status change
     since the implementation/review path already posted the handoff
-    comment — re-post it so a resumed session doesn't just exit silently.
-    implementation-notes.md is guaranteed to exist here: reaching this
-    status already passed sanity_check_and_rewind()'s stage-completion
-    check. Shares build_in_review_comment() with the end of the
-    implementation path so both stay in sync, including the
-    NO_CHANGES_NEEDED variant."""
+    comment — re-post it (and re-sync to Confluence) so a resumed session
+    doesn't just exit silently. implementation-notes.md is guaranteed to
+    exist here: reaching this status already passed
+    sanity_check_and_rewind()'s stage-completion check. Shares
+    build_in_review_comment() with the end of the implementation path so
+    both stay in sync, including the NO_CHANGES_NEEDED variant."""
     notes = ticket_dir / "implementation-notes.md"
     review_context = ticket_dir / "review-context.md"
-    jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
+    confluence_url = confluence_sync.push(key, "implementation", notes.read_text(), auth)
+    jira_comment(key, build_in_review_comment(key, notes, review_context, confluence_url), auth)
     log.info(f"{key}: re-posted In Review comment, waiting")
 
 # ── Rewind ────────────────────────────────────────────────────────────────────

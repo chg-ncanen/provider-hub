@@ -520,6 +520,39 @@ class TestBuildQaReviewComment(TempDirTestCase):
         self.assertIn("See discovery.md for full findings.", comment)
 
 
+class TestBuildInReviewComment(TempDirTestCase):
+    def test_no_changes_needed_falls_back_without_url(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNothing to do.\n")
+        review_context = self.ticket_dir / "review-context.md"
+        comment = worker.build_in_review_comment("PDE-1234", notes, review_context, None)
+        self.assertIn("See implementation-notes.md for full findings.", comment)
+
+    def test_no_changes_needed_includes_confluence_link(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNothing to do.\n")
+        review_context = self.ticket_dir / "review-context.md"
+        comment = worker.build_in_review_comment("PDE-1234", notes, review_context, "https://example/x")
+        self.assertIn("Full details: https://example/x", comment)
+
+    def test_ready_for_review_includes_confluence_link(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** READY\n\n## PR Readiness\n\nGood to go.\n")
+        review_context = self.ticket_dir / "review-context.md"
+        review_context.write_text("**PR URL:** https://github.com/chghealthcare/repo/pull/1\n")
+        comment = worker.build_in_review_comment("PDE-1234", notes, review_context, "https://example/x")
+        self.assertIn("Full details: https://example/x", comment)
+
+    def test_ready_for_review_falls_back_without_url(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** READY\n\n## PR Readiness\n\nGood to go.\n")
+        review_context = self.ticket_dir / "review-context.md"
+        review_context.write_text("**PR URL:** https://github.com/chghealthcare/repo/pull/1\n")
+        comment = worker.build_in_review_comment("PDE-1234", notes, review_context, None)
+        self.assertNotIn("Full details:", comment)
+        self.assertIn("ready for review", comment)
+
+
 class TestRunDiscovery(TempDirTestCase):
     def test_launches_when_sentinel_missing_and_transitions_on_success(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
@@ -672,11 +705,33 @@ class TestRunImplementation(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment") as mock_comment:
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_transition.assert_called_once_with("PDE-1", "In Review", self.auth)
         self.assertIn("https://x/7", mock_comment.call_args.args[1])
+
+    def test_first_pass_pushes_to_confluence_and_links_it_in_the_comment(self) -> None:
+        (self.ticket_dir / "review-context.md").write_text("**PR:** #7\n**PR URL:** https://x/7\n")
+        notes = self.ticket_dir / "implementation-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            notes.write_text("**Status:** OK\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/z") as mock_push:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "implementation", notes.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/z", mock_comment.call_args.args[1])
 
     def test_first_pass_missing_review_context_reports_failure(self) -> None:
         # No review-context.md written — the specialist claims done but
@@ -732,12 +787,33 @@ class TestRunImplementation(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "report_failure") as mock_fail, \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment") as mock_comment:
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_fail.assert_not_called()
         mock_transition.assert_called_once_with("PDE-1", "In Review", self.auth)
         self.assertIn("recommends closing", mock_comment.call_args.args[1])
+
+    def test_first_pass_no_changes_needed_pushes_to_confluence_and_links_it(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            notes.write_text("**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNo change needed.\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/nc") as mock_push:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "implementation", notes.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/nc", mock_comment.call_args.args[1])
 
     def test_rejected_no_changes_needed_reruns_implementation_not_review(self) -> None:
         # implementation-notes.md already exists (a prior NO_CHANGES_NEEDED
@@ -787,7 +863,8 @@ class TestRunImplementation(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment"):
+             patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_launch.assert_called_once()
@@ -811,12 +888,38 @@ class TestRunImplementation(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment") as mock_comment:
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_launch.assert_called_once()
         mock_transition.assert_called_once_with("PDE-1", "In Review", self.auth)
         self.assertIn("https://x/7", mock_comment.call_args.args[1])
+
+    def test_review_pass_pushes_to_confluence_and_links_it_in_the_comment(self) -> None:
+        (self.ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
+        review_context = self.ticket_dir / "review-context.md"
+        review_context.write_text("**PR:** #7\n**PR URL:** https://x/7\n")
+        notes = self.ticket_dir / "review-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            self.assertEqual(skill, "ticket-review")
+            notes.write_text("**Status:** RESOLVED\n\n## Comments Addressed\n\nNone.\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/review") as mock_push:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_called_once()
+        mock_push.assert_called_once_with("PDE-1234", "review", notes.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/review", mock_comment.call_args.args[1])
 
     def test_first_pass_timeout_reports_failure(self) -> None:
         with patch.object(worker, "launch_specialist"), \
@@ -931,13 +1034,15 @@ class TestHumanGates(TempDirTestCase):
     def test_in_review_gate_includes_pr_url_when_available(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** READY\n")
         (self.ticket_dir / "review-context.md").write_text("**PR URL:** https://x/7\n")
-        with patch.object(worker, "jira_comment") as mock_comment:
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("https://x/7", mock_comment.call_args.args[1])
 
     def test_in_review_gate_without_review_context(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** READY\n")
-        with patch.object(worker, "jira_comment") as mock_comment:
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("ready for review", mock_comment.call_args.args[1])
 
@@ -945,9 +1050,20 @@ class TestHumanGates(TempDirTestCase):
         (self.ticket_dir / "implementation-notes.md").write_text(
             "**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNo change needed.\n"
         )
-        with patch.object(worker, "jira_comment") as mock_comment:
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("recommends closing", mock_comment.call_args.args[1])
+
+    def test_in_review_gate_resyncs_to_confluence_and_links_it(self) -> None:
+        notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** READY\n")
+        (self.ticket_dir / "review-context.md").write_text("**PR URL:** https://x/7\n")
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/ir") as mock_push:
+            worker.run_in_review_gate("PDE-1234", self.ticket_dir, self.auth)
+        mock_push.assert_called_once_with("PDE-1234", "implementation", notes.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/ir", mock_comment.call_args.args[1])
 
 
 class TestMainDispatch(TempDirTestCase):
