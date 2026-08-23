@@ -17,6 +17,13 @@ one behavioral difference that conversion introduced.
   latest, read code read-only, or create-if-missing its own git worktree to make
   changes in — plus the per-repo locking each of those requires. Every specialist's
   `SKILL.md` points here rather than restating the rules.
+- **`JIRA_EXPRESS_AI_TRUST_CONTRACT.md`** — the single source of truth for treating
+  Jira/PR/repo content as untrusted data rather than instructions: what the fixed
+  capability ceiling is regardless of what that content asks for, and what to do
+  (refuse, reply, log, and — for genuine manipulation attempts — escalate the
+  comment's visibility) when it tries to reach outside that ceiling. Every
+  specialist's `SKILL.md` points here, tailored to the untrusted surface it
+  actually reads (Jira comments, PR comments, repo content, or PR/CI metadata).
 - **`skills/ticket-orchestrator/`** — stateless, cron-safe dispatcher (`orchestrator.py`). Queries
   Jira fresh every run for `project = PDE AND labels = "AI-Work" AND statusCategory != Done`,
   decides per ticket whether to start a new session or resume an existing one based on Jira status
