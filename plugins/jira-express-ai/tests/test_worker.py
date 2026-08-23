@@ -675,6 +675,60 @@ class TestRunImplementation(TempDirTestCase):
         mock_blocked.assert_called_once()
         self.assertEqual(mock_blocked.call_args.args[2], "ticket-implementation")
 
+    def test_first_pass_no_changes_needed_skips_review_context_requirement(self) -> None:
+        # No review-context.md written — deliberately, since NO_CHANGES_NEEDED
+        # means no PR was ever opened. Must not be treated as the specialist
+        # failing to produce a required artifact.
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            (ticket_dir / "implementation-notes.md").write_text(
+                "**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNo change needed.\n"
+            )
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker, "jira_comment") as mock_comment:
+            worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_fail.assert_not_called()
+        mock_transition.assert_called_once_with("PDE-1", "In Review", self.auth)
+        self.assertIn("recommends closing", mock_comment.call_args.args[1])
+
+    def test_rejected_no_changes_needed_reruns_implementation_not_review(self) -> None:
+        # implementation-notes.md already exists (a prior NO_CHANGES_NEEDED
+        # pass) and a human moved the ticket back to In Progress to ask for
+        # another look. There's no PR to review, so this must redo
+        # implementation, not launch ticket-review.
+        (self.ticket_dir / "implementation-notes.md").write_text(
+            "**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNo change needed.\n"
+        )
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            self.assertEqual(skill, "ticket-implementation")
+            (ticket_dir / "implementation-notes.md").write_text("**Status:** OK\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "report_failure") as mock_fail:
+            worker.run_implementation("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_launch.assert_called_once()
+        # Falls through to the "review-context.md missing" failure since the
+        # fake relaunch above doesn't write one — proves this took the
+        # first-pass branch (which requires it), not the review-pass branch
+        # (which launches ticket-review instead).
+        mock_fail.assert_called_once()
+        self.assertIn("review-context.md", mock_fail.call_args.args[1])
+
     def test_first_pass_relaunches_even_with_stale_sentinel_from_a_broken_prior_attempt(self) -> None:
         # A prior attempt that reported done without producing
         # implementation-notes.md (a bug in that specialist, not something
@@ -825,15 +879,25 @@ class TestHumanGates(TempDirTestCase):
         self.assertIn("Discovery complete", mock_comment.call_args.args[1])
 
     def test_in_review_gate_includes_pr_url_when_available(self) -> None:
+        (self.ticket_dir / "implementation-notes.md").write_text("**Status:** READY\n")
         (self.ticket_dir / "review-context.md").write_text("**PR URL:** https://x/7\n")
         with patch.object(worker, "jira_comment") as mock_comment:
             worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("https://x/7", mock_comment.call_args.args[1])
 
     def test_in_review_gate_without_review_context(self) -> None:
+        (self.ticket_dir / "implementation-notes.md").write_text("**Status:** READY\n")
         with patch.object(worker, "jira_comment") as mock_comment:
             worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("ready for review", mock_comment.call_args.args[1])
+
+    def test_in_review_gate_no_changes_needed(self) -> None:
+        (self.ticket_dir / "implementation-notes.md").write_text(
+            "**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nNo change needed.\n"
+        )
+        with patch.object(worker, "jira_comment") as mock_comment:
+            worker.run_in_review_gate("PDE-1", self.ticket_dir, self.auth)
+        self.assertIn("recommends closing", mock_comment.call_args.args[1])
 
 
 class TestMainDispatch(TempDirTestCase):
