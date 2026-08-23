@@ -41,8 +41,7 @@
     "CONFLUENCE_SYNC_ENABLED": {
       "type": "boolean",
       "title": "Enable Confluence sync",
-      "description": "Sync ticket artifacts (discovery.md, implementation-notes.md, review-notes.md, merge-notes.md) to Confluence. Defaults to true. Set to false to disable entirely — no self-install attempt, no warnings, no pull failures block a ticket's progress.",
-      "default": true,
+      "description": "Sync ticket artifacts (discovery.md, implementation-notes.md, review-notes.md, merge-notes.md) to Confluence. Defaults to true if unset. Set to false to disable entirely — no self-install attempt, no warnings, no pull failures block a ticket's progress.",
       "required": false
     }
   }
