@@ -27,14 +27,21 @@ your job is:
    proceeding without the pending Confluence edit (e.g. "go ahead", "never
    mind, just continue", "that edit doesn't matter, keep going") as opposed
    to an unrelated comment that happens to appear after the failure. If it
-   does, pass `--skip-confluence-pull` to `worker.py` in the next step. If
-   you're not sure, don't pass it — the default (retry the pull) is always
+   does, when running step 3's command, prefix it with `SKIP_CONFLUENCE_PULL=1`
+   — e.g. `SKIP_CONFLUENCE_PULL=1 python3 ...` — set inline as part of the
+   same Bash tool call. (Shell environment variables set in one Bash tool call
+   do not persist into a later, separate Bash tool call in this harness — the
+   assignment must be inline on the exact command that invokes `worker.py`.)
+   If you're not sure, don't set it — the default (retry the pull) is always
    safe; skipping it is not.
 3. Run `worker.py` with that path as its one argument, and see it through to
    actual completion before doing anything else.
 4. Report its output (stdout/stderr, already redirected by the orchestrator
    to `<KEY>.log` — in `AGENT_CHILD_LOG_DIR` if that env var is set, in this
    ticket's own directory otherwise).
+
+If step 2 concluded "yes, skip the Confluence pull", prefix the command below
+with `SKIP_CONFLUENCE_PULL=1 `:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" \
