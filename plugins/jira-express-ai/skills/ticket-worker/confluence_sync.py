@@ -81,6 +81,34 @@ def _rendering_unavailable_reason() -> str:
     )
 
 
+def _bootstrap_pip() -> bool:
+    """get-pip.py self-heal for a Python that has no `pip` module at all —
+    the exact technique pde-ops-tools/scripts/bootstrap-deps.sh already uses
+    for its own venv, needed because Debian/Ubuntu strip pip's bundled wheel
+    data out of the base python3 package (only python3.X-venv includes it).
+    Downloads pip straight from PyPI's bootstrap host into --user site-
+    packages, so it needs no root either. Best-effort: any failure (no
+    curl, no network reaching bootstrap.pypa.io) just means the caller's
+    subsequent retry fails the same way it would have without this."""
+    try:
+        get_pip = subprocess.run(
+            ["curl", "-fsSL", "https://bootstrap.pypa.io/get-pip.py"],
+            capture_output=True, timeout=30,
+        )
+        if get_pip.returncode != 0 or not get_pip.stdout:
+            return False
+        result = subprocess.run(
+            [sys.executable, "-", "--user", "--quiet"],
+            input=get_pip.stdout, capture_output=True, timeout=60,
+        )
+        if result.returncode != 0:
+            log.warning(f"pip bootstrap via get-pip.py failed ({result.returncode}): {result.stderr.decode(errors='replace').strip()[-500:]}")
+        return result.returncode == 0
+    except Exception as e:
+        log.warning(f"pip bootstrap via get-pip.py failed: {e}")
+        return False
+
+
 def _ensure_rendering_available() -> bool:
     """Best-effort: if markdown/markdownify failed to import at module load,
     try installing them via pip before treating the feature as unavailable.
@@ -128,11 +156,16 @@ def _ensure_rendering_available() -> bool:
     try:
         _SELF_INSTALL_ATTEMPTED = True
         log.warning(f"attempting to self-install missing Confluence rendering deps: {_MISSING_RENDERING_DEPS}")
+        install_args = [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS]
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS],
-                capture_output=True, text=True, timeout=60,
-            )
+            result = subprocess.run(install_args, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0 and "No module named pip" in result.stderr:
+                # Debian/Ubuntu strip pip's bundled wheel data out of the
+                # base python3 package — this Python has no pip at all, not
+                # just missing packages. One retry after bootstrapping it.
+                log.warning("pip itself is missing — attempting to bootstrap it via get-pip.py before retrying")
+                if _bootstrap_pip():
+                    result = subprocess.run(install_args, capture_output=True, text=True, timeout=60)
             if result.returncode != 0:
                 log.warning(f"self-install failed ({result.returncode}): {result.stderr.strip()[-500:]}")
                 return False

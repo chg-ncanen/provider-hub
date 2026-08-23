@@ -615,6 +615,48 @@ class TestSyncDisabled(unittest.TestCase):
         mock_ensure.assert_not_called()
 
 
+class TestBootstrapPip(unittest.TestCase):
+    """get-pip.py self-heal for a Python with no pip module at all."""
+
+    @patch("confluence_sync.subprocess.run")
+    def test_successful_bootstrap(self, mock_run) -> None:
+        curl_result = MagicMock(returncode=0, stdout=b"print('fake get-pip.py')")
+        install_result = MagicMock(returncode=0, stderr=b"")
+        mock_run.side_effect = [curl_result, install_result]
+
+        self.assertTrue(confluence_sync._bootstrap_pip())
+        self.assertEqual(mock_run.call_count, 2)
+        curl_args = mock_run.call_args_list[0][0][0]
+        self.assertEqual(curl_args[0], "curl")
+        self.assertIn("https://bootstrap.pypa.io/get-pip.py", curl_args)
+        getpip_args = mock_run.call_args_list[1][0][0]
+        self.assertEqual(getpip_args[0], sys.executable)
+        self.assertIn("--user", getpip_args)
+
+    @patch("confluence_sync.subprocess.run")
+    def test_curl_failure_returns_false(self, mock_run) -> None:
+        mock_run.return_value = MagicMock(returncode=1, stdout=b"")
+        self.assertFalse(confluence_sync._bootstrap_pip())
+        mock_run.assert_called_once()  # never got to running get-pip.py
+
+    @patch("confluence_sync.subprocess.run")
+    def test_get_pip_execution_failure_returns_false(self, mock_run) -> None:
+        curl_result = MagicMock(returncode=0, stdout=b"print('fake get-pip.py')")
+        install_result = MagicMock(returncode=1, stderr=b"permission denied")
+        mock_run.side_effect = [curl_result, install_result]
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._bootstrap_pip()
+        self.assertFalse(result)
+
+    @patch("confluence_sync.subprocess.run")
+    def test_subprocess_exception_is_swallowed(self, mock_run) -> None:
+        mock_run.side_effect = FileNotFoundError("curl not found")
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._bootstrap_pip()
+        self.assertFalse(result)
+
+
 class TestEnsureRenderingAvailable(unittest.TestCase):
     """_ensure_rendering_available()'s self-install attempt: memoized (never
     a second subprocess call within the same process), best-effort (never
@@ -706,6 +748,69 @@ class TestEnsureRenderingAvailable(unittest.TestCase):
             result = confluence_sync._ensure_rendering_available()
         self.assertFalse(result)
         self.assertFalse(confluence_sync._RENDERING_AVAILABLE)
+
+    @patch("confluence_sync._bootstrap_pip")
+    @patch("confluence_sync.subprocess.run")
+    def test_missing_pip_bootstraps_then_retries_successfully(self, mock_run, mock_bootstrap) -> None:
+        """The real production failure mode this was built for: pip itself
+        isn't installed (not just the packages). One bootstrap attempt,
+        then one retry of the original install command.
+
+        Deliberately does NOT also mock importlib.import_module: doing so
+        together with mocking _bootstrap_pip (a dotted target inside this
+        same module) breaks unittest.mock's own target resolution, which
+        itself calls importlib.import_module to resolve dotted patch
+        targets — verified directly, this is a real mock quirk, not a bug
+        in the code under test. Letting the real `markdown`/`markdownify`
+        import here is safe: every other test in this file already
+        requires those packages to be genuinely installed to run at all."""
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        confluence_sync._markdown_lib = None
+        confluence_sync._markdownify_lib = None
+        first_attempt = MagicMock(returncode=1, stderr="/usr/bin/python3: No module named pip")
+        retry_attempt = MagicMock(returncode=0, stderr="")
+        mock_run.side_effect = [first_attempt, retry_attempt]
+        mock_bootstrap.return_value = True
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertTrue(result)
+        self.assertTrue(confluence_sync._RENDERING_AVAILABLE)
+        self.assertEqual(confluence_sync._MISSING_RENDERING_DEPS, [])
+        mock_bootstrap.assert_called_once()
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch("confluence_sync._bootstrap_pip")
+    @patch("confluence_sync.subprocess.run")
+    def test_missing_pip_bootstrap_failure_does_not_retry_forever(self, mock_run, mock_bootstrap) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        mock_run.return_value = MagicMock(returncode=1, stderr="/usr/bin/python3: No module named pip")
+        mock_bootstrap.return_value = False
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertFalse(result)
+        mock_bootstrap.assert_called_once()
+        # Bootstrap failed, so the install command is never retried — only
+        # the one initial attempt.
+        mock_run.assert_called_once()
+
+    @patch("confluence_sync._bootstrap_pip")
+    @patch("confluence_sync.subprocess.run")
+    def test_non_pip_missing_failure_never_attempts_bootstrap(self, mock_run, mock_bootstrap) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        mock_run.return_value = MagicMock(returncode=1, stderr="connection timed out")
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertFalse(result)
+        mock_bootstrap.assert_not_called()
 
     @patch("confluence_sync.subprocess.run")
     def test_subprocess_exception_is_swallowed_not_raised(self, mock_run) -> None:
