@@ -170,5 +170,59 @@ class TestGetOrCreateParent(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 20)
 
 
+class TestPush(unittest.TestCase):
+    @patch("confluence_sync._space_id")
+    @patch("confluence_sync.requests.post")
+    @patch("confluence_sync._find_page")
+    @patch("confluence_sync._get_or_create_parent")
+    def test_creates_child_page_when_missing(self, mock_parent, mock_find, mock_post, mock_space_id) -> None:
+        mock_parent.return_value = "100"
+        mock_find.return_value = None  # no existing "Discovery" child
+        mock_space_id.return_value = "929781"
+        mock_post.return_value = _mock_response({"id": "300"})
+        url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
+        self.assertEqual(url, "https://chghealthcare.atlassian.net/wiki/spaces/PDE/pages/300")
+
+        # Verify the HTTP request details
+        args, kwargs = mock_post.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/pages")
+        self.assertEqual(kwargs["json"]["spaceId"], "929781")
+        self.assertEqual(kwargs["json"]["title"], "Discovery")
+        self.assertEqual(kwargs["json"]["parentId"], "100")
+        self.assertEqual(kwargs["json"]["status"], "current")
+        self.assertEqual(kwargs["json"]["body"]["representation"], "storage")
+        self.assertIn("Findings", kwargs["json"]["body"]["value"])
+        self.assertEqual(kwargs["auth"], ("e", "t"))
+        self.assertEqual(kwargs["timeout"], 20)
+
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    @patch("confluence_sync._get_or_create_parent")
+    def test_updates_existing_child_page_with_fresh_version(self, mock_parent, mock_find, mock_put) -> None:
+        mock_parent.return_value = "100"
+        mock_find.return_value = {"id": "300", "version": 5}
+        mock_put.return_value = _mock_response({"id": "300"})
+        url = confluence_sync.push("PDE-1234", "discovery", "# Findings v2", ("e", "t"))
+        self.assertEqual(url, "https://chghealthcare.atlassian.net/wiki/spaces/PDE/pages/300")
+
+        # Verify the HTTP request details
+        args, kwargs = mock_put.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/pages/300")
+        self.assertEqual(kwargs["json"]["id"], "300")
+        self.assertEqual(kwargs["json"]["title"], "Discovery")
+        self.assertEqual(kwargs["json"]["status"], "current")
+        self.assertEqual(kwargs["json"]["body"]["representation"], "storage")
+        self.assertIn("Findings v2", kwargs["json"]["body"]["value"])
+        self.assertEqual(kwargs["json"]["version"]["number"], 6)
+        self.assertEqual(kwargs["auth"], ("e", "t"))
+        self.assertEqual(kwargs["timeout"], 20)
+
+    @patch("confluence_sync._get_or_create_parent")
+    def test_returns_none_on_any_failure(self, mock_parent) -> None:
+        mock_parent.side_effect = RuntimeError("network down")
+        url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
+        self.assertIsNone(url)
+
+
 if __name__ == "__main__":
     unittest.main()

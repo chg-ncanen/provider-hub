@@ -173,3 +173,49 @@ def _get_or_create_parent(key: str, auth) -> str:
     )
     r.raise_for_status()
     return r.json()["id"]
+
+
+def push(key: str, artifact_type: str, markdown_content: str, auth) -> str | None:
+    """Best-effort. Returns the child page's web URL on success, None on any
+    failure — callers fall back to today's 'see the .md file' comment
+    wording when this returns None."""
+    try:
+        title = ARTIFACT_TYPES[artifact_type]["title"]
+        body = render_storage_body(artifact_type, markdown_content)
+        parent_id = _get_or_create_parent(key, auth)
+        existing = _find_page(auth, title, parent_id)
+        if existing:
+            r = requests.put(
+                f"{CONFLUENCE_V2_BASE}/pages/{existing['id']}",
+                json={
+                    "id": existing["id"],
+                    "status": "current",
+                    "title": title,
+                    "body": {"representation": "storage", "value": body},
+                    "version": {"number": existing["version"] + 1},
+                },
+                auth=auth,
+                headers={"Content-Type": "application/json"},
+                timeout=20,
+            )
+            r.raise_for_status()
+            page_id = existing["id"]
+        else:
+            r = requests.post(
+                f"{CONFLUENCE_V2_BASE}/pages",
+                json={
+                    "spaceId": _space_id(auth),
+                    "status": "current",
+                    "title": title,
+                    "parentId": parent_id,
+                    "body": {"representation": "storage", "value": body},
+                },
+                auth=auth,
+                headers={"Content-Type": "application/json"},
+                timeout=20,
+            )
+            r.raise_for_status()
+            page_id = r.json()["id"]
+        return f"https://chghealthcare.atlassian.net/wiki/spaces/{_space_key()}/pages/{page_id}"
+    except Exception:
+        return None
