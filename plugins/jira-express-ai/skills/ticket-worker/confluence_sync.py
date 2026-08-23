@@ -13,9 +13,11 @@ the Confluence REST API via `requests`, reusing the same
 ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN worker.py already requires for Jira.
 """
 
+import importlib
 import logging
 import os
 import re
+import subprocess
 import sys
 from datetime import date
 
@@ -56,12 +58,80 @@ except ImportError:
     _MISSING_RENDERING_DEPS.append("markdownify")
 
 _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
-_RENDERING_UNAVAILABLE_REASON = (
-    "Confluence sync is unavailable: {} not installed (run: pip install {})".format(
+_SELF_INSTALL_ATTEMPTED = False
+
+
+def _rendering_unavailable_reason() -> str:
+    # A function, not a constant: _MISSING_RENDERING_DEPS can shrink after a
+    # successful (or partially successful) _ensure_rendering_available() call,
+    # so this always reflects what's *currently* missing, not what was
+    # missing at import time.
+    return "Confluence sync is unavailable: {} not installed (run: pip install {})".format(
         " and ".join(f"'{d}'" for d in _MISSING_RENDERING_DEPS) or "rendering dependencies",
         " ".join(_MISSING_RENDERING_DEPS) or "markdown markdownify",
     )
-)
+
+
+def _ensure_rendering_available() -> bool:
+    """Best-effort, at most once per process: if markdown/markdownify failed
+    to import at module load, try installing them via pip before treating
+    the feature as unavailable. Installing into --user site-packages needs
+    no root and doesn't touch anything system-managed. Memoized via
+    _SELF_INSTALL_ATTEMPTED so a genuine failure (no network, no pip, a
+    locked-down environment) doesn't retry a slow subprocess call on every
+    push()/pull()/clear_all() within the same worker.py run — the next
+    *process* (the next ticket-worker invocation) tries again fresh, since
+    conditions may have changed (e.g. a human ran the pip command manually
+    in between)."""
+    global _markdown_lib, _markdownify_lib, _RENDERING_AVAILABLE, _MISSING_RENDERING_DEPS, _SELF_INSTALL_ATTEMPTED
+    if _RENDERING_AVAILABLE or _SELF_INSTALL_ATTEMPTED:
+        return _RENDERING_AVAILABLE
+    _SELF_INSTALL_ATTEMPTED = True
+
+    log.warning(f"attempting to self-install missing Confluence rendering deps: {_MISSING_RENDERING_DEPS}")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS],
+            capture_output=True, text=True, timeout=60,
+        )
+        if result.returncode != 0:
+            log.warning(f"self-install failed ({result.returncode}): {result.stderr.strip()[-500:]}")
+            return False
+    except Exception as e:
+        log.warning(f"self-install failed: {e}")
+        return False
+
+    still_missing = []
+    if _markdown_lib is None:
+        try:
+            _markdown_lib = importlib.import_module("markdown")
+        except ImportError:
+            still_missing.append("markdown")
+    if _markdownify_lib is None:
+        try:
+            _markdownify_lib = importlib.import_module("markdownify")
+        except ImportError:
+            still_missing.append("markdownify")
+
+    _MISSING_RENDERING_DEPS = still_missing
+    _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
+    if _RENDERING_AVAILABLE:
+        log.info("self-installed markdown/markdownify — Confluence sync is now available")
+    else:
+        log.warning(f"self-install ran but still missing: {_MISSING_RENDERING_DEPS}")
+    return _RENDERING_AVAILABLE
+
+
+def _sync_enabled() -> bool:
+    # Default on — must be explicitly turned off. A developer who never
+    # touches this config gets Confluence sync by default (best-effort,
+    # self-installing); one who deliberately doesn't want it set once and
+    # never sees another Confluence-related warning again.
+    value = (
+        os.environ.get("CONFLUENCE_SYNC_ENABLED", "").strip()
+        or os.environ.get("CLAUDE_PLUGIN_OPTION_CONFLUENCE_SYNC_ENABLED", "").strip()
+    )
+    return value.lower() not in ("false", "0", "no")
 
 # Same cloud ID as worker.py/orchestrator.py — each file keeps its own copy
 # rather than sharing an import, matching existing precedent (orchestrator.py:63,
@@ -313,8 +383,10 @@ def push(key: str, artifact_type: str, markdown_content: str, auth) -> str | Non
     failure — callers fall back to today's 'see the .md file' comment
     wording when this returns None. Every failure is logged: swallowed is
     not the same as untraceable."""
-    if not _RENDERING_AVAILABLE:
-        log.warning(f"{key}: {_RENDERING_UNAVAILABLE_REASON} — skipping push ({artifact_type})")
+    if not _sync_enabled():
+        return None
+    if not _ensure_rendering_available():
+        log.warning(f"{key}: {_rendering_unavailable_reason()} — skipping push ({artifact_type})")
         return None
     try:
         title = _child_title(key, artifact_type)
@@ -369,9 +441,13 @@ def pull(key: str, artifact_type: str, auth) -> str | None:
     asymmetric with push()/clear_all()'s early return: pushing without
     rendering is just "can't sync, move on", but *pulling* without it could
     silently discard a human's Confluence-only edit. That's exactly what
-    ConfluencePullError exists to escalate."""
-    if not _RENDERING_AVAILABLE:
-        raise ConfluencePullError(_RENDERING_UNAVAILABLE_REASON)
+    ConfluencePullError exists to escalate — but only when sync is actually
+    enabled; if a human explicitly turned it off, there's no edit to
+    protect and this is a plain no-op, same as push()/clear_all()."""
+    if not _sync_enabled():
+        return None
+    if not _ensure_rendering_available():
+        raise ConfluencePullError(_rendering_unavailable_reason())
     try:
         parent = _find_page(auth, key, _parent_page_id())
         if not parent:
@@ -403,8 +479,10 @@ def clear_all(key: str, auth) -> None:
     history keeps the previous attempt's content. A missing child page
     (that stage was never reached) is skipped, not created. One page failing
     doesn't stop the others from being cleared; every failure is logged."""
-    if not _RENDERING_AVAILABLE:
-        log.warning(f"{key}: {_RENDERING_UNAVAILABLE_REASON} — skipping page clear")
+    if not _sync_enabled():
+        return
+    if not _ensure_rendering_available():
+        log.warning(f"{key}: {_rendering_unavailable_reason()} — skipping page clear")
         return
     try:
         parent = _find_page(auth, key, _parent_page_id())

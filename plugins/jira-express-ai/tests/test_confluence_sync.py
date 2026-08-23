@@ -17,6 +17,18 @@ sys.path.insert(0, str(_SKILL_DIR))
 import confluence_sync  # noqa: E402
 
 
+def setUpModule() -> None:
+    # Pre-empt _ensure_rendering_available()'s self-install attempt for
+    # every test in this file except TestEnsureRenderingAvailable's own
+    # (which explicitly resets this and always mocks subprocess.run). In an
+    # environment where markdown/markdownify are genuinely missing, without
+    # this a single test calling the real push()/pull()/clear_all() would
+    # trigger one real, network-dependent `pip install` subprocess call as
+    # a side effect of running the test suite. This is a no-op when the
+    # real packages ARE present, since _RENDERING_AVAILABLE is already True.
+    confluence_sync._SELF_INSTALL_ATTEMPTED = True
+
+
 class TestConfig(unittest.TestCase):
     def setUp(self) -> None:
         self._saved = {
@@ -494,9 +506,16 @@ class TestRenderingDependencyUnavailable(unittest.TestCase):
     edit would otherwise be silently discarded."""
 
     def setUp(self) -> None:
-        patcher = patch.object(confluence_sync, "_RENDERING_AVAILABLE", False)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        # _SELF_INSTALL_ATTEMPTED=True simulates "already tried and failed
+        # this process" — without it, _ensure_rendering_available() would
+        # attempt a real subprocess.run(pip install ...) here, making these
+        # tests slow and non-hermetic.
+        patcher1 = patch.object(confluence_sync, "_RENDERING_AVAILABLE", False)
+        patcher2 = patch.object(confluence_sync, "_SELF_INSTALL_ATTEMPTED", True)
+        patcher1.start()
+        patcher2.start()
+        self.addCleanup(patcher1.stop)
+        self.addCleanup(patcher2.stop)
 
     @patch("confluence_sync.requests.post")
     @patch("confluence_sync.requests.put")
@@ -524,6 +543,181 @@ class TestRenderingDependencyUnavailable(unittest.TestCase):
         with self.assertRaises(confluence_sync.ConfluencePullError):
             confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
         mock_find.assert_not_called()
+
+
+class TestSyncEnabled(unittest.TestCase):
+    def setUp(self) -> None:
+        self._saved = {
+            k: os.environ.pop(k, None)
+            for k in ("CONFLUENCE_SYNC_ENABLED", "CLAUDE_PLUGIN_OPTION_CONFLUENCE_SYNC_ENABLED")
+        }
+
+    def tearDown(self) -> None:
+        for k, v in self._saved.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+
+    def test_defaults_to_enabled(self) -> None:
+        self.assertTrue(confluence_sync._sync_enabled())
+
+    def test_explicit_false_disables(self) -> None:
+        os.environ["CONFLUENCE_SYNC_ENABLED"] = "false"
+        self.assertFalse(confluence_sync._sync_enabled())
+
+    def test_explicit_true_stays_enabled(self) -> None:
+        os.environ["CONFLUENCE_SYNC_ENABLED"] = "true"
+        self.assertTrue(confluence_sync._sync_enabled())
+
+    def test_plugin_option_fallback_disables(self) -> None:
+        os.environ["CLAUDE_PLUGIN_OPTION_CONFLUENCE_SYNC_ENABLED"] = "false"
+        self.assertFalse(confluence_sync._sync_enabled())
+
+    def test_explicit_env_var_takes_precedence_over_plugin_option(self) -> None:
+        os.environ["CONFLUENCE_SYNC_ENABLED"] = "true"
+        os.environ["CLAUDE_PLUGIN_OPTION_CONFLUENCE_SYNC_ENABLED"] = "false"
+        self.assertTrue(confluence_sync._sync_enabled())
+
+
+class TestSyncDisabled(unittest.TestCase):
+    """When a human explicitly turns Confluence sync off, push/pull/clear_all
+    must be silent, unconditional no-ops — no self-install attempt, no
+    warnings, no pull escalation. There's no human edit to protect if the
+    feature was never turned on."""
+
+    def setUp(self) -> None:
+        patcher = patch.object(confluence_sync, "_sync_enabled", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("confluence_sync._ensure_rendering_available")
+    @patch("confluence_sync._find_page")
+    def test_push_is_a_silent_no_op(self, mock_find, mock_ensure) -> None:
+        url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
+        self.assertIsNone(url)
+        mock_find.assert_not_called()
+        mock_ensure.assert_not_called()
+
+    @patch("confluence_sync._ensure_rendering_available")
+    @patch("confluence_sync._find_page")
+    def test_pull_returns_none_instead_of_raising(self, mock_find, mock_ensure) -> None:
+        result = confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+        self.assertIsNone(result)
+        mock_find.assert_not_called()
+        mock_ensure.assert_not_called()
+
+    @patch("confluence_sync._ensure_rendering_available")
+    @patch("confluence_sync._find_page")
+    def test_clear_all_is_a_silent_no_op(self, mock_find, mock_ensure) -> None:
+        confluence_sync.clear_all("PDE-1234", ("e", "t"))
+        mock_find.assert_not_called()
+        mock_ensure.assert_not_called()
+
+
+class TestEnsureRenderingAvailable(unittest.TestCase):
+    """_ensure_rendering_available()'s self-install attempt: memoized (never
+    a second subprocess call within the same process), best-effort (never
+    raises), and correctly updates module state on success/partial success."""
+
+    def setUp(self) -> None:
+        self._saved = (
+            confluence_sync._markdown_lib,
+            confluence_sync._markdownify_lib,
+            confluence_sync._RENDERING_AVAILABLE,
+            confluence_sync._MISSING_RENDERING_DEPS,
+            confluence_sync._SELF_INSTALL_ATTEMPTED,
+        )
+
+    def tearDown(self) -> None:
+        (
+            confluence_sync._markdown_lib,
+            confluence_sync._markdownify_lib,
+            confluence_sync._RENDERING_AVAILABLE,
+            confluence_sync._MISSING_RENDERING_DEPS,
+            confluence_sync._SELF_INSTALL_ATTEMPTED,
+        ) = self._saved
+
+    def test_returns_true_immediately_when_already_available(self) -> None:
+        confluence_sync._RENDERING_AVAILABLE = True
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        with patch("confluence_sync.subprocess.run") as mock_run:
+            self.assertTrue(confluence_sync._ensure_rendering_available())
+        mock_run.assert_not_called()
+
+    def test_does_not_retry_after_a_failed_attempt_in_the_same_process(self) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = True
+        with patch("confluence_sync.subprocess.run") as mock_run:
+            self.assertFalse(confluence_sync._ensure_rendering_available())
+        mock_run.assert_not_called()
+
+    @patch("confluence_sync.importlib.import_module")
+    @patch("confluence_sync.subprocess.run")
+    def test_successful_self_install_makes_rendering_available(self, mock_run, mock_import) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        confluence_sync._markdown_lib = None
+        confluence_sync._markdownify_lib = None
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_import.side_effect = [MagicMock(), MagicMock()]
+
+        self.assertTrue(confluence_sync._ensure_rendering_available())
+        self.assertTrue(confluence_sync._RENDERING_AVAILABLE)
+        self.assertEqual(confluence_sync._MISSING_RENDERING_DEPS, [])
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args[0][0]
+        self.assertIn("markdown", call_args)
+        self.assertIn("markdownify", call_args)
+        self.assertIn("--user", call_args)
+        self.assertEqual(call_args[0], sys.executable)
+
+    @patch("confluence_sync.subprocess.run")
+    def test_failed_self_install_leaves_rendering_unavailable(self, mock_run) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        mock_run.return_value = MagicMock(returncode=1, stderr="no network")
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertFalse(result)
+        self.assertFalse(confluence_sync._RENDERING_AVAILABLE)
+
+    @patch("confluence_sync.subprocess.run")
+    def test_subprocess_exception_is_swallowed_not_raised(self, mock_run) -> None:
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        mock_run.side_effect = TimeoutError("pip timed out")
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertFalse(result)
+
+    @patch("confluence_sync.importlib.import_module")
+    @patch("confluence_sync.subprocess.run")
+    def test_partial_self_install_still_reports_unavailable(self, mock_run, mock_import) -> None:
+        """pip exits 0 but one of the two packages still can't be imported
+        (e.g. a version conflict) — must not be treated as a success."""
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        confluence_sync._MISSING_RENDERING_DEPS = ["markdown", "markdownify"]
+        confluence_sync._markdown_lib = None
+        confluence_sync._markdownify_lib = None
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+
+        def import_side_effect(name):
+            if name == "markdown":
+                return MagicMock()
+            raise ImportError("still missing")
+        mock_import.side_effect = import_side_effect
+
+        with self.assertLogs(confluence_sync.log, level="WARNING"):
+            result = confluence_sync._ensure_rendering_available()
+        self.assertFalse(result)
+        self.assertEqual(confluence_sync._MISSING_RENDERING_DEPS, ["markdownify"])
 
 
 if __name__ == "__main__":

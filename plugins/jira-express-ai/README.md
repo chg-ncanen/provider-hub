@@ -149,13 +149,19 @@ the worker's territory alone.
 - **Claude Code CLI** (`claude`) on `PATH` — the orchestrator and worker launch sub-agent sessions
   through it (`claude -p "/<skill>" --permission-mode=bypassPermissions ...`, detached with
   `nohup`).
-- Python 3 with the `requests`, `markdown`, and `markdownify` packages installed on the machine
-  running `orchestrator.py` and `worker.py` (not yet automated via a bootstrap hook the way
-  `pde-mcp`'s venv is — install them yourself for now: `pip install requests markdown markdownify`).
-  `requests` is hard-required; `markdown`/`markdownify` are needed only for the Confluence sync,
-  and without them the worker still runs every ticket normally — Confluence pushes become logged
-  no-ops (comments fall back to "see the .md file" wording), and a Confluence *pull* reports a
-  retryable failure rather than risk silently discarding a human's page edit.
+- Python 3 with `requests` installed on the machine running `orchestrator.py` and `worker.py`
+  (not yet automated via a bootstrap hook the way `pde-mcp`'s venv is — install it yourself:
+  `pip install requests`). Hard-required — the worker can't do anything without it.
+- `markdown` and `markdownify` — needed only for Confluence sync (see below), which is enabled by
+  default. `confluence_sync.py` tries to `pip install --user` them itself the first time it finds
+  them missing (no root needed, since `--user` never touches system-managed site-packages); if
+  that self-install also fails (no network, no `pip`, a locked-down environment), the worker still
+  runs every ticket normally — Confluence pushes become logged no-ops (comments fall back to "see
+  the .md file" wording), and a Confluence *pull* reports a retryable failure and escalates to
+  `Blocked` after 3 attempts with no progress, same as any other transient failure, rather than
+  risk silently discarding a human's page edit. Set `CONFLUENCE_SYNC_ENABLED=false` (this plugin's
+  `userConfig`) to turn Confluence sync off entirely instead — no self-install attempt, no
+  warnings, no `pull` escalation, just a plain no-op everywhere.
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
   `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
