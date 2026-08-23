@@ -25,6 +25,18 @@
       "title": "Repo clones directory",
       "description": "Absolute path to the directory containing this project's repo clones. Optional — if unset, defaults to the orchestrator's current working directory (repo clones expected as direct subfolders of it).",
       "required": false
+    },
+    "CONFLUENCE_SPACE_KEY": {
+      "type": "string",
+      "title": "Confluence space key",
+      "description": "Confluence space where ticket artifact pages are synced. Defaults to PDE if unset.",
+      "required": false
+    },
+    "CONFLUENCE_PARENT_PAGE_ID": {
+      "type": "string",
+      "title": "Confluence parent folder/page ID",
+      "description": "ID of the Confluence folder or page under which each ticket's parent page is created. Defaults to 5148311567 if unset.",
+      "required": false
     }
   }
 }

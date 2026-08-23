@@ -149,15 +149,19 @@ the worker's territory alone.
 - **Claude Code CLI** (`claude`) on `PATH` — the orchestrator and worker launch sub-agent sessions
   through it (`claude -p "/<skill>" --permission-mode=bypassPermissions ...`, detached with
   `nohup`).
-- Python 3 with the `requests` package installed on the machine running `orchestrator.py` and
-  `worker.py` (not yet automated via a bootstrap hook the way `pde-mcp`'s venv is — install it
-  yourself for now: `pip install requests`).
+- Python 3 with the `requests`, `markdown`, and `markdownify` packages installed on the machine
+  running `orchestrator.py` and `worker.py` (not yet automated via a bootstrap hook the way
+  `pde-mcp`'s venv is — install them yourself for now: `pip install requests markdown markdownify`).
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
   `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
   `CLAUDE_PLUGIN_OPTION_ATLASSIAN_EMAIL`/`CLAUDE_PLUGIN_OPTION_ATLASSIAN_API_TOKEN` (normal OS env
   inheritance carries them into nested subprocesses automatically). If running the script directly
   outside a plugin-managed session, export `ATLASSIAN_EMAIL`/`ATLASSIAN_API_TOKEN` yourself instead.
+- `CONFLUENCE_SPACE_KEY` (optional) — Confluence space where ticket artifact pages are synced.
+  Defaults to `PDE` if unset.
+- `CONFLUENCE_PARENT_PAGE_ID` (optional) — ID of the Confluence folder or page under which each
+  ticket's parent page is created. Defaults to `5148311567` if unset.
 - A target project directory containing (or able to clone) the repos being worked on, plus a
   writable `tickets/` subdirectory — this is where the orchestrator is run *from* (see
   `ticket-orchestrator/SKILL.md`'s "Working directory" section).
