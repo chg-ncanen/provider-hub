@@ -590,36 +590,51 @@ def cleanup_pass(tickets_dir: Path, archive_dir: Path, active_keys: set[str], re
 
 # ── Session rename ────────────────────────────────────────────────────────────
 
-def rename_stale_session(key: str) -> None:
-    """Before a fresh 'To Do' launch, rename any existing claude session
-    named <key> out of the way via a headless /rename prompt, so --name and
-    --resume can both just use the plain ticket key without ever colliding
-    with a leftover session from a prior run of this same ticket.
+def rename_stale_sessions(key: str, ticket_dir: Path, claude_projects_dir: Path = CLAUDE_PROJECTS_DIR) -> None:
+    """Before a fresh launch reuses ticket_dir as a cwd, clear out any
+    leftover claude sessions already sitting in Claude Code's project bucket
+    for that exact path, so --name=<key> can never collide.
 
-    Verified directly: claude session names are NOT unique — launching a
-    second fresh session that reuses a --name already in use creates a
-    second, distinct session sharing that name, and a later --resume by
-    that name then hard-errors ("matches N sessions... pass one of these
-    session IDs to disambiguate") instead of resolving. /rename does work
-    as a plain headless -p prompt (no interactive session needed), so
-    renaming the old one out of the way first — mirroring Copilot CLI's
-    original same-purpose step, just via Claude Code's own command instead
-    of hand-editing session files — keeps the plain key always resolvable.
+    Claude Code sessions are NOT stored inside ticket_dir — they live
+    externally in claude_projects_dir, keyed only by the cwd's encoded path
+    (see _claude_project_dir()). That bucket has no relationship to whether
+    ticket_dir itself currently exists on disk: a launch is only "fresh"
+    from Jira/ticket_dir's point of view. If ticket_dir was ever deleted by
+    hand (bypassing archive_ticket(), whose job is exactly to clear this
+    bucket first) or a prior archive's session-clearing silently failed, old
+    sessions can still be sitting in this bucket — and launching a new one
+    with --name=<key> on top of that produces two+ sessions sharing the
+    name, which a later --resume=<key> can't disambiguate.
 
-    Safe to call even when no such session exists yet (the common case for
-    a ticket's very first "To Do"): --resume on a name with zero matches
-    just fails to find anything to rename, which is not an error worth
-    surfacing.
+    A fresh launch's bucket is expected to be empty. If it isn't, every
+    session found there is treated as an orphan (nothing legitimate should
+    have run against this cwd before a fresh launch) and renamed out of the
+    way — by session UUID (the .jsonl filename), never by the plain key
+    name, since a UUID-targeted --resume is never ambiguous even when the
+    plain name already is.
     """
-    archive_name = f"{key}-archived-{date.today()}"
-    try:
-        subprocess.run(
-            ["claude", f"--resume={key}", "-p", f"/rename {archive_name}",
-             "--permission-mode=bypassPermissions"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except Exception as e:
-        log.warning(f"{key}: rename-stale-session attempt failed (likely nothing to rename): {e}")
+    session_dir = _claude_project_dir(ticket_dir, claude_projects_dir)
+    if not session_dir.is_dir():
+        return
+
+    orphans = sorted(p.stem for p in session_dir.glob("*.jsonl"))
+    if not orphans:
+        return
+
+    log.warning(
+        f"{key}: {len(orphans)} pre-existing session(s) found in {session_dir} "
+        f"before a fresh launch — expected none; renaming each out of the way"
+    )
+    archive_name = f"{key}-orphaned-{date.today()}"
+    for i, session_id in enumerate(orphans, start=1):
+        try:
+            subprocess.run(
+                ["claude", f"--resume={session_id}", "-p", f"/rename {archive_name}-{i}",
+                 "--permission-mode=bypassPermissions"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except Exception as e:
+            log.error(f"{key}: failed to rename orphaned session {session_id}: {e}")
 
 # ── Session launch ────────────────────────────────────────────────────────────
 
@@ -629,7 +644,7 @@ def launch_session(key: str, ticket_dir: Path, repos_dir: Path, is_new: bool, lo
     --name/--resume both just use the plain ticket key — verified directly
     that Claude Code resolves --resume by the name set via --name at launch,
     non-interactively, no UUID needed, as long as the name is unambiguous.
-    rename_stale_session() (called from process_ticket before a fresh
+    rename_stale_sessions() (called from process_ticket before a fresh
     launch) is what keeps it unambiguous.
 
     The repos directory rides along as plain text after the skill invocation
@@ -725,13 +740,18 @@ def process_ticket(
     is_new = jira_status == "To Do" or not had_prior_dir
 
     if is_new:
-        # Rename any stale claude session still holding this ticket's plain
-        # key name — a leftover from a prior run of this same ticket — before
-        # this launch reuses that name, so --resume stays unambiguous. See
-        # rename_stale_session()'s docstring for why this is necessary.
-        rename_stale_session(key)
         if had_prior_dir:
+            # Also clears this cwd's Claude Code session bucket (see
+            # archive_ticket() -> _archive_claude_sessions()) — ordinarily
+            # leaving nothing for the check below to find.
             archive_ticket(key, ticket_dir, cwd / "tickets" / "archive", repos_dir)
+        # Belt-and-suspenders: verify that clearing actually took, rather than
+        # assume it. Claude Code's session storage has no relationship to
+        # ticket_dir's existence, so a manual `rm -rf tickets/<KEY>`
+        # (bypassing archive_ticket() entirely) or a silently-failed clear
+        # above can each leave stale sessions sitting in the bucket — either
+        # would otherwise let this launch collide on the plain key name.
+        rename_stale_sessions(key, ticket_dir)
 
     # Ensure directory exists — the lock file has to live inside it.
     ticket_dir.mkdir(parents=True, exist_ok=True)

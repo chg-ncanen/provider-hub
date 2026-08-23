@@ -378,6 +378,52 @@ class TestArchiveClaudeSessions(TempDirTestCase):
         self.assertTrue(self.session_dir.exists())  # not deleted since the copy never succeeded
 
 
+class TestRenameStaleSessions(TempDirTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.ticket_dir = self.tmp_path / "tickets" / "PDE-1"
+        self.claude_projects_dir = self.tmp_path / "projects"
+        self.session_dir = orchestrator._claude_project_dir(self.ticket_dir, self.claude_projects_dir)
+
+    def test_noop_when_bucket_does_not_exist(self) -> None:
+        with patch.object(orchestrator.subprocess, "run") as mock_run:
+            orchestrator.rename_stale_sessions("PDE-1", self.ticket_dir, self.claude_projects_dir)
+        mock_run.assert_not_called()
+
+    def test_noop_when_bucket_exists_but_empty(self) -> None:
+        self.session_dir.mkdir(parents=True)
+        with patch.object(orchestrator.subprocess, "run") as mock_run:
+            orchestrator.rename_stale_sessions("PDE-1", self.ticket_dir, self.claude_projects_dir)
+        mock_run.assert_not_called()
+
+    def test_renames_every_orphan_by_uuid_not_by_plain_key(self) -> None:
+        self.session_dir.mkdir(parents=True)
+        (self.session_dir / "aaaa-uuid-1.jsonl").write_text("{}")
+        (self.session_dir / "bbbb-uuid-2.jsonl").write_text("{}")
+        (self.session_dir / "memory").mkdir()  # not a session — must be ignored
+
+        with patch.object(orchestrator.subprocess, "run") as mock_run, \
+             self.assertLogs(orchestrator.log, level="WARNING"):
+            orchestrator.rename_stale_sessions("PDE-1", self.ticket_dir, self.claude_projects_dir)
+
+        self.assertEqual(mock_run.call_count, 2)
+        resumed_ids = {call.args[0][1].split("=", 1)[1] for call in mock_run.call_args_list}
+        self.assertEqual(resumed_ids, {"aaaa-uuid-1", "bbbb-uuid-2"})
+        for call in mock_run.call_args_list:
+            self.assertNotIn("--resume=PDE-1", call.args[0])  # never resumed by the ambiguous plain name
+
+    def test_one_orphan_rename_failure_does_not_stop_the_others(self) -> None:
+        self.session_dir.mkdir(parents=True)
+        (self.session_dir / "aaaa-uuid-1.jsonl").write_text("{}")
+        (self.session_dir / "bbbb-uuid-2.jsonl").write_text("{}")
+
+        with patch.object(orchestrator.subprocess, "run", side_effect=[OSError("boom"), MagicMock()]) as mock_run, \
+             self.assertLogs(orchestrator.log, level="WARNING"):
+            orchestrator.rename_stale_sessions("PDE-1", self.ticket_dir, self.claude_projects_dir)
+
+        self.assertEqual(mock_run.call_count, 2)  # second orphan still attempted after first failed
+
+
 class TestArchiveTicket(TempDirTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -642,12 +688,12 @@ class TestProcessTicket(TempDirTestCase):
     def test_fresh_to_do_launch_archives_prior_dir_and_renames_session(self) -> None:
         ticket_dir = self.cwd / "tickets" / "PDE-1"
         ticket_dir.mkdir(parents=True)
-        with patch.object(orchestrator, "rename_stale_session") as mock_rename, \
+        with patch.object(orchestrator, "rename_stale_sessions") as mock_rename, \
              patch.object(orchestrator, "archive_ticket") as mock_archive, \
              patch.object(orchestrator, "launch_session", return_value=1234) as mock_launch:
             result = orchestrator.process_ticket("PDE-1", "To Do", self.cwd, self.repos_dir)
 
-        mock_rename.assert_called_once_with("PDE-1")
+        mock_rename.assert_called_once_with("PDE-1", ticket_dir)
         mock_archive.assert_called_once()
         mock_launch.assert_called_once()
         self.assertEqual(mock_launch.call_args.args[3], True)  # is_new
@@ -656,7 +702,7 @@ class TestProcessTicket(TempDirTestCase):
     def test_resume_does_not_rename_or_archive(self) -> None:
         ticket_dir = self.cwd / "tickets" / "PDE-1"
         ticket_dir.mkdir(parents=True)
-        with patch.object(orchestrator, "rename_stale_session") as mock_rename, \
+        with patch.object(orchestrator, "rename_stale_sessions") as mock_rename, \
              patch.object(orchestrator, "archive_ticket") as mock_archive, \
              patch.object(orchestrator, "launch_session", return_value=1234) as mock_launch:
             result = orchestrator.process_ticket("PDE-1", "In Progress", self.cwd, self.repos_dir)
@@ -671,12 +717,12 @@ class TestProcessTicket(TempDirTestCase):
         # No prior directory at all, and status isn't "To Do" — still counts
         # as fresh since fresh-vs-resume is decided by directory existence,
         # not by status alone (see process_ticket's own docstring).
-        with patch.object(orchestrator, "rename_stale_session") as mock_rename, \
+        with patch.object(orchestrator, "rename_stale_sessions") as mock_rename, \
              patch.object(orchestrator, "archive_ticket") as mock_archive, \
              patch.object(orchestrator, "launch_session", return_value=1234) as mock_launch:
             orchestrator.process_ticket("PDE-1", "In Progress", self.cwd, self.repos_dir)
 
-        mock_rename.assert_called_once_with("PDE-1")
+        mock_rename.assert_called_once_with("PDE-1", self.cwd / "tickets" / "PDE-1")
         mock_archive.assert_not_called()  # nothing to archive — there was no prior directory
         self.assertEqual(mock_launch.call_args.args[3], True)  # is_new
 
