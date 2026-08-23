@@ -128,32 +128,54 @@ yet). Sanity-checking that and self-correcting Jira used to happen here, but
 it required knowing which artifact filenames prove which stage is done
 (`discovery.md`, `implementation-notes.md`) — domain knowledge that belongs
 to the worker and its specialists, not to a generic dispatcher. Fresh-vs-resume
-here is now decided purely by whether a directory already exists for the
-ticket (see "The two signals" above) — no artifact inspection needed at all.
+here needs no artifact inspection at all — but it's **not** purely "does a
+directory exist," either: it's `jira_status == "To Do" OR no directory exists
+yet for this ticket` (see `process_ticket()`). Two consequences worth naming:
+a ticket can be Fresh on a status other than `To Do` (a human skipped straight
+to `In Discovery`, or further, on a brand-new ticket); and `To Do` is *always*
+Fresh even when a directory already exists (a ticket cycled back to `To Do`
+after being worked before) — that stale directory gets archived out of the
+way, not reused, before the fresh launch (see step 4b below).
 
-The rewind check itself still happens, just one level down: see
-`ticket-worker/SKILL.md`'s Startup section for how the worker validates
-Jira's status against its own directory before routing, and self-corrects
-if a human skipped a stage.
+The rewind check itself still happens, just one level down, and independently
+of whether the launch was Fresh or Resume — a Fresh session gets the exact
+same worker-side validation as a resumed one. See `ticket-worker/SKILL.md`'s
+Startup section for how the worker validates Jira's status against its own
+directory before routing, and self-corrects if a human skipped a stage.
 
 ## Status → action table
 
 The orchestrator delegates work in exactly four statuses. Everything else is
 either a human gate or a terminal state — touch nothing.
 
+**The assignee gate applies to all four, not just `To Do`.** Before
+dispatching any ticket in one of the four actionable statuses, it must
+already be assigned to the user running the orchestrator — checked once per
+ticket, ahead of the per-status branching below (see `main()`). If
+unassigned or assigned to someone else, skip with log "<KEY>: not assigned
+to current user (assigned to: <name>) — skipping", regardless of which of
+the four statuses it's in. A ticket sitting in `In Discovery`/`In
+Progress`/`UAT Review` but assigned to someone else is skipped exactly like
+an unassigned `To Do` ticket would be — this isn't an intake-only check.
+
 | Status | Category | Action |
 |---|---|---|
-| To Do | **New session** | Ticket must already be assigned to the user running the orchestrator. If unassigned or assigned to someone else, skip with log "<KEY>: not assigned to current user — skipping". If assigned to current user, start a **new** session (`--name`). |
-| In Discovery | **Resume** | Human moved ticket back from QA Review with feedback. Resume the existing session (`--resume`) — the worker reads the rejection comment and re-runs discovery. |
-| In Progress | **Resume** | The human approved. Resume the existing session (`--resume`) to run implementation. |
-| UAT Review | **Resume** | The PR was approved. Resume the existing session (`--resume`) to merge. |
+| To Do | **Fresh** | Always a fresh session (`--name`), even if a `tickets/<KEY>/` directory already exists from a prior run of this same ticket — that directory is archived out of the way first (see step 4b below), never reused. |
+| In Discovery | **Fresh or Resume** | Fresh (`--name`) if no `tickets/<KEY>/` directory exists yet for this ticket (a human skipped straight here on a brand-new ticket); otherwise Resume (`--resume`) the existing session — the worker reads any rejection comment and re-runs discovery. |
+| In Progress | **Fresh or Resume** | Same rule as `In Discovery`: Fresh if no directory exists yet, otherwise Resume to run implementation. |
+| UAT Review | **Fresh or Resume** | Same rule again: Fresh if no directory exists yet, otherwise Resume to merge. |
 | QA Review | **Human gate** | Do nothing. |
 | In Review | **Human gate** | Do nothing — the orchestrator never dispatches for this status. A human addresses PR comments by moving the ticket back to `In Progress`; that's what actually triggers `ticket-worker` to run the review agent (see `ticket-worker/SKILL.md`'s Path: Implementation, second branch). |
 | Backlog | **Ignored** | Do nothing. Excluded by JQL query — cannot appear, but documented for completeness. |
 | Done | **Terminal** | Do nothing. |
 
-**Rule:** `--name` is only used for `To Do`. Every other actionable status uses `--resume`.
-The session is created once per ticket and carries all context across every stage.
+**Rule:** `--name` (Fresh) is used whenever `jira_status == "To Do"` OR no
+`tickets/<KEY>/` directory exists yet for this ticket — never "only for `To
+Do`." Every other case uses `--resume`. Either way, the session is created
+once per ticket and carries all context across every stage — a Fresh launch
+still gets the same worker-side rewind/sanity-check as a Resumed one (see
+"Status rewind moved to the worker" above); Fresh vs. Resume is about
+session identity, not about skipping that check.
 
 Any status not in this table: do nothing, and do not guess.
 
@@ -183,7 +205,7 @@ is actually held."
   try a non-blocking exclusive `flock` on `.worker.lock` and immediately
   release it if it succeeds. Held → a session is live, leave it alone.
   Free (or the file doesn't exist) → nothing is running, safe to proceed.
-- **Actually launching** (step 6 below): acquire the same lock the same
+- **Actually launching** (step 7 below): acquire the same lock the same
   way, but this time *keep holding it* through the launch and hand it off.
 
 **Developer shortcut:** `claude --resume "<KEY>"` — the ticket key is both the
@@ -192,10 +214,10 @@ handle. Verified directly: Claude Code resolves `--resume` by the name set via
 `--name`, non-interactively, no UUID needed — as long as that name is
 unambiguous. Names aren't unique, though: a second fresh launch reusing the
 same `--name` creates a second, distinct session sharing it, and `--resume`
-then hard-errors demanding a session ID to disambiguate. That's why a fresh
-"To Do" launch always renames any existing same-named session out of the way
-first (via a headless `/rename` prompt — see step 3b) rather than just
-reusing the key blindly.
+then hard-errors demanding a session ID to disambiguate. That's why every
+Fresh launch — not just `To Do` — always renames any existing same-named
+session out of the way first (via a headless `/rename` prompt — see step 4a)
+rather than just reusing the key blindly.
 
 ## Jira MCP
 
@@ -213,50 +235,58 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    and stop processing this ticket. **Do not check the lock — Jira status
    alone is sufficient to skip.**
 
-2. For actionable statuses (To Do, In Discovery, In Progress, UAT Review), if
-   `tickets/<KEY>/` exists, check whether its lock is currently held (see
+2. For any of the four actionable statuses (To Do, In Discovery, In Progress,
+   UAT Review), skip if the ticket is not assigned to the current user —
+   this applies to all four, not just `To Do`:
+   ```
+   if assignee_id != current_user_id:
+       log "<KEY>: not assigned to current user (assigned to: <name>) — skipping"
+       return
+   ```
+
+3. If `tickets/<KEY>/` exists, check whether its lock is currently held (see
    "Worker lock" above — a non-blocking, non-consuming check).
    - Held: log "<KEY>: session already running — skipping" and stop.
    - Free, or the directory doesn't exist yet: proceed. No need to distinguish
      "never ran," "finished cleanly," or "crashed" — a free lock means safe to
      proceed either way.
 
-3. **If Jira status is `To Do`:**
+4. Determine whether this is a **Fresh** launch: `jira_status == "To Do"` OR
+   no `tickets/<KEY>/` directory exists yet for this ticket. If Fresh:
 
-   a. Skip if the ticket is not assigned to the current user:
-     ```
-     if assignee_id != current_user_id:
-         log "<KEY>: not assigned to current user — skipping"
-         return
-     ```
+   a. Rename any existing claude session still named `<KEY>` out of the way,
+      via a headless prompt — safe to run even if no such session exists
+      (there's simply nothing to rename, which isn't an error worth acting on):
+      ```bash
+      claude --resume="<KEY>" -p "/rename <KEY>-archived-$(date +%Y-%m-%d)" \
+        --permission-mode=bypassPermissions
+      ```
+      This has to happen *before* archiving the ticket directory below and
+      *before* launching the fresh session in step 7, which will reuse the
+      plain name `<KEY>` — without this, `--resume "<KEY>"` later would match
+      both the old and new sessions and hard-error demanding a session ID.
 
-   b. Rename any existing claude session still named `<KEY>` out of the way,
-     via a headless prompt — safe to run even if no such session exists (there's
-     simply nothing to rename, which isn't an error worth acting on):
-     ```bash
-     claude --resume="<KEY>" -p "/rename <KEY>-archived-$(date +%Y-%m-%d)" \
-       --permission-mode=bypassPermissions
-     ```
-     This has to happen *before* deleting the ticket directory below and
-     *before* launching the fresh session in step 6, which will reuse the
-     plain name `<KEY>` — without this, `--resume "<KEY>"` later would match
-     both the old and new sessions and hard-error demanding a session ID.
+   b. If `tickets/<KEY>/` already exists (a ticket cycled back to `To Do`
+      after being worked before — the ordinary "no directory yet" case has
+      nothing to do here), **archive** it rather than deleting it: move it to
+      `tickets/archive/<KEY>-<date>/`, the same operation the cleanup pass
+      uses for tickets that dropped out of Jira's active results (see "Run
+      loop" above), including copying its Claude Code session transcripts.
+      This preserves the prior attempt's history instead of discarding it,
+      and keeps it out of the way of the fresh directory step 5 creates.
 
-   c. Delete the entire `tickets/<KEY>/` directory if it exists. This discards
-     all prior working artifacts (notes, cloned code, etc.).
-
-4. Create `tickets/<KEY>/` if it does not exist — the lock file has to live
+5. Create `tickets/<KEY>/` if it does not exist — the lock file has to live
    inside it.
 
-5. Acquire `tickets/<KEY>/.worker.lock` — non-blocking, and this time *keep
+6. Acquire `tickets/<KEY>/.worker.lock` — non-blocking, and this time *keep
    holding it* (see "Worker lock" above). If someone else grabbed it in the
-   moment since step 2's check, log "<KEY>: lock held by another process at
+   moment since step 3's check, log "<KEY>: lock held by another process at
    launch time — skipping this run" and stop; this is a race so unlikely
    it's not worth more than failing safe.
 
-6. Launch the session (cwd is set directly on the subprocess — Claude Code's
+7. Launch the session (cwd is set directly on the subprocess — Claude Code's
    CLI has no `-C` equivalent, unlike Copilot's). `--name`/`--resume` both
-   just use the plain ticket key — step 3b's rename is what keeps that
+   just use the plain ticket key — step 4a's rename is what keeps that
    unambiguous for a fresh launch. The repos directory rides along as plain
    text after the skill name in the same prompt — verified directly that
    Claude Code passes text following a skill invocation straight through as
@@ -275,8 +305,9 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
    # The lock's fd must be inherited by the child (not re-acquired by it) —
    # in the real Python implementation this is subprocess.Popen's pass_fds;
    # written here as a conceptual bash equivalent using exec's fd-duplication.
-   if [ "$JIRA_STATUS" = "To Do" ]; then
-    # Fresh session:
+   if [ "$IS_FRESH" = "true" ]; then
+    # Fresh session — jira_status was "To Do", or no ticket directory existed
+    # yet for this key (see step 4 above); NOT simply "jira_status == To Do":
     SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --name="<KEY>" \
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
@@ -284,7 +315,7 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
       -p "/ticket-worker Repos directory: $REPOS_DIR" \
       > "${AGENT_CHILD_LOG_DIR:-$TICKET_DIR}/<KEY>.log" 2>&1 & echo $!)
    else
-    # Resume existing session (In Discovery, In Progress, UAT Review):
+    # Resume existing session:
     SESSION_PID=$(cd "$TICKET_DIR" && nohup claude --resume="<KEY>" \
       --permission-mode=bypassPermissions \
       --add-dir "$TICKET_DIR" \
@@ -311,10 +342,10 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
      `$TICKET_DIR` otherwise — opened in append mode either way, so a
      resumed session's output keeps accumulating into the same file rather
      than starting over.
-   - A fresh "To Do" restart's rename step (3b) already freed up the plain
-     key name before this point, so `--name="<KEY>"` here can never collide.
+   - A fresh restart's rename step (4a) already freed up the plain key name
+     before this point, so `--name="<KEY>"` here can never collide.
 
-7. Log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket"
+8. Log "<KEY>: session launched (PID $SESSION_PID) — moving to next ticket"
    and move on immediately. There's nothing to wait for or confirm: whatever
    would cause a launch to silently fail, the next run finds the lock free
    again and just retries — the same outcome as detecting the failure
@@ -332,12 +363,13 @@ All Jira operations use the **Jira MCP tool** provided by the workspace.
   Cancelled/Released/Backlog-ed or lost its `AI-Work` label counts too. The
   only exception is a genuinely in-flight session (lock held) — leave that
   alone rather than archiving out from under it.
-- Decide whether to launch or resume, and do it — via the worker's lock file
-  and whether a directory already exists, alone; never anything else in the
-  ticket directory, which belongs entirely to the worker. Does not
-  sanity-check Jira's status against what's actually been done — that's the
-  worker's job now (see below), since it requires knowing worker-domain
-  artifact filenames the orchestrator has no other reason to know.
+- Decide whether to launch fresh or resume, and do it — via the worker's
+  lock file, the ticket's Jira status (`To Do` is always fresh), and whether
+  a directory already exists, alone; never anything else in the ticket
+  directory, which belongs entirely to the worker. Does not sanity-check
+  Jira's status against what's actually been done — that's the worker's job
+  now (see below), since it requires knowing worker-domain artifact
+  filenames the orchestrator has no other reason to know.
 - **Exit after dispatching every ticket this run** — no waiting, no polling,
   no long-running blocking of any kind.
 - Designed to be run on a schedule (e.g., cron every 5–15 minutes).

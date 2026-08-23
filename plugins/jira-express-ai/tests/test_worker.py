@@ -728,6 +728,36 @@ class TestRunDiscovery(TempDirTestCase):
         mock_pull.assert_called_once_with("PDE-1234", "discovery", self.auth)
         self.assertIn("Human-edited findings.", launched_with_content["at_launch"])
 
+    def test_does_not_create_discovery_md_from_a_pull_when_none_exists(self) -> None:
+        # discovery.md exists if and only if the discovery specialist wrote
+        # it, and completed_stage_count()'s rewind logic depends on that. A
+        # pull must not manufacture it — worst case, right after a fresh
+        # 'To Do' restart, clear_all()'s own "Cleared — ticket restarted"
+        # placeholder would become a brand-new discovery.md that
+        # ticket-discovery reads as a revision rather than a first pass.
+        artifact = self.ticket_dir / "discovery.md"
+        self.assertFalse(artifact.exists())
+
+        launched_with_content = {}
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            launched_with_content["at_launch"] = artifact.read_text() if artifact.exists() else None
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", return_value=True), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull",
+                          return_value="Cleared — ticket restarted on 2026-08-22.") as mock_pull:
+            worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_pull.assert_called_once_with("PDE-1234", "discovery", self.auth)
+        self.assertIsNone(launched_with_content["at_launch"])
+        self.assertFalse(artifact.exists())
+        # Falls through to the "discovery.md is missing" failure, exactly as
+        # it would have without any Confluence page at all.
+        mock_fail.assert_called_once()
+        self.assertIn("discovery.md is missing", mock_fail.call_args.args[1])
+
     def test_skip_confluence_pull_flag_skips_the_pull(self) -> None:
         with patch.object(worker, "launch_specialist"), \
              patch.object(worker, "wait_for_sentinel", return_value=False), \
@@ -1009,7 +1039,12 @@ class TestRunImplementation(TempDirTestCase):
         mock_transition.assert_not_called()
 
     def test_first_pass_pulls_prior_confluence_content_before_launching_specialist(self) -> None:
+        # A NO_CHANGES_NEEDED redo is the one way this function runs with
+        # implementation-notes.md already present (see run_implementation()'s
+        # dispatch) — and therefore the only case where a human's Confluence
+        # edit is applied back to the local file.
         notes = self.ticket_dir / "implementation-notes.md"
+        notes.write_text("**Status:** NO_CHANGES_NEEDED\n\n## PR Readiness\n\nOriginal AI notes.\n")
 
         launched_with_content = {}
 
@@ -1024,9 +1059,36 @@ class TestRunImplementation(TempDirTestCase):
 
         mock_pull.assert_called_once_with("PDE-1234", "implementation", self.auth)
         self.assertIn("Human-edited notes.", launched_with_content["at_launch"])
-        # No notes.md written by the fake launch — falls through to the
-        # "implementation-notes.md is missing" failure, which is fine: this
-        # test only cares that the pulled content was in place before launch.
+        # The fake launch didn't rewrite notes.md, so the pulled content's
+        # own "OK" status falls through to the missing-review-context.md
+        # failure. Fine: this test only cares that the pulled content was in
+        # place before launch.
+        mock_fail.assert_called_once()
+
+    def test_first_pass_does_not_create_notes_from_a_pull_when_none_exists(self) -> None:
+        # implementation-notes.md exists if and only if the implementation
+        # specialist wrote it — run_implementation()'s own dispatch and
+        # completed_stage_count()'s rewind logic both depend on that. A pull
+        # must never manufacture it (worst case: clear_all()'s "Cleared —
+        # ticket restarted" placeholder becoming a brand-new notes file).
+        notes = self.ticket_dir / "implementation-notes.md"
+        self.assertFalse(notes.exists())
+
+        launched_with_content = {}
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            launched_with_content["at_launch"] = notes.read_text() if notes.exists() else None
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", return_value=True), \
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "pull",
+                          return_value="Cleared — ticket restarted on 2026-08-22.") as mock_pull:
+            worker.run_implementation("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_pull.assert_called_once_with("PDE-1234", "implementation", self.auth)
+        self.assertIsNone(launched_with_content["at_launch"])
+        self.assertFalse(notes.exists())
         mock_fail.assert_called_once()
 
     def test_first_pass_skip_confluence_pull_flag_skips_the_pull(self) -> None:

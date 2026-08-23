@@ -477,13 +477,25 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth, skip_conflu
     # discovery pass no Confluence page exists yet, so pull() returns None
     # and this is a no-op. Same code path handles "first run" and "revision
     # after a QA rejection" without needing to tell them apart.
+    #
+    # Pulled content is only ever applied to a file that ALREADY exists.
+    # Elsewhere in this script, discovery.md/implementation-notes.md exist
+    # if and only if that specialist actually wrote them — run_implementation()
+    # dispatches on notes.exists(), and completed_stage_count() derives rewind
+    # state from the same fact. A pull must not manufacture an artifact that
+    # no specialist produced: right after a fresh 'To Do' restart, that would
+    # write clear_all()'s own "Cleared — ticket restarted on ..." placeholder
+    # into a brand-new discovery.md, which ticket-discovery would then read as
+    # "this is a revision, find what to revise" instead of a genuine first
+    # pass. Every intended pull-back (a QA-rejection revision, a
+    # NO_CHANGES_NEEDED redo) always has the local file already there.
     if not skip_confluence_pull:
         try:
             pulled = confluence_sync.pull(key, "discovery", auth)
         except confluence_sync.ConfluencePullError as e:
             report_failure(key, f"could not fetch prior discovery.md content from Confluence: {e}", auth, stage="ticket-discovery")
             return
-        if pulled is not None:
+        if pulled is not None and artifact.exists():
             artifact.write_text(pulled)
 
     # Always run fresh — including the sentinel. A stale sentinel left over
@@ -533,14 +545,18 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth, skip_c
 def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, notes: Path, review_context: Path, auth, skip_confluence_pull: bool = False) -> None:
     # Unconditional, not resume-specific — same reasoning as run_discovery's
     # pull: a genuine first attempt has no Confluence page yet, so pull()
-    # returns None and this is a no-op.
+    # returns None and this is a no-op. Applied only when notes already
+    # exists, for the same reason as there — and here that existence is
+    # exactly what run_implementation() dispatched on, so the only way to
+    # reach this function with notes present is a NO_CHANGES_NEEDED redo,
+    # which is precisely the case the pull-back is for.
     if not skip_confluence_pull:
         try:
             pulled = confluence_sync.pull(key, "implementation", auth)
         except confluence_sync.ConfluencePullError as e:
             report_failure(key, f"could not fetch prior implementation-notes.md content from Confluence: {e}", auth, stage="ticket-implementation")
             return
-        if pulled is not None:
+        if pulled is not None and notes.exists():
             notes.write_text(pulled)
 
     # Always run fresh — including the sentinel. A stale sentinel left over
