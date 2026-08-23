@@ -70,17 +70,31 @@ JQL = (
     ' AND status != Cancelled'
     ' AND status != Released'
     ' AND status != Backlog'
+    ' ORDER BY Rank ASC'
 )
 
 ACTIONABLE_STATUSES = {"To Do", "In Discovery", "In Progress", "UAT Review"}
 ARCHIVE_MAX_DAYS = 7
 
-# Deliberate cap, not a paging bug: each dispatched ticket can spawn a
-# long-running worker session, so a single cron tick shouldn't try to launch
-# an unbounded number of them. If the query ever actually hits this cap,
-# search_tickets() logs it loudly rather than silently dropping the overflow —
-# see its "isLast"/count check below.
+# A query-size cap, not a dispatch cap — see MAX_DISPATCHES_PER_RUN below for
+# the thing that actually bounds how many sessions get launched. This one
+# just bounds how many candidate tickets the query itself can return, so
+# search_tickets() has a fixed-size page to reason about instead of an
+# unbounded one. If it's ever actually hit, that's worth knowing loudly
+# rather than silently dropping the overflow forever — see its
+# "isLast"/count check below.
 MAX_TICKETS_PER_RUN = 100
+
+# The real per-run throttle: at most this many tickets actually get a
+# session launched (fresh or resumed) in a single run, regardless of how
+# many candidates the query above returned. Deliberately much smaller than
+# MAX_TICKETS_PER_RUN — every dispatch can spawn a long-running worker
+# session, so a single cron tick launching, say, 100 of them at once would
+# be its own kind of incident. Kept separate from the query cap because the
+# two numbers answer different questions: query enough candidates that
+# skipping the ones assigned to someone else (or already running) still
+# leaves real work to find, but only actually launch a handful per tick.
+MAX_DISPATCHES_PER_RUN = 5
 
 # This plugin's install root — where the sibling skill files (SKILL.md for
 # the worker, discovery, implementation, review, and merge agents) live.
@@ -806,9 +820,26 @@ def main() -> None:
         log.error("Jira /myself returned no accountId — refusing to dispatch this run (assignee filter cannot be enforced)")
         return
 
-    # Dispatch each ticket. Fire-and-forget — no waiting to confirm a launch
+    # Dispatch each ticket, in Jira rank order, up to MAX_DISPATCHES_PER_RUN
+    # actual launches. Fire-and-forget — no waiting to confirm a launch
     # actually took; see process_ticket()'s docstring for why that's fine.
+    #
+    # The cap only counts tickets that actually got a session launched
+    # (process_ticket() returns the ticket_dir) — skipping a ticket because
+    # it's not actionable, not assigned to this user, or already has a
+    # session running costs nothing against the budget. This is deliberate:
+    # among up to MAX_TICKETS_PER_RUN candidates, an unknown number belong
+    # to other engineers, so the cap has to apply to real dispatches, not to
+    # how far the loop scans to find them.
+    dispatched = 0
     for issue in valid_issues:
+        if dispatched >= MAX_DISPATCHES_PER_RUN:
+            log.info(
+                f"Reached MAX_DISPATCHES_PER_RUN cap of {MAX_DISPATCHES_PER_RUN} — "
+                f"stopping dispatch for this run; remaining tickets are picked up next run."
+            )
+            break
+
         key = issue["key"]
         jira_status = issue["fields"]["status"]["name"]
         assignee = issue["fields"].get("assignee")
@@ -826,7 +857,8 @@ def main() -> None:
 
         log.info(f"{key}: processing ({jira_status})")
         try:
-            process_ticket(key, jira_status, cwd, repos_dir)
+            if process_ticket(key, jira_status, cwd, repos_dir) is not None:
+                dispatched += 1
         except Exception as e:
             log.error(f"{key}: unhandled error — {e}", exc_info=True)
 

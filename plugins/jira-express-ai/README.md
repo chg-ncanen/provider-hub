@@ -26,11 +26,14 @@ one behavioral difference that conversion introduced.
   actually reads (Jira comments, PR comments, repo content, or PR/CI metadata).
 - **`skills/ticket-orchestrator/`** — stateless, cron-safe dispatcher (`orchestrator.py`). Queries
   Jira fresh every run for `project = PDE AND labels = "AI-Work" AND statusCategory != Done`,
+  ranked by `ORDER BY Rank ASC` and capped at `MAX_TICKETS_PER_RUN` (100) candidates,
   decides per ticket whether to start a new session or resume an existing one based on Jira status
   + whether the ticket's `.worker.lock` is currently held, archives tickets no longer active in
-  Jira, and launches a `ticket-worker` session per ticket. Makes no Jira writes at all, and owns
-  nothing else inside a ticket's directory — no context file, no copied skill files, no state
-  file, just the lock. Sanity-checking Jira's status against what's actually been done (rewind)
+  Jira, and launches a `ticket-worker` session per ticket — but only up to `MAX_DISPATCHES_PER_RUN`
+  (5) *actual* dispatches per run; skipping a ticket (wrong assignee, already running) costs
+  nothing against that cap, so a lower-ranked candidate can still fill the slot. Makes no Jira
+  writes at all, and owns nothing else inside a ticket's directory — no context file, no copied
+  skill files, no state file, just the lock. Sanity-checking Jira's status against what's actually been done (rewind)
   is the worker's job, not the orchestrator's — see that skill's entry below. Run this on a
   schedule (cron every 5–15 minutes) from inside the project directory being automated — see that
   skill's `SKILL.md` for the exact invocation and required env vars.

@@ -60,7 +60,8 @@ overridden via `REPOS_DIR` (env var or this plugin's userConfig equivalent,
 
 Each orchestrator run begins with a fresh Jira query — never a cached list.
 
-1. Query Jira for all tickets matching:
+1. Query Jira for up to `MAX_TICKETS_PER_RUN` (100) tickets matching, ordered
+   by rank so higher-priority tickets are considered first:
    ```
    project = PDE
      AND labels = "AI-Work"
@@ -68,7 +69,10 @@ Each orchestrator run begins with a fresh Jira query — never a cached list.
      AND status != Cancelled
      AND status != Released
      AND status != Backlog
+   ORDER BY Rank ASC
    ```
+   100 is a query-size cap, not how many actually get dispatched — see step 4's
+   `MAX_DISPATCHES_PER_RUN` note below for that.
 2. For each ticket returned, verify the key starts with `PDE-`. If it does not,
    write a log entry "<KEY>: key does not start with PDE- — skipping" and skip it.
    This is a hard safety check; do not process non-PDE tickets under any circumstances.
@@ -97,9 +101,17 @@ Each orchestrator run begins with a fresh Jira query — never a cached list.
        rm -rf "$dir"
      done
      ```
-4. For each ticket returned (PDE keys only), in order, execute the full **"Before acting on any ticket"**
-   workflow below. The orchestrator is **stateless and re-runnable** — it fires off workers and exits.
-   Do not block waiting for workers to finish. Move immediately to the next ticket.
+4. For each ticket returned (PDE keys only), in rank order, execute the full **"Before
+   acting on any ticket"** workflow below — until `MAX_DISPATCHES_PER_RUN` (5) tickets
+   have actually been dispatched (a session genuinely launched or resumed), then stop for
+   this run. This cap is deliberately separate from step 1's 100-ticket query cap: among
+   up to 100 rank-ordered candidates, an unknown number belong to other engineers (skipped
+   by the assignee gate) or already have a session running (skipped by the lock check) —
+   neither kind of skip counts against the 5, since nothing was actually launched. Only a
+   real dispatch consumes budget; once 5 of those happen, remaining candidates (including
+   ones never even reached) wait for the next run. The orchestrator is **stateless and
+   re-runnable** — it fires off workers and exits. Do not block waiting for workers to
+   finish. Move immediately to the next ticket.
 
 If the query returns zero tickets, write a log entry: "No AI-Work tickets found"
 and exit.

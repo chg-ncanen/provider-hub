@@ -876,6 +876,74 @@ class TestMainDispatch(TempDirTestCase):
 
         self.assertEqual(mock_process.call_count, 2)  # PDE-2 still attempted despite PDE-1 failing
 
+    def test_dispatch_cap_limits_actual_launches_not_loop_length(self) -> None:
+        # 4 actionable tickets, all assigned to the current user, all
+        # "launch successfully" (truthy return) — cap of 2 must stop after
+        # exactly 2, in rank order, not scan-and-skip the rest.
+        issues = [self._issue(key=f"PDE-{i}", assignee_id="user-1") for i in range(1, 5)]
+
+        def fake_process(key, status, cwd, repos_dir):
+            return cwd / "tickets" / key  # truthy — a real launch happened
+
+        with patch.object(orchestrator, "MAX_DISPATCHES_PER_RUN", 2), \
+             patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+             patch.object(orchestrator, "_auth", return_value=("e", "t")), \
+             patch.object(orchestrator, "search_tickets", return_value=issues), \
+             patch.object(orchestrator, "cleanup_pass"), \
+             patch.object(orchestrator, "get_current_user", return_value={"accountId": "user-1"}), \
+             patch.object(orchestrator, "process_ticket", side_effect=fake_process) as mock_process:
+            orchestrator.main()
+
+        self.assertEqual(mock_process.call_count, 2)
+        dispatched_keys = [c.args[0] for c in mock_process.call_args_list]
+        self.assertEqual(dispatched_keys, ["PDE-1", "PDE-2"])
+
+    def test_skipped_tickets_do_not_count_against_dispatch_cap(self) -> None:
+        # PDE-1 is assigned to someone else — skipped for free. With a cap of
+        # 1, PDE-2 (assigned to the current user) must still get dispatched;
+        # the skip must not have silently consumed the one slot.
+        issues = [
+            self._issue(key="PDE-1", assignee_id="someone-else"),
+            self._issue(key="PDE-2", assignee_id="user-1"),
+            self._issue(key="PDE-3", assignee_id="user-1"),
+        ]
+
+        def fake_process(key, status, cwd, repos_dir):
+            return cwd / "tickets" / key
+
+        with patch.object(orchestrator, "MAX_DISPATCHES_PER_RUN", 1), \
+             patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+             patch.object(orchestrator, "_auth", return_value=("e", "t")), \
+             patch.object(orchestrator, "search_tickets", return_value=issues), \
+             patch.object(orchestrator, "cleanup_pass"), \
+             patch.object(orchestrator, "get_current_user", return_value={"accountId": "user-1"}), \
+             patch.object(orchestrator, "process_ticket", side_effect=fake_process) as mock_process:
+            orchestrator.main()
+
+        mock_process.assert_called_once_with("PDE-2", "In Progress", self.cwd, self.cwd)
+
+    def test_already_running_ticket_does_not_count_against_dispatch_cap(self) -> None:
+        # process_ticket() returning None (lock already held) is not a real
+        # dispatch — it must not consume budget that a later ticket needs.
+        issues = [
+            self._issue(key="PDE-1", assignee_id="user-1"),
+            self._issue(key="PDE-2", assignee_id="user-1"),
+        ]
+
+        def fake_process(key, status, cwd, repos_dir):
+            return None if key == "PDE-1" else cwd / "tickets" / key
+
+        with patch.object(orchestrator, "MAX_DISPATCHES_PER_RUN", 1), \
+             patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+             patch.object(orchestrator, "_auth", return_value=("e", "t")), \
+             patch.object(orchestrator, "search_tickets", return_value=issues), \
+             patch.object(orchestrator, "cleanup_pass"), \
+             patch.object(orchestrator, "get_current_user", return_value={"accountId": "user-1"}), \
+             patch.object(orchestrator, "process_ticket", side_effect=fake_process) as mock_process:
+            orchestrator.main()
+
+        self.assertEqual(mock_process.call_count, 2)  # PDE-1 (no-op) + PDE-2 (actual dispatch)
+
 
 class TestSearchTickets(unittest.TestCase):
     def test_sends_expected_jql_and_returns_issues(self) -> None:
@@ -886,6 +954,9 @@ class TestSearchTickets(unittest.TestCase):
         self.assertEqual(issues, [{"key": "PDE-1"}])
         sent_json = mock_post.call_args.kwargs["json"]
         self.assertEqual(sent_json["jql"], orchestrator.JQL)
+
+    def test_jql_orders_by_rank_ascending(self) -> None:
+        self.assertIn("ORDER BY Rank ASC", orchestrator.JQL)
 
     def test_warns_when_hitting_the_per_run_cap(self) -> None:
         many_issues = [{"key": f"PDE-{i}"} for i in range(orchestrator.MAX_TICKETS_PER_RUN)]
