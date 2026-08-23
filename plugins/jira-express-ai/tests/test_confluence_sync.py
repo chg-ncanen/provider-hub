@@ -94,12 +94,22 @@ class TestSpaceId(unittest.TestCase):
     def test_resolves_space_id(self, mock_get) -> None:
         mock_get.return_value = _mock_response({"results": [{"id": "929781", "key": "PDE"}]})
         self.assertEqual(confluence_sync._space_id(("e", "t")), "929781")
+        # Verify the HTTP request details
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/spaces")
+        self.assertEqual(kwargs["params"], {"keys": "PDE"})
+        self.assertEqual(kwargs["auth"], ("e", "t"))
+        self.assertEqual(kwargs["timeout"], 20)
 
     @patch("confluence_sync.requests.get")
     def test_raises_when_space_not_found(self, mock_get) -> None:
         mock_get.return_value = _mock_response({"results": []})
         with self.assertRaises(confluence_sync.ConfluencePullError):
             confluence_sync._space_id(("e", "t"))
+        # Verify the HTTP request was made to the correct endpoint
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/spaces")
+        self.assertEqual(kwargs["params"], {"keys": "PDE"})
 
 
 class TestFindPage(unittest.TestCase):
@@ -107,6 +117,13 @@ class TestFindPage(unittest.TestCase):
     def test_returns_none_when_not_found(self, mock_get) -> None:
         mock_get.return_value = _mock_response({"results": []})
         self.assertIsNone(confluence_sync._find_page(("e", "t"), "PDE-1234", "5148311567"))
+        # Verify the HTTP request details
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V1_BASE}/content/search")
+        self.assertEqual(kwargs["params"]["cql"], 'title = "PDE-1234" and ancestor = 5148311567')
+        self.assertEqual(kwargs["params"]["expand"], "version")
+        self.assertEqual(kwargs["auth"], ("e", "t"))
+        self.assertEqual(kwargs["timeout"], 20)
 
     @patch("confluence_sync.requests.get")
     def test_returns_id_and_version_when_found(self, mock_get) -> None:
@@ -115,6 +132,11 @@ class TestFindPage(unittest.TestCase):
         )
         result = confluence_sync._find_page(("e", "t"), "PDE-1234", "5148311567")
         self.assertEqual(result, {"id": "42", "version": 3})
+        # Verify the HTTP request details
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V1_BASE}/content/search")
+        self.assertEqual(kwargs["params"]["cql"], 'title = "PDE-1234" and ancestor = 5148311567')
+        self.assertEqual(kwargs["params"]["expand"], "version")
 
 
 class TestGetOrCreateParent(unittest.TestCase):
@@ -132,9 +154,20 @@ class TestGetOrCreateParent(unittest.TestCase):
         mock_post.return_value = _mock_response({"id": "200"})
         page_id = confluence_sync._get_or_create_parent("PDE-1234", ("e", "t"))
         self.assertEqual(page_id, "200")
-        _, kwargs = mock_post.call_args
+        # Verify the HTTP request details
+        args, kwargs = mock_post.call_args
+        self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/pages")
         self.assertEqual(kwargs["json"]["title"], "PDE-1234")
         self.assertEqual(kwargs["json"]["parentId"], "5148311567")
+        self.assertEqual(kwargs["json"]["spaceId"], "929781")
+        self.assertEqual(kwargs["json"]["status"], "current")
+        self.assertEqual(kwargs["json"]["body"]["representation"], "storage")
+        # Verify the body value contains the ticket key and link to Jira
+        body_value = kwargs["json"]["body"]["value"]
+        self.assertIn("PDE-1234", body_value)
+        self.assertIn("https://chghealthcare.atlassian.net/browse/PDE-1234", body_value)
+        self.assertEqual(kwargs["auth"], ("e", "t"))
+        self.assertEqual(kwargs["timeout"], 20)
 
 
 if __name__ == "__main__":
