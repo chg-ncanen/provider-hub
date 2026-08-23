@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -61,6 +62,102 @@ class TestRenderStorageBody(unittest.TestCase):
         body = confluence_sync.render_storage_body("discovery", "```python\nx = 1\n```")
         self.assertIn("<pre>", body)
         self.assertIn("x = 1", body)
+
+
+class TestRenderStorageBodyWellFormedness(unittest.TestCase):
+    """Confluence's storage-format parser is strict XHTML: an unclosed
+    pseudo-tag from literal `<KEY>`-style placeholder text is a 400 that
+    push() swallows silently. Storage format allows several top-level
+    elements, so well-formedness is checked with a single wrapper root."""
+
+    TEMPLATE = (
+        "# Implementation Notes: <KEY>\n\n"
+        "**Status:** READY\n"
+        "**Date:** <ISO date>\n\n"
+        "## Changes Made\n\n"
+        "| File | Change |\n"
+        "|------|--------|\n"
+        "| `<path>` | <description> |\n\n"
+        "## PR Readiness\n\n"
+        "<summary of whether changes are ready to merge, any caveats>\n\n"
+        "## Notes\n\n"
+        "Touched `$REPOS_DIR/<repo>/` and 2 < 4 here.\n\n"
+        "```python\nif a < b and c > d: pass\n```\n"
+    )
+
+    def _parse(self, body: str) -> ET.Element:
+        return ET.fromstring(f"<root>{body}</root>")
+
+    def test_output_is_well_formed_xhtml(self) -> None:
+        body = confluence_sync.render_storage_body("implementation", self.TEMPLATE)
+        self._parse(body)  # raises ET.ParseError if not well-formed
+
+    def test_pipe_table_becomes_a_real_table(self) -> None:
+        body = confluence_sync.render_storage_body("implementation", self.TEMPLATE)
+        root = self._parse(body)
+        tables = root.findall("table")
+        self.assertEqual(len(tables), 1)
+        headers = [th.text for th in tables[0].iter("th")]
+        self.assertEqual(headers, ["File", "Change"])
+        cells = ["".join(td.itertext()) for td in tables[0].iter("td")]
+        self.assertEqual(cells, ["<path>", "<description>"])
+
+    def test_placeholder_text_survives_as_literal_text(self) -> None:
+        body = confluence_sync.render_storage_body("implementation", self.TEMPLATE)
+        text = "".join(self._parse(body).itertext())
+        for placeholder in ("<KEY>", "<ISO date>", "<path>", "<description>",
+                            "<repo>", "<summary of whether changes are ready to merge, any caveats>"):
+            self.assertIn(placeholder, text)
+
+    def test_headings_after_a_placeholder_still_render(self) -> None:
+        # `<summary ...>` used to make python-markdown treat the rest of the
+        # document as one raw-HTML block, so every later heading/table came
+        # out as literal text.
+        body = confluence_sync.render_storage_body("implementation", self.TEMPLATE)
+        root = self._parse(body)
+        self.assertIn("Notes", [h.text for h in root.iter("h2")])
+
+    def test_code_block_and_span_contents_are_not_double_escaped(self) -> None:
+        body = confluence_sync.render_storage_body("implementation", self.TEMPLATE)
+        root = self._parse(body)
+        code_text = "".join("".join(c.itertext()) for c in root.iter("code"))
+        self.assertIn("if a < b and c > d: pass", code_text)
+        self.assertIn("$REPOS_DIR/<repo>/", code_text)
+        self.assertNotIn("&lt;", code_text)
+
+    def test_link_still_renders_as_an_anchor(self) -> None:
+        body = confluence_sync.render_storage_body(
+            "discovery", "See [the PR](https://example.com/x?a=1&b=2).")
+        anchors = list(self._parse(body).iter("a"))
+        self.assertEqual(len(anchors), 1)
+        self.assertEqual(anchors[0].get("href"), "https://example.com/x?a=1&b=2")
+
+
+class TestChildTitle(unittest.TestCase):
+    """Confluence page titles are unique per space, not per parent — bare
+    "Discovery"/"Implementation Notes" child titles could only ever be
+    claimed by one ticket in the whole space."""
+
+    def test_title_is_namespaced_by_ticket_key(self) -> None:
+        self.assertEqual(confluence_sync._child_title("PDE-1234", "discovery"), "PDE-1234 — Discovery")
+        self.assertEqual(
+            confluence_sync._child_title("PDE-1234", "implementation"), "PDE-1234 — Implementation Notes")
+
+    def test_two_tickets_never_share_a_title_for_the_same_artifact(self) -> None:
+        for artifact_type in confluence_sync.ARTIFACT_TYPES:
+            first = confluence_sync._child_title("PDE-1234", artifact_type)
+            second = confluence_sync._child_title("PDE-9999", artifact_type)
+            self.assertNotEqual(first, second)
+            self.assertIn("PDE-1234", first)
+            self.assertIn("PDE-9999", second)
+
+    def test_all_titles_across_two_tickets_are_distinct(self) -> None:
+        titles = [
+            confluence_sync._child_title(key, artifact_type)
+            for key in ("PDE-1234", "PDE-9999")
+            for artifact_type in confluence_sync.ARTIFACT_TYPES
+        ]
+        self.assertEqual(len(titles), len(set(titles)))
 
 
 class TestStripBanner(unittest.TestCase):
@@ -187,7 +284,7 @@ class TestPush(unittest.TestCase):
         args, kwargs = mock_post.call_args
         self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/pages")
         self.assertEqual(kwargs["json"]["spaceId"], "929781")
-        self.assertEqual(kwargs["json"]["title"], "Discovery")
+        self.assertEqual(kwargs["json"]["title"], "PDE-1234 — Discovery")
         self.assertEqual(kwargs["json"]["parentId"], "100")
         self.assertEqual(kwargs["json"]["status"], "current")
         self.assertEqual(kwargs["json"]["body"]["representation"], "storage")
@@ -209,7 +306,7 @@ class TestPush(unittest.TestCase):
         args, kwargs = mock_put.call_args
         self.assertEqual(args[0], f"{confluence_sync.CONFLUENCE_V2_BASE}/pages/300")
         self.assertEqual(kwargs["json"]["id"], "300")
-        self.assertEqual(kwargs["json"]["title"], "Discovery")
+        self.assertEqual(kwargs["json"]["title"], "PDE-1234 — Discovery")
         self.assertEqual(kwargs["json"]["status"], "current")
         self.assertEqual(kwargs["json"]["body"]["representation"], "storage")
         self.assertIn("Findings v2", kwargs["json"]["body"]["value"])
@@ -220,8 +317,39 @@ class TestPush(unittest.TestCase):
     @patch("confluence_sync._get_or_create_parent")
     def test_returns_none_on_any_failure(self, mock_parent) -> None:
         mock_parent.side_effect = RuntimeError("network down")
-        url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
+        with self.assertLogs(confluence_sync.log, level="WARNING") as logged:
+            url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
         self.assertIsNone(url)
+        # Swallowed is not the same as untraceable — a permanent
+        # misconfiguration must not look like a blip.
+        self.assertIn("network down", "\n".join(logged.output))
+        self.assertIn("PDE-1234", "\n".join(logged.output))
+
+    @patch("confluence_sync._space_id")
+    @patch("confluence_sync.requests.post")
+    @patch("confluence_sync._find_page")
+    @patch("confluence_sync._get_or_create_parent")
+    def test_two_tickets_push_non_colliding_child_titles(
+        self, mock_parent, mock_find, mock_post, mock_space_id
+    ) -> None:
+        """Smoke test for the per-space title-uniqueness constraint: two
+        different tickets pushing the same artifact type must request two
+        different page titles, or the second one 400s forever."""
+        mock_find.return_value = None
+        mock_space_id.return_value = "929781"
+        mock_post.return_value = _mock_response({"id": "300"})
+
+        mock_parent.return_value = "100"
+        confluence_sync.push("PDE-1234", "implementation", "# A", ("e", "t"))
+        mock_parent.return_value = "200"
+        confluence_sync.push("PDE-9999", "implementation", "# B", ("e", "t"))
+
+        titles = [kwargs["json"]["title"] for _, kwargs in mock_post.call_args_list]
+        self.assertEqual(titles, ["PDE-1234 — Implementation Notes", "PDE-9999 — Implementation Notes"])
+        self.assertEqual(len(set(titles)), 2)
+        # The lookup that decides create-vs-update is namespaced the same way.
+        searched = [call.args[1] for call in mock_find.call_args_list]
+        self.assertEqual(searched, ["PDE-1234 — Implementation Notes", "PDE-9999 — Implementation Notes"])
 
 
 class TestPull(unittest.TestCase):
@@ -290,14 +418,14 @@ class TestClearAll(unittest.TestCase):
     @patch("confluence_sync.requests.put")
     @patch("confluence_sync._find_page")
     def test_clears_only_existing_children(self, mock_find, mock_put) -> None:
-        # Parent found; "Discovery" (version 4) and "Merge Notes" (version 10) exist,
-        # while "Implementation Notes" and "Review Notes" don't.
+        # Parent found; the Discovery (version 4) and Merge Notes (version 10)
+        # children exist, while Implementation Notes and Review Notes don't.
         def find_side_effect(auth, title, ancestor_id):
             if title == "PDE-1234":
                 return {"id": "100", "version": 1}
-            if title == "Discovery":
+            if title == "PDE-1234 — Discovery":
                 return {"id": "300", "version": 4}
-            if title == "Merge Notes":
+            if title == "PDE-1234 — Merge Notes":
                 return {"id": "400", "version": 10}
             return None
         mock_find.side_effect = find_side_effect
@@ -317,8 +445,8 @@ class TestClearAll(unittest.TestCase):
             versions_and_titles.append((title, version_num))
 
         # Verify both pages were updated with correct version increments
-        self.assertIn(("Discovery", 5), versions_and_titles)
-        self.assertIn(("Merge Notes", 11), versions_and_titles)
+        self.assertIn(("PDE-1234 — Discovery", 5), versions_and_titles)
+        self.assertIn(("PDE-1234 — Merge Notes", 11), versions_and_titles)
 
         # Verify placeholder text in at least one call
         for call in calls:
@@ -333,7 +461,69 @@ class TestClearAll(unittest.TestCase):
     @patch("confluence_sync._find_page")
     def test_swallows_errors(self, mock_find, mock_put) -> None:
         mock_find.side_effect = RuntimeError("network down")
-        confluence_sync.clear_all("PDE-1234", ("e", "t"))  # must not raise
+        with self.assertLogs(confluence_sync.log, level="WARNING") as logged:
+            confluence_sync.clear_all("PDE-1234", ("e", "t"))  # must not raise
+        self.assertIn("network down", "\n".join(logged.output))
+
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    def test_one_failing_page_does_not_stop_the_others(self, mock_find, mock_put) -> None:
+        """Per-page resilience: a single page's failure (e.g. a version
+        conflict) must be logged and skipped, not abandon the whole clear."""
+        def find_side_effect(auth, title, ancestor_id):
+            if title == "PDE-1234":
+                return {"id": "100", "version": 1}
+            if title == "PDE-1234 — Discovery":
+                raise RuntimeError("discovery lookup exploded")
+            return {"id": "400", "version": 2}
+        mock_find.side_effect = find_side_effect
+        mock_put.return_value = _mock_response({"id": "400"})
+
+        with self.assertLogs(confluence_sync.log, level="WARNING") as logged:
+            confluence_sync.clear_all("PDE-1234", ("e", "t"))
+
+        # The three non-exploding children were still cleared.
+        self.assertEqual(mock_put.call_count, 3)
+        self.assertIn("discovery lookup exploded", "\n".join(logged.output))
+
+
+class TestRenderingDependencyUnavailable(unittest.TestCase):
+    """A missing `markdown`/`markdownify` must behave like any other sync
+    failure, not kill worker.py at import time. push()/clear_all() are
+    best-effort no-ops; pull() escalates, because a human's Confluence-only
+    edit would otherwise be silently discarded."""
+
+    def setUp(self) -> None:
+        patcher = patch.object(confluence_sync, "_RENDERING_AVAILABLE", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @patch("confluence_sync.requests.post")
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    def test_push_is_a_logged_no_op(self, mock_find, mock_put, mock_post) -> None:
+        with self.assertLogs(confluence_sync.log, level="WARNING") as logged:
+            url = confluence_sync.push("PDE-1234", "discovery", "# Findings", ("e", "t"))
+        self.assertIsNone(url)
+        self.assertIn("PDE-1234", "\n".join(logged.output))
+        mock_find.assert_not_called()
+        mock_put.assert_not_called()
+        mock_post.assert_not_called()
+
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    def test_clear_all_is_a_logged_no_op(self, mock_find, mock_put) -> None:
+        with self.assertLogs(confluence_sync.log, level="WARNING") as logged:
+            confluence_sync.clear_all("PDE-1234", ("e", "t"))
+        self.assertIn("PDE-1234", "\n".join(logged.output))
+        mock_find.assert_not_called()
+        mock_put.assert_not_called()
+
+    @patch("confluence_sync._find_page")
+    def test_pull_raises_rather_than_returning_none(self, mock_find) -> None:
+        with self.assertRaises(confluence_sync.ConfluencePullError):
+            confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+        mock_find.assert_not_called()
 
 
 if __name__ == "__main__":
