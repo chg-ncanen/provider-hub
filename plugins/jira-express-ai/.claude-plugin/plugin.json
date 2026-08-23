@@ -23,25 +23,25 @@
     "REPOS_DIR": {
       "type": "string",
       "title": "Repo clones directory",
-      "description": "Absolute path to the directory containing this project's repo clones. Optional — if unset, defaults to the orchestrator's current working directory (repo clones expected as direct subfolders of it).",
+      "description": "Default: the orchestrator's current working directory. Absolute path to the directory containing this project's repo clones (expected as direct subfolders of it). Leave blank to use the default.",
       "required": false
     },
     "CONFLUENCE_SPACE_KEY": {
       "type": "string",
       "title": "Confluence space key",
-      "description": "Confluence space where ticket artifact pages are synced. Defaults to PDE if unset.",
+      "description": "Default: PDE. Confluence space where ticket artifact pages are synced. Leave blank to use the default.",
       "required": false
     },
     "CONFLUENCE_PARENT_PAGE_ID": {
       "type": "string",
       "title": "Confluence parent folder/page ID",
-      "description": "ID of the Confluence folder or page under which each ticket's parent page is created. Defaults to 5148311567 if unset.",
+      "description": "Default: 5148311567. ID of the Confluence folder or page under which each ticket's parent page is created. Leave blank to use the default.",
       "required": false
     },
     "CONFLUENCE_SYNC_ENABLED": {
       "type": "boolean",
       "title": "Enable Confluence sync",
-      "description": "Sync ticket artifacts (discovery.md, implementation-notes.md, review-notes.md, merge-notes.md) to Confluence. Defaults to true if unset. Set to false to disable entirely — no self-install attempt, no warnings, no pull failures block a ticket's progress.",
+      "description": "Default: true (enabled). Sync ticket artifacts (discovery.md, implementation-notes.md, review-notes.md, merge-notes.md) to Confluence. Set to false to disable entirely — no self-install attempt, no warnings, and a Confluence pull failure never blocks a ticket's progress. Leave blank to use the default.",
       "required": false
     }
   }
