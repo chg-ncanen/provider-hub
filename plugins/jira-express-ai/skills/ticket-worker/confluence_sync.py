@@ -13,6 +13,7 @@ the Confluence REST API via `requests`, reusing the same
 ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN worker.py already requires for Jira.
 """
 
+import fcntl
 import importlib
 import logging
 import os
@@ -20,6 +21,7 @@ import re
 import subprocess
 import sys
 from datetime import date
+from pathlib import Path
 
 # Same convention as worker.py's own module-level logger. Best-effort sync
 # failures are swallowed (see push()/clear_all()) but never silent: without a
@@ -60,6 +62,13 @@ except ImportError:
 _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
 _SELF_INSTALL_ATTEMPTED = False
 
+# A stable, shared path every worker.py process resolves identically (they
+# all import this exact file), used to serialize concurrent self-install
+# attempts across simultaneously-running tickets. Not tracked in git —
+# purely a runtime coordination artifact, same category as .env or
+# .worker.lock elsewhere in this plugin.
+_INSTALL_LOCK_PATH = Path(__file__).resolve().parent / ".confluence-deps-install.lock"
+
 
 def _rendering_unavailable_reason() -> str:
     # A function, not a constant: _MISSING_RENDERING_DEPS can shrink after a
@@ -73,53 +82,86 @@ def _rendering_unavailable_reason() -> str:
 
 
 def _ensure_rendering_available() -> bool:
-    """Best-effort, at most once per process: if markdown/markdownify failed
-    to import at module load, try installing them via pip before treating
-    the feature as unavailable. Installing into --user site-packages needs
-    no root and doesn't touch anything system-managed. Memoized via
-    _SELF_INSTALL_ATTEMPTED so a genuine failure (no network, no pip, a
-    locked-down environment) doesn't retry a slow subprocess call on every
-    push()/pull()/clear_all() within the same worker.py run — the next
-    *process* (the next ticket-worker invocation) tries again fresh, since
-    conditions may have changed (e.g. a human ran the pip command manually
-    in between)."""
+    """Best-effort: if markdown/markdownify failed to import at module load,
+    try installing them via pip before treating the feature as unavailable.
+    Installing into --user site-packages needs no root and doesn't touch
+    anything system-managed.
+
+    worker.py runs one process per ticket, and the orchestrator routinely
+    runs several tickets' workers concurrently on the same machine — every
+    one of those processes imports this same module fresh and would
+    otherwise independently decide to run its own `pip install` into the
+    same --user site-packages directory at the same time. Concurrent pip
+    invocations against the same target aren't safe (interleaved writes can
+    corrupt the install for whichever process loses the race), so the
+    actual install attempt is guarded by a non-blocking flock shared across
+    every worker.py process — not the per-ticket `.worker.lock` pattern,
+    since this is about the one shared Python environment, not any single
+    ticket. A process that finds the lock already held doesn't wait for it
+    (that would stall a ticket's whole run on another ticket's install) —
+    it just reports unavailable for this call and, since
+    _SELF_INSTALL_ATTEMPTED is only set once a process actually gets the
+    lock and runs pip, a later call in the same run (or process) can still
+    retry once the lock frees up.
+
+    Once a process DOES get the lock and runs pip (success or failure),
+    that's memoized via _SELF_INSTALL_ATTEMPTED so it doesn't retry a slow
+    subprocess call on every subsequent push()/pull()/clear_all() within
+    the same run — the next *process* (the next ticket-worker invocation)
+    tries again fresh, since conditions may have changed (e.g. a human ran
+    the pip command manually, or another process's concurrent install
+    already finished, in between)."""
     global _markdown_lib, _markdownify_lib, _RENDERING_AVAILABLE, _MISSING_RENDERING_DEPS, _SELF_INSTALL_ATTEMPTED
     if _RENDERING_AVAILABLE or _SELF_INSTALL_ATTEMPTED:
         return _RENDERING_AVAILABLE
-    _SELF_INSTALL_ATTEMPTED = True
 
-    log.warning(f"attempting to self-install missing Confluence rendering deps: {_MISSING_RENDERING_DEPS}")
     try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode != 0:
-            log.warning(f"self-install failed ({result.returncode}): {result.stderr.strip()[-500:]}")
-            return False
-    except Exception as e:
-        log.warning(f"self-install failed: {e}")
+        lock_fh = open(_INSTALL_LOCK_PATH, "w")
+        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        # Another worker.py process is installing right now. Don't wait for
+        # it and don't set _SELF_INSTALL_ATTEMPTED — this call reports
+        # unavailable, but a later call in this same process gets to try
+        # again rather than being permanently marked as given up.
         return False
 
-    still_missing = []
-    if _markdown_lib is None:
+    try:
+        _SELF_INSTALL_ATTEMPTED = True
+        log.warning(f"attempting to self-install missing Confluence rendering deps: {_MISSING_RENDERING_DEPS}")
         try:
-            _markdown_lib = importlib.import_module("markdown")
-        except ImportError:
-            still_missing.append("markdown")
-    if _markdownify_lib is None:
-        try:
-            _markdownify_lib = importlib.import_module("markdownify")
-        except ImportError:
-            still_missing.append("markdownify")
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                log.warning(f"self-install failed ({result.returncode}): {result.stderr.strip()[-500:]}")
+                return False
+        except Exception as e:
+            log.warning(f"self-install failed: {e}")
+            return False
 
-    _MISSING_RENDERING_DEPS = still_missing
-    _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
-    if _RENDERING_AVAILABLE:
-        log.info("self-installed markdown/markdownify — Confluence sync is now available")
-    else:
-        log.warning(f"self-install ran but still missing: {_MISSING_RENDERING_DEPS}")
-    return _RENDERING_AVAILABLE
+        still_missing = []
+        if _markdown_lib is None:
+            try:
+                _markdown_lib = importlib.import_module("markdown")
+            except ImportError:
+                still_missing.append("markdown")
+        if _markdownify_lib is None:
+            try:
+                _markdownify_lib = importlib.import_module("markdownify")
+            except ImportError:
+                still_missing.append("markdownify")
+
+        _MISSING_RENDERING_DEPS = still_missing
+        _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
+        if _RENDERING_AVAILABLE:
+            log.info("self-installed markdown/markdownify — Confluence sync is now available")
+        else:
+            log.warning(f"self-install ran but still missing: {_MISSING_RENDERING_DEPS}")
+        return _RENDERING_AVAILABLE
+    finally:
+        fcntl.flock(lock_fh, fcntl.LOCK_UN)
+        lock_fh.close()
 
 
 def _sync_enabled() -> bool:

@@ -638,6 +638,28 @@ class TestEnsureRenderingAvailable(unittest.TestCase):
             confluence_sync._SELF_INSTALL_ATTEMPTED,
         ) = self._saved
 
+    def test_does_not_install_while_another_process_holds_the_lock(self) -> None:
+        """Simulates a concurrent ticket-worker process already installing:
+        holds a real exclusive flock on the same lock file this process
+        opens fresh (matching what a separate OS process would do), then
+        confirms this call backs off instead of racing pip against it."""
+        confluence_sync._RENDERING_AVAILABLE = False
+        confluence_sync._SELF_INSTALL_ATTEMPTED = False
+        import fcntl
+        holder = open(confluence_sync._INSTALL_LOCK_PATH, "w")
+        try:
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch("confluence_sync.subprocess.run") as mock_run:
+                result = confluence_sync._ensure_rendering_available()
+            self.assertFalse(result)
+            mock_run.assert_not_called()
+            # Not permanently given up — a later call (once the other
+            # process releases the lock) should still be free to retry.
+            self.assertFalse(confluence_sync._SELF_INSTALL_ATTEMPTED)
+        finally:
+            fcntl.flock(holder, fcntl.LOCK_UN)
+            holder.close()
+
     def test_returns_true_immediately_when_already_available(self) -> None:
         confluence_sync._RENDERING_AVAILABLE = True
         confluence_sync._SELF_INSTALL_ATTEMPTED = False
