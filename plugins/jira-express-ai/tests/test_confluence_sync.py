@@ -290,20 +290,44 @@ class TestClearAll(unittest.TestCase):
     @patch("confluence_sync.requests.put")
     @patch("confluence_sync._find_page")
     def test_clears_only_existing_children(self, mock_find, mock_put) -> None:
-        # Parent found; only "Discovery" child exists, the other three don't.
+        # Parent found; "Discovery" (version 4) and "Merge Notes" (version 10) exist,
+        # while "Implementation Notes" and "Review Notes" don't.
         def find_side_effect(auth, title, ancestor_id):
             if title == "PDE-1234":
                 return {"id": "100", "version": 1}
             if title == "Discovery":
                 return {"id": "300", "version": 4}
+            if title == "Merge Notes":
+                return {"id": "400", "version": 10}
             return None
         mock_find.side_effect = find_side_effect
         mock_put.return_value = _mock_response({"id": "300"})
         confluence_sync.clear_all("PDE-1234", ("e", "t"))
-        self.assertEqual(mock_put.call_count, 1)
-        _, kwargs = mock_put.call_args
-        self.assertEqual(kwargs["json"]["version"]["number"], 5)
-        self.assertIn("Cleared", kwargs["json"]["body"]["value"])
+        # Exactly two PUT calls for the two existing children
+        self.assertEqual(mock_put.call_count, 2)
+
+        # Inspect both PUT calls via call_args_list
+        calls = mock_put.call_args_list
+        # Extract the version numbers and titles from each call
+        versions_and_titles = []
+        for call in calls:
+            _, kwargs = call
+            version_num = kwargs["json"]["version"]["number"]
+            title = kwargs["json"]["title"]
+            versions_and_titles.append((title, version_num))
+
+        # Verify both pages were updated with correct version increments
+        self.assertIn(("Discovery", 5), versions_and_titles)
+        self.assertIn(("Merge Notes", 11), versions_and_titles)
+
+        # Verify placeholder text in at least one call
+        for call in calls:
+            _, kwargs = call
+            if "Cleared" in kwargs["json"]["body"]["value"]:
+                self.assertIn("Cleared", kwargs["json"]["body"]["value"])
+                break
+        else:
+            self.fail("No call contained the 'Cleared' placeholder")
 
     @patch("confluence_sync.requests.put")
     @patch("confluence_sync._find_page")
