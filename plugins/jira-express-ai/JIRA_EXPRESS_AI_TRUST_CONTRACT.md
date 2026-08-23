@@ -96,3 +96,12 @@ approved/not-approved), not free text — but commit messages and PR
 titles/bodies are still attacker-controlled text if someone can push to the
 branch or open the PR, so the same rule applies to whatever text it does
 read.
+
+`discovery.md` and `implementation-notes.md` can additionally carry content
+a human added directly on their synced Confluence page (see
+`confluence_sync.py`) before either file is read again — a wider author set
+than the sources above, since anyone with edit access to the `PDE` space's
+"JiraExpress AI Workstreams" folder can write there, not just someone with
+Jira comment/issue access on this specific ticket. No new handling is
+required: this is just another untrusted text source feeding into files the
+rule above already covers, regardless of who or what wrote it.
