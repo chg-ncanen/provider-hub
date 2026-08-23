@@ -197,6 +197,43 @@ approval still needed) — nothing wrong, just not ready yet. No transition, no
 comment; the ticket stays at `UAT Review` and the next orchestrator run
 resumes this same check.
 
+### No-op outcomes (`NO_CHANGES_NEEDED`)
+
+Two specialists can also conclude there's nothing to actually change, and
+signal this via `**Status:** NO_CHANGES_NEEDED` in their own artifact instead
+of the normal complete status:
+
+- `ticket-discovery` — the condition the ticket describes isn't present, or
+  the behavior is already correct.
+- `ticket-implementation` — same conclusion, reached with direct access to
+  the code instead of discovery's secondhand reasoning. This can happen even
+  when discovery said `READY`.
+
+Either way `worker.py` still transitions to the same next human gate it
+always would (`QA Review` for discovery, `In Review` for implementation) —
+this is a no-op on the code, not on the ticket lifecycle — but swaps in a
+different handoff comment recommending the human close the ticket outright
+(`Approve: move to Done` / `Reject: move back with a comment explaining what
+to revisit`) instead of the default hand-off to the next stage. `notes.md`
+having no PR in this case is expected, not a validation failure:
+`review-context.md` is never written and never checked for when
+`ticket-implementation` reports `NO_CHANGES_NEEDED`.
+
+`build_qa_review_comment()` and `build_in_review_comment()` are each shared
+between two call sites — the moment a specialist just finished, and a
+resumed re-entry directly into that same gate (a human re-running the
+orchestrator without having acted yet) — so both stay in sync automatically
+rather than drifting into two slightly different messages for the same
+state.
+
+A human rejecting a `NO_CHANGES_NEEDED` result sends the ticket back to the
+stage's own "redo" status (`In Discovery` for discovery, `In Progress` for
+implementation). For implementation specifically, `run_implementation()`'s
+dispatch treats "notes exist but say `NO_CHANGES_NEEDED`" the same as "notes
+don't exist yet" — a fresh implementation redo — rather than routing to the
+PR-review pass, which would launch `ticket-review` against a PR that was
+never opened.
+
 ### Transition IDs
 
 Reference only — `worker.py`'s `TRANSITION_IDS` is authoritative.

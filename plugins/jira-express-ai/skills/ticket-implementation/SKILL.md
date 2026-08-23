@@ -175,6 +175,7 @@ Log results:
 ```markdown
 # Implementation Notes: <KEY>
 
+**Status:** READY
 **Date:** <ISO date>
 
 ## Changes Made
@@ -195,6 +196,23 @@ Log results:
 
 <anything the reviewer or merge agent should know>
 ```
+
+Set `**Status:**` to `NO_CHANGES_NEEDED` instead of `READY` when, after reading
+`discovery.md` and examining the code yourself, you conclude no code change is
+actually required — the condition discovery was concerned about isn't
+actually present, or the behavior it described as wrong is already correct.
+This can happen even when discovery said `READY`: you have direct access to
+the code discovery only reasoned about secondhand. When this happens, skip
+Step 2 (implement), Step 3 (tests), and Step 5 (push/PR) entirely — there is
+nothing to commit and no PR to open. `Changes Made` should say "None" and
+`PR Readiness` should say plainly that no implementation step applies,
+mirroring `ticket-discovery`'s own `NO_CHANGES_NEEDED` convention. Do not
+write `review-context.md` in this case — there is no PR for it to describe.
+
+If `implementation-notes.md` already exists — a human rejected a prior
+`NO_CHANGES_NEEDED` result and sent the ticket back for another look — read
+it for your own prior reasoning before redoing this step, the same way
+`ticket-discovery` reads its own prior `discovery.md` on a redo.
 
 ### Step 5 — Push and open the PR
 
@@ -300,5 +318,6 @@ echo "[implementation-agent] BLOCKED — implementation-notes.md written with bl
 - Commit your changes in the worktree before pushing — an uncommitted change never makes it into the PR.
 - Push and open the PR yourself, and write `review-context.md` — you're the only one with direct knowledge of which repo(s)/branch(es) you touched; don't leave that for the worker to guess.
 - Do not transition any Jira ticket.
-- Write `implementation-notes.md`, `review-context.md`, and `.implementation-agent-done` — required outputs.
+- Write `implementation-notes.md` and `.implementation-agent-done` — required outputs. Write `review-context.md` too, unless you concluded `NO_CHANGES_NEEDED` — there is no PR to describe in that case.
 - Only use the BLOCKED path when you genuinely cannot proceed without human input.
+- Only use `**Status:** NO_CHANGES_NEEDED` when you have concrete evidence no code change is required — not merely that the work looks hard or the ticket looks low-value.

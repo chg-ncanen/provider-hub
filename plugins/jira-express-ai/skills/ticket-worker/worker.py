@@ -306,6 +306,32 @@ def build_qa_review_comment(key: str, artifact: Path) -> str:
 
     return f"{action}\n\nSummary: {summary}\n\nSee discovery.md for full findings."
 
+
+def build_in_review_comment(key: str, notes: Path, review_context: Path) -> str:
+    """In Review handoff comment, shared by the end of the implementation
+    path and by a resumed re-entry into the In Review gate — so both stay
+    in sync automatically, mirroring build_qa_review_comment()'s pattern.
+    Action line varies: implementation can recommend closing outright
+    (NO_CHANGES_NEEDED) instead of the default hand-off to PR review."""
+    content = notes.read_text()
+    status = _extract_status_text(content)
+
+    if status == "NO_CHANGES_NEEDED":
+        summary = extract_section(content, "PR Readiness") or "(no summary found in implementation-notes.md)"
+        return (
+            f"🤖 {key}: implementation found no code changes are needed — recommends closing this ticket.\n"
+            f"• Approve: move to Done\n"
+            f"• Reject: move back to In Progress with a comment explaining what to revisit\n\n"
+            f"Summary: {summary}\n\nSee implementation-notes.md for full findings."
+        )
+
+    pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
+    suffix = f": {pr_url}" if pr_url else ""
+    return (
+        f"🤖 {key} is ready for review{suffix}. When approved, move to UAT Review "
+        f"to trigger merge. If you have comments to address, move back to In Progress."
+    )
+
 # ── Sub-agent launch ──────────────────────────────────────────────────────────
 
 def launch_specialist(skill: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
@@ -461,7 +487,12 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth) -> Non
     notes = ticket_dir / "implementation-notes.md"
     review_context = ticket_dir / "review-context.md"
 
-    if not notes.exists():
+    # A prior NO_CHANGES_NEEDED pass has notes.exists() == True but no PR —
+    # a human rejecting it back to In Progress means "redo implementation,"
+    # not "address PR review comments" (_run_review_pass launches the PR
+    # review agent, which has nothing to review here). Route it through the
+    # same fresh-implementation path as a first attempt.
+    if not notes.exists() or extract_status(notes) == "NO_CHANGES_NEEDED":
         _run_first_implementation_pass(key, ticket_dir, repos_dir, notes, review_context, auth)
     else:
         _run_review_pass(key, ticket_dir, repos_dir, review_context, auth)
@@ -473,9 +504,10 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
     # implementation-notes.md (a bug in that specialist, not something
     # expected in normal operation) must not skip a retry and just repeat
     # the same failure forever — see run_discovery()'s identical fix for
-    # the full reasoning. notes itself needs no unlinking here: this
-    # function only runs while notes.exists() is already False (see
-    # run_implementation()'s dispatch).
+    # the full reasoning. notes.md itself is deliberately NOT unlinked here
+    # — like discovery.md, a redo after a rejected NO_CHANGES_NEEDED reads
+    # its own prior version for context (see run_implementation()'s dispatch,
+    # which is the only way this function runs with notes already existing).
     sentinel = ticket_dir / ".implementation-agent-done"
     sentinel.unlink(missing_ok=True)
     launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
@@ -487,27 +519,27 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
         report_failure(key, "ticket-implementation finished but implementation-notes.md is missing", auth, stage="ticket-implementation")
         return
 
-    if extract_status(notes) == "BLOCKED":
+    status = extract_status(notes)
+    if status == "BLOCKED":
         apply_blocked_routing(key, notes, "ticket-implementation", auth)
+        return
+
+    if status == "NO_CHANGES_NEEDED":
+        jira_transition(key, "In Review", auth)
+        jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
+        log.info(f"{key}: implementation found no changes needed — waiting for human decision")
         return
 
     # The implementation agent writes review-context.md itself — it's the
     # only one with direct knowledge of which repo(s)/branch(es) it touched.
-    # Missing after a non-BLOCKED run is a bug in that agent, not something
-    # to work around here.
+    # Missing after a non-BLOCKED, non-NO_CHANGES_NEEDED run is a bug in that
+    # agent, not something to work around here.
     if not review_context.exists():
         report_failure(key, "ticket-implementation finished but review-context.md is missing", auth, stage="ticket-implementation")
         return
 
-    pr_url = extract_bold_field(review_context.read_text(), "PR URL")
     jira_transition(key, "In Review", auth)
-    jira_comment(
-        key,
-        f"🤖 Implementation complete for {key}. PR ready for review: {pr_url}\n"
-        f"When approved, move to UAT Review to trigger merge.\n"
-        f"If you have comments to address, move back to In Progress.",
-        auth,
-    )
+    jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
     log.info(f"{key}: waiting for PR review")
 
 
@@ -604,16 +636,15 @@ def run_qa_review_gate(key: str, ticket_dir: Path, auth) -> None:
 def run_in_review_gate(key: str, ticket_dir: Path, auth) -> None:
     """Human gate, resumed directly into In Review with no status change
     since the implementation/review path already posted the handoff
-    comment — re-post it so a resumed session doesn't just exit silently."""
+    comment — re-post it so a resumed session doesn't just exit silently.
+    implementation-notes.md is guaranteed to exist here: reaching this
+    status already passed sanity_check_and_rewind()'s stage-completion
+    check. Shares build_in_review_comment() with the end of the
+    implementation path so both stay in sync, including the
+    NO_CHANGES_NEEDED variant."""
+    notes = ticket_dir / "implementation-notes.md"
     review_context = ticket_dir / "review-context.md"
-    pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
-    suffix = f": {pr_url}" if pr_url else ""
-    jira_comment(
-        key,
-        f"🤖 {key} is ready for review{suffix}. When approved, move to UAT Review "
-        f"to trigger merge. If you have comments to address, move back to In Progress.",
-        auth,
-    )
+    jira_comment(key, build_in_review_comment(key, notes, review_context), auth)
     log.info(f"{key}: re-posted In Review comment, waiting")
 
 # ── Rewind ────────────────────────────────────────────────────────────────────
