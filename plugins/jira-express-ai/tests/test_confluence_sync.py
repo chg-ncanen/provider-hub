@@ -224,5 +224,62 @@ class TestPush(unittest.TestCase):
         self.assertIsNone(url)
 
 
+class TestPull(unittest.TestCase):
+    @patch("confluence_sync._find_page")
+    def test_returns_none_when_no_parent_page(self, mock_find) -> None:
+        mock_find.return_value = None
+        self.assertIsNone(confluence_sync.pull("PDE-1234", "discovery", ("e", "t")))
+
+    @patch("confluence_sync._find_page")
+    def test_returns_none_when_no_child_page(self, mock_find) -> None:
+        mock_find.side_effect = [{"id": "100", "version": 1}, None]
+        self.assertIsNone(confluence_sync.pull("PDE-1234", "discovery", ("e", "t")))
+
+    @patch("confluence_sync.requests.get")
+    @patch("confluence_sync._find_page")
+    def test_returns_stripped_markdown_when_found(self, mock_find, mock_get) -> None:
+        mock_find.side_effect = [{"id": "100", "version": 1}, {"id": "300", "version": 2}]
+        html = confluence_sync.render_storage_body("discovery", "## Summary\n\nHuman edit here.")
+        mock_get.return_value = _mock_response({"body": {"storage": {"value": html}}})
+        result = confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+        self.assertIn("Human edit here.", result)
+        self.assertNotIn("read back into the ticket", result)
+
+    @patch("confluence_sync.requests.get")
+    @patch("confluence_sync._find_page")
+    def test_raises_pull_error_on_api_failure(self, mock_find, mock_get) -> None:
+        mock_find.side_effect = [{"id": "100", "version": 1}, {"id": "300", "version": 2}]
+        mock_get.return_value = _mock_response({}, status_ok=False)
+        with self.assertRaises(confluence_sync.ConfluencePullError):
+            confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+
+    @patch("confluence_sync._find_page")
+    def test_raises_pull_error_when_requests_raises(self, mock_find) -> None:
+        """Verify that a real API error (requests exception) raises ConfluencePullError,
+        not silently returns None."""
+        mock_find.side_effect = [{"id": "100", "version": 1}, {"id": "300", "version": 2}]
+        with patch("confluence_sync.requests.get") as mock_get:
+            mock_get.side_effect = requests.ConnectionError("network failure")
+            with self.assertRaises(confluence_sync.ConfluencePullError):
+                confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+
+    @patch("confluence_sync._find_page")
+    def test_does_not_confuse_not_found_with_error(self, mock_find) -> None:
+        """Verify that parent not found returns None (not error),
+        but an API error in getting pages raises ConfluencePullError.
+        This test ensures the critical distinction is clear."""
+        # First call: parent not found -> should return None, never raise
+        mock_find.return_value = None
+        result = confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+        self.assertIsNone(result)
+
+        # Reset mock for second scenario
+        mock_find.reset_mock()
+        # Second call: child not found -> should return None, never raise
+        mock_find.side_effect = [{"id": "100", "version": 1}, None]
+        result = confluence_sync.pull("PDE-1234", "discovery", ("e", "t"))
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

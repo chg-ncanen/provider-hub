@@ -219,3 +219,32 @@ def push(key: str, artifact_type: str, markdown_content: str, auth) -> str | Non
         return f"https://chghealthcare.atlassian.net/wiki/spaces/{_space_key()}/pages/{page_id}"
     except Exception:
         return None
+
+
+def pull(key: str, artifact_type: str, auth) -> str | None:
+    """Returns the artifact's current Confluence content as markdown, or
+    None if no such page exists yet (a legitimate no-op — e.g. this
+    ticket's very first run). Raises ConfluencePullError for any other
+    failure; callers must not treat that the same as "not found"."""
+    try:
+        parent = _find_page(auth, key, _parent_page_id())
+        if not parent:
+            return None
+        title = ARTIFACT_TYPES[artifact_type]["title"]
+        existing = _find_page(auth, title, parent["id"])
+        if not existing:
+            return None
+        r = requests.get(
+            f"{CONFLUENCE_V2_BASE}/pages/{existing['id']}",
+            params={"body-format": "storage"},
+            auth=auth,
+            headers={"Accept": "application/json"},
+            timeout=20,
+        )
+        r.raise_for_status()
+        html = r.json()["body"]["storage"]["value"]
+    except Exception as e:
+        raise ConfluencePullError(str(e)) from e
+
+    markdown_content = _markdownify_lib.markdownify(html)
+    return _strip_banner(markdown_content, artifact_type)
