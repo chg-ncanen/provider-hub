@@ -15,13 +15,17 @@ this skill is invoked, your only job is to run the script and report results.
 
 ```bash
 cd /path/to/pde-ops-agent   # target project root — tickets/ lives here
-python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 ```
 
 `CLAUDE_PLUGIN_ROOT` (set by Claude Code and Copilot CLI to this plugin's install
 location) points the script at its own sibling skill files regardless of which
 project directory it's run from — see "Working directory" below for the
-separate, unrelated cwd requirement.
+separate, unrelated cwd requirement. `"$CLAUDE_PLUGIN_ROOT/.venv/bin/python"` — not
+bare `python3` — is this plugin's own self-contained virtualenv, provisioned
+automatically by the `bootstrap-deps.sh` `SessionStart` hook (see
+`requirements.txt` at this plugin's root); it guarantees `requests` is present
+before this ever runs.
 
 Don't pre-flight-check and refuse before running this — the script itself
 handles the things that look like blockers:

@@ -152,19 +152,16 @@ the worker's territory alone.
 - **Claude Code CLI** (`claude`) on `PATH` — the orchestrator and worker launch sub-agent sessions
   through it (`claude -p "/<skill>" --permission-mode=bypassPermissions ...`, detached with
   `nohup`).
-- Python 3 with `requests` installed on the machine running `orchestrator.py` and `worker.py`
-  (not yet automated via a bootstrap hook the way `pde-mcp`'s venv is — install it yourself:
-  `pip install requests`). Hard-required — the worker can't do anything without it.
-- `markdown` and `markdownify` — needed only for Confluence sync (see below), which is enabled by
-  default. `confluence_sync.py` tries to `pip install --user` them itself the first time it finds
-  them missing (no root needed, since `--user` never touches system-managed site-packages); if
-  that self-install also fails (no network, no `pip`, a locked-down environment), the worker still
-  runs every ticket normally — Confluence pushes become logged no-ops (comments fall back to "see
-  the .md file" wording), and a Confluence *pull* reports a retryable failure and escalates to
-  `Blocked` after 3 attempts with no progress, same as any other transient failure, rather than
-  risk silently discarding a human's page edit. Set `CONFLUENCE_SYNC_ENABLED=false` (this plugin's
-  `userConfig`) to turn Confluence sync off entirely instead — no self-install attempt, no
-  warnings, no `pull` escalation, just a plain no-op everywhere.
+- Python 3 on `PATH` — that's the only manual requirement. `requests`, `markdown`, and
+  `markdownify` (see `requirements.txt` at this plugin's root) are provisioned automatically into
+  this plugin's own self-contained virtualenv (`.venv/`, git-ignored) by the `bootstrap-deps.sh`
+  `SessionStart` hook, the same pattern `pde-mcp`'s venv already uses — idempotent and cheap on the
+  common path, and it re-installs automatically whenever a plugin upgrade changes
+  `requirements.txt`. `orchestrator.py`/`worker.py` are invoked as
+  `"$CLAUDE_PLUGIN_ROOT/.venv/bin/python"`, never bare `python3`, so nothing needs to check for or
+  self-install anything at runtime. `markdown`/`markdownify` are only actually used for Confluence
+  sync, which is enabled by default — set `CONFLUENCE_SYNC_ENABLED=false` (this plugin's
+  `userConfig`) to turn it off entirely instead.
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
   `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
@@ -190,8 +187,13 @@ mocked — the suite never makes a real network call or spawns a real subprocess
 
 ```bash
 cd plugins/jira-express-ai
-python3 -m unittest discover -s tests -t . -q
+./.venv/bin/python -m unittest discover -s tests -t . -q
 ```
+
+(`./.venv/bin/python`, not bare `python3` — this plugin's own virtualenv, already provisioned by
+`bootstrap-deps.sh` if you've started a Claude Code session with this plugin enabled at least once;
+otherwise run that script yourself first, or `pip install -r requirements.txt` into whatever
+interpreter you use to run tests.)
 
 The four specialist skills (`ticket-discovery`, `ticket-implementation`, `ticket-review`,
 `ticket-merge`) are genuine LLM-driven `SKILL.md` prose, not scripts, so there's nothing to unit

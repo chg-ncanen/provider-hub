@@ -43,14 +43,20 @@ variable; type out the one you need.
 
 ```bash
 # If step 2 concluded "yes, skip the Confluence pull":
-python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" --skip-confluence-pull "$REPOS_DIR"
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" --skip-confluence-pull "$REPOS_DIR"
 ```
 
 ```bash
 # Otherwise (the normal case — step 2 found no pull failure, or you weren't
 # sure the human authorized proceeding without their edit):
-python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" "$REPOS_DIR"
+"$CLAUDE_PLUGIN_ROOT/.venv/bin/python" "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" "$REPOS_DIR"
 ```
+
+`"$CLAUDE_PLUGIN_ROOT/.venv/bin/python"` — not bare `python3` — is this plugin's own
+self-contained virtualenv, provisioned automatically by the `bootstrap-deps.sh`
+`SessionStart` hook (see `requirements.txt` at this plugin's root). It guarantees
+`requests`/`markdown`/`markdownify` are all present before this ever runs; nothing
+here needs to check for or install anything itself.
 
 `worker.py` derives the ticket key and ticket directory from `$(pwd)` itself
 (the orchestrator always launches this session with that as its cwd), reads

@@ -13,15 +13,11 @@ the Confluence REST API via `requests`, reusing the same
 ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN worker.py already requires for Jira.
 """
 
-import fcntl
-import importlib
 import logging
 import os
 import re
-import subprocess
 import sys
 from datetime import date
-from pathlib import Path
 
 # Same convention as worker.py's own module-level logger. Best-effort sync
 # failures are swallowed (see push()/clear_all()) but never silent: without a
@@ -30,178 +26,39 @@ from pathlib import Path
 # unreachable.
 log = logging.getLogger(__name__)
 
-# `requests` is a hard dependency of this whole plugin — worker.py needs it
-# for Jira regardless of whether Confluence sync works — so a missing
-# `requests` exits here exactly as it does in worker.py.
+# All three dependencies are provisioned together into this plugin's own
+# venv by the bootstrap-deps.sh SessionStart hook (see requirements.txt at
+# this plugin's root) before worker.py/orchestrator.py ever run — both are
+# invoked as "$CLAUDE_PLUGIN_ROOT/.venv/bin/python", never bare `python3`.
+# A missing import here means that venv itself is broken (the hook failed
+# or was bypassed), which is exactly the same failure class `requests`
+# missing already represents — treated identically, not soft-handled,
+# since worker.py is only ever invoked via that one documented path and a
+# broken venv needs a human to look at it either way.
 try:
     import requests
 except ImportError:
     print("ERROR: 'requests' is not installed. Run: pip install requests", file=sys.stderr)
     sys.exit(1)
 
-# The two rendering libraries are different in kind: they're needed only for
-# Confluence sync, which is best-effort by design. Exiting here would kill
-# worker.py during `import confluence_sync` — before any Jira work, comment,
-# transition, or report_failure — so a plugin upgrade without
-# `pip install markdown markdownify` would stall every in-flight ticket,
-# including merges and human-approval gates that have nothing to do with
-# Confluence. Fail soft instead and treat it like any other sync failure.
-_MISSING_RENDERING_DEPS = []
 try:
     import markdown as _markdown_lib
 except ImportError:
-    _markdown_lib = None
-    _MISSING_RENDERING_DEPS.append("markdown")
+    print("ERROR: 'markdown' is not installed. Run: pip install markdown", file=sys.stderr)
+    sys.exit(1)
 
 try:
     import markdownify as _markdownify_lib
 except ImportError:
-    _markdownify_lib = None
-    _MISSING_RENDERING_DEPS.append("markdownify")
-
-_RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
-_SELF_INSTALL_ATTEMPTED = False
-
-# A stable, shared path every worker.py process resolves identically (they
-# all import this exact file), used to serialize concurrent self-install
-# attempts across simultaneously-running tickets. Not tracked in git —
-# purely a runtime coordination artifact, same category as .env or
-# .worker.lock elsewhere in this plugin.
-_INSTALL_LOCK_PATH = Path(__file__).resolve().parent / ".confluence-deps-install.lock"
-
-
-def _rendering_unavailable_reason() -> str:
-    # A function, not a constant: _MISSING_RENDERING_DEPS can shrink after a
-    # successful (or partially successful) _ensure_rendering_available() call,
-    # so this always reflects what's *currently* missing, not what was
-    # missing at import time.
-    return "Confluence sync is unavailable: {} not installed (run: pip install {})".format(
-        " and ".join(f"'{d}'" for d in _MISSING_RENDERING_DEPS) or "rendering dependencies",
-        " ".join(_MISSING_RENDERING_DEPS) or "markdown markdownify",
-    )
-
-
-def _bootstrap_pip() -> bool:
-    """get-pip.py self-heal for a Python that has no `pip` module at all —
-    the exact technique pde-ops-tools/scripts/bootstrap-deps.sh already uses
-    for its own venv, needed because Debian/Ubuntu strip pip's bundled wheel
-    data out of the base python3 package (only python3.X-venv includes it).
-    Downloads pip straight from PyPI's bootstrap host into --user site-
-    packages, so it needs no root either. Best-effort: any failure (no
-    curl, no network reaching bootstrap.pypa.io) just means the caller's
-    subsequent retry fails the same way it would have without this."""
-    try:
-        get_pip = subprocess.run(
-            ["curl", "-fsSL", "https://bootstrap.pypa.io/get-pip.py"],
-            capture_output=True, timeout=30,
-        )
-        if get_pip.returncode != 0 or not get_pip.stdout:
-            return False
-        result = subprocess.run(
-            [sys.executable, "-", "--user", "--quiet"],
-            input=get_pip.stdout, capture_output=True, timeout=60,
-        )
-        if result.returncode != 0:
-            log.warning(f"pip bootstrap via get-pip.py failed ({result.returncode}): {result.stderr.decode(errors='replace').strip()[-500:]}")
-        return result.returncode == 0
-    except Exception as e:
-        log.warning(f"pip bootstrap via get-pip.py failed: {e}")
-        return False
-
-
-def _ensure_rendering_available() -> bool:
-    """Best-effort: if markdown/markdownify failed to import at module load,
-    try installing them via pip before treating the feature as unavailable.
-    Installing into --user site-packages needs no root and doesn't touch
-    anything system-managed.
-
-    worker.py runs one process per ticket, and the orchestrator routinely
-    runs several tickets' workers concurrently on the same machine — every
-    one of those processes imports this same module fresh and would
-    otherwise independently decide to run its own `pip install` into the
-    same --user site-packages directory at the same time. Concurrent pip
-    invocations against the same target aren't safe (interleaved writes can
-    corrupt the install for whichever process loses the race), so the
-    actual install attempt is guarded by a non-blocking flock shared across
-    every worker.py process — not the per-ticket `.worker.lock` pattern,
-    since this is about the one shared Python environment, not any single
-    ticket. A process that finds the lock already held doesn't wait for it
-    (that would stall a ticket's whole run on another ticket's install) —
-    it just reports unavailable for this call and, since
-    _SELF_INSTALL_ATTEMPTED is only set once a process actually gets the
-    lock and runs pip, a later call in the same run (or process) can still
-    retry once the lock frees up.
-
-    Once a process DOES get the lock and runs pip (success or failure),
-    that's memoized via _SELF_INSTALL_ATTEMPTED so it doesn't retry a slow
-    subprocess call on every subsequent push()/pull()/clear_all() within
-    the same run — the next *process* (the next ticket-worker invocation)
-    tries again fresh, since conditions may have changed (e.g. a human ran
-    the pip command manually, or another process's concurrent install
-    already finished, in between)."""
-    global _markdown_lib, _markdownify_lib, _RENDERING_AVAILABLE, _MISSING_RENDERING_DEPS, _SELF_INSTALL_ATTEMPTED
-    if _RENDERING_AVAILABLE or _SELF_INSTALL_ATTEMPTED:
-        return _RENDERING_AVAILABLE
-
-    try:
-        lock_fh = open(_INSTALL_LOCK_PATH, "w")
-        fcntl.flock(lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        # Another worker.py process is installing right now. Don't wait for
-        # it and don't set _SELF_INSTALL_ATTEMPTED — this call reports
-        # unavailable, but a later call in this same process gets to try
-        # again rather than being permanently marked as given up.
-        return False
-
-    try:
-        _SELF_INSTALL_ATTEMPTED = True
-        log.warning(f"attempting to self-install missing Confluence rendering deps: {_MISSING_RENDERING_DEPS}")
-        install_args = [sys.executable, "-m", "pip", "install", "--user", *_MISSING_RENDERING_DEPS]
-        try:
-            result = subprocess.run(install_args, capture_output=True, text=True, timeout=60)
-            if result.returncode != 0 and "No module named pip" in result.stderr:
-                # Debian/Ubuntu strip pip's bundled wheel data out of the
-                # base python3 package — this Python has no pip at all, not
-                # just missing packages. One retry after bootstrapping it.
-                log.warning("pip itself is missing — attempting to bootstrap it via get-pip.py before retrying")
-                if _bootstrap_pip():
-                    result = subprocess.run(install_args, capture_output=True, text=True, timeout=60)
-            if result.returncode != 0:
-                log.warning(f"self-install failed ({result.returncode}): {result.stderr.strip()[-500:]}")
-                return False
-        except Exception as e:
-            log.warning(f"self-install failed: {e}")
-            return False
-
-        still_missing = []
-        if _markdown_lib is None:
-            try:
-                _markdown_lib = importlib.import_module("markdown")
-            except ImportError:
-                still_missing.append("markdown")
-        if _markdownify_lib is None:
-            try:
-                _markdownify_lib = importlib.import_module("markdownify")
-            except ImportError:
-                still_missing.append("markdownify")
-
-        _MISSING_RENDERING_DEPS = still_missing
-        _RENDERING_AVAILABLE = not _MISSING_RENDERING_DEPS
-        if _RENDERING_AVAILABLE:
-            log.info("self-installed markdown/markdownify — Confluence sync is now available")
-        else:
-            log.warning(f"self-install ran but still missing: {_MISSING_RENDERING_DEPS}")
-        return _RENDERING_AVAILABLE
-    finally:
-        fcntl.flock(lock_fh, fcntl.LOCK_UN)
-        lock_fh.close()
+    print("ERROR: 'markdownify' is not installed. Run: pip install markdownify", file=sys.stderr)
+    sys.exit(1)
 
 
 def _sync_enabled() -> bool:
     # Default on — must be explicitly turned off. A developer who never
-    # touches this config gets Confluence sync by default (best-effort,
-    # self-installing); one who deliberately doesn't want it set once and
-    # never sees another Confluence-related warning again.
+    # touches this config gets Confluence sync by default; one who
+    # deliberately doesn't want it set once and never sees another
+    # Confluence-related warning again.
     value = (
         os.environ.get("CONFLUENCE_SYNC_ENABLED", "").strip()
         or os.environ.get("CLAUDE_PLUGIN_OPTION_CONFLUENCE_SYNC_ENABLED", "").strip()
@@ -460,9 +317,6 @@ def push(key: str, artifact_type: str, markdown_content: str, auth) -> str | Non
     not the same as untraceable."""
     if not _sync_enabled():
         return None
-    if not _ensure_rendering_available():
-        log.warning(f"{key}: {_rendering_unavailable_reason()} — skipping push ({artifact_type})")
-        return None
     try:
         title = _child_title(key, artifact_type)
         body = render_storage_body(artifact_type, markdown_content)
@@ -510,19 +364,13 @@ def pull(key: str, artifact_type: str, auth) -> str | None:
     """Returns the artifact's current Confluence content as markdown, or
     None if no such page exists yet (a legitimate no-op — e.g. this
     ticket's very first run). Raises ConfluencePullError for any other
-    failure; callers must not treat that the same as "not found".
-
-    Missing rendering dependencies are a real failure here, deliberately
-    asymmetric with push()/clear_all()'s early return: pushing without
-    rendering is just "can't sync, move on", but *pulling* without it could
-    silently discard a human's Confluence-only edit. That's exactly what
-    ConfluencePullError exists to escalate — but only when sync is actually
-    enabled; if a human explicitly turned it off, there's no edit to
-    protect and this is a plain no-op, same as push()/clear_all()."""
+    failure; callers must not treat that the same as "not found" — a
+    human's Confluence-only edit could otherwise be silently discarded.
+    Returns None without attempting anything if a human explicitly turned
+    sync off (CONFLUENCE_SYNC_ENABLED=false) — there's no edit to protect
+    if the feature was never turned on."""
     if not _sync_enabled():
         return None
-    if not _ensure_rendering_available():
-        raise ConfluencePullError(_rendering_unavailable_reason())
     try:
         parent = _find_page(auth, key, _parent_page_id())
         if not parent:
@@ -555,9 +403,6 @@ def clear_all(key: str, auth) -> None:
     (that stage was never reached) is skipped, not created. One page failing
     doesn't stop the others from being cleared; every failure is logged."""
     if not _sync_enabled():
-        return
-    if not _ensure_rendering_available():
-        log.warning(f"{key}: {_rendering_unavailable_reason()} — skipping page clear")
         return
     try:
         parent = _find_page(auth, key, _parent_page_id())

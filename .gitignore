@@ -104,6 +104,3 @@ temp/
 # Session files
 .session/
 *.session
-
-# Runtime coordination lock files (created by plugin scripts, never committed)
-.confluence-deps-install.lock
