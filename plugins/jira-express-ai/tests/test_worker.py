@@ -360,7 +360,8 @@ class TestApplyBlockedRouting(TempDirTestCase):
             "## Suggested Next Step\n\nAsk the PM.\n"
         )
         with patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment") as mock_comment:
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             with self.assertRaises(SystemExit):
                 worker.apply_blocked_routing("PDE-1", artifact, "ticket-discovery", self.auth)
 
@@ -373,6 +374,18 @@ class TestApplyBlockedRouting(TempDirTestCase):
         self.assertIn("Ask the PM.", message)
         self.assertIn("ticket-discovery", message)
         self.assertIn("move back to In Discovery", message)
+
+    def test_pushes_to_confluence_and_links_it_in_the_blocked_comment(self) -> None:
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** BLOCKED\n\n## Blocker\n\nNeed access.\n")
+        with patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example/blocked") as mock_push:
+            with self.assertRaises(SystemExit):
+                worker.apply_blocked_routing("PDE-1234", artifact, "ticket-discovery", self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "discovery", artifact.read_text(), self.auth)
+        self.assertIn("https://example/blocked", mock_comment.call_args.args[1])
 
 
 class TestWaitForSentinel(TempDirTestCase):
@@ -960,7 +973,8 @@ class TestRunMerge(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
              patch.object(worker, "jira_comment") as mock_comment, \
-             patch.object(worker, "report_failure") as mock_fail:
+             patch.object(worker, "report_failure") as mock_fail, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_merge("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
         return mock_transition, mock_comment, mock_fail
 
@@ -1010,6 +1024,67 @@ class TestRunMerge(TempDirTestCase):
         (self.ticket_dir / ".merge-agent-done").touch()
         mock_transition, mock_comment, mock_fail = self._run("**Status:** SUCCESS\n")
         mock_transition.assert_called_once_with("PDE-1", "Done", self.auth)
+
+    def test_success_pushes_to_confluence_and_links_it_in_the_comment(self) -> None:
+        notes = self.ticket_dir / "merge-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            notes.write_text("**Status:** SUCCESS\n\n**PR:** #1 (https://x)\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example/merge") as mock_push:
+            worker.run_merge("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "merge", notes.read_text(), self.auth)
+        self.assertIn("https://example/merge", mock_comment.call_args.args[1])
+
+    def test_blocked_pushes_to_confluence_and_links_it_in_the_comment(self) -> None:
+        notes = self.ticket_dir / "merge-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            notes.write_text("**Status:** BLOCKED\n\n## Blocker\n\nMerge conflict.\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example/merge-blocked") as mock_push:
+            worker.run_merge("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "merge", notes.read_text(), self.auth)
+        self.assertIn("https://example/merge-blocked", mock_comment.call_args.args[1])
+
+    def test_pending_still_pushes_to_confluence_despite_no_comment(self) -> None:
+        notes = self.ticket_dir / "merge-notes.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            notes.write_text("**Status:** PENDING\n\n## Reason\n\nCI still running\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition") as mock_transition, \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example/merge-pending") as mock_push:
+            worker.run_merge("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "merge", notes.read_text(), self.auth)
+        mock_transition.assert_not_called()
+        mock_comment.assert_not_called()
 
 
 class TestHumanGates(TempDirTestCase):

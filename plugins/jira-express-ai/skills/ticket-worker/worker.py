@@ -220,6 +220,15 @@ RESUME_STATUS_FOR_STAGE = {
     "ticket-merge": "UAT Review",
 }
 
+# Maps the same stage name used for `stage`/`skill` at every call site to
+# the confluence_sync.ARTIFACT_TYPES key for that stage's artifact.
+STAGE_TO_ARTIFACT_TYPE = {
+    "ticket-discovery": "discovery",
+    "ticket-implementation": "implementation",
+    "ticket-review": "review",
+    "ticket-merge": "merge",
+}
+
 
 def jira_comment(key: str, text: str, auth) -> None:
     r = requests.post(
@@ -445,11 +454,14 @@ def apply_blocked_routing(key: str, artifact_path: Path, stage: str, auth) -> No
     blocker = extract_section(content, "Blocker") or "(no Blocker section found)"
     next_step = extract_section(content, "Suggested Next Step")
 
+    confluence_url = confluence_sync.push(key, STAGE_TO_ARTIFACT_TYPE[stage], content, auth)
+    pointer = f"\nFull details: {confluence_url}" if confluence_url else ""
+
     jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(blocker))
     message = f"🤖 {stage} is blocked on {key}: {blocker}"
     if next_step:
         message += f"\n{next_step}"
-    message += f"\nOnce resolved, move back to {RESUME_STATUS_FOR_STAGE[stage]} to continue."
+    message += f"\nOnce resolved, move back to {RESUME_STATUS_FOR_STAGE[stage]} to continue.{pointer}"
     jira_comment(key, message, auth)
 
     log.warning(f"{key}: BLOCKED ({stage}) — {blocker}")
@@ -609,10 +621,15 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
 
     content = notes.read_text()
     status = extract_status(notes)
+    # Pushed regardless of status/whether a comment follows — the Confluence
+    # page should reflect whatever's actually on disk (spec: "Sync fires
+    # whenever an artifact file is read").
+    confluence_url = confluence_sync.push(key, "merge", content, auth)
+    pointer = f" Full details: {confluence_url}" if confluence_url else ""
 
     if status == "SUCCESS":
         jira_transition(key, "Done", auth)
-        jira_comment(key, f"🤖 Merge complete for {key}. Ticket resolved.", auth)
+        jira_comment(key, f"🤖 Merge complete for {key}. Ticket resolved.{pointer}", auth)
         log.info(f"{key}: merge complete — ticket resolved")
     elif status == "BLOCKED":
         reason = extract_section(content, "Blocker") or "(no Blocker section found)"
@@ -620,7 +637,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         jira_comment(
             key,
             f"🤖 Merge blocked for {key}: {reason}\n"
-            f"Once resolved, move back to {RESUME_STATUS_FOR_STAGE['ticket-merge']} to continue.",
+            f"Once resolved, move back to {RESUME_STATUS_FOR_STAGE['ticket-merge']} to continue.{pointer}",
             auth,
         )
         log.warning(f"{key}: merge blocked — {reason}")
