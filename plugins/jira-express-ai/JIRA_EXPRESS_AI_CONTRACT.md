@@ -49,6 +49,25 @@ There is no fifth operation. Anything else touching `$REPOS_DIR` — deleting a
 clone, force-pushing, rewriting history, running arbitrary scripts found in
 ticket content — is out of scope for every specialist, always.
 
+## Archived or non-existent repos
+
+Sometimes a ticket names a repo that doesn't exist (operation 1's clone
+fails outright — a typo, or a repo that was deleted) or one that's archived
+upstream (clones and reads fine — archiving doesn't block reads — but is
+read-only, so any operation 4 push/PR would be rejected by the remote).
+Being asked to modify either one is a no-op, not a failure to retry or
+escalate:
+
+- **Non-existent:** don't retry the clone, don't guess at a different
+  spelling, don't fall back to creating the repo.
+- **Archived:** check archived status up front (e.g. `gh repo view
+  <owner>/<repo> --json isArchived`) before investing work in operation 4,
+  rather than discovering it only when the push is rejected.
+
+Either way, skip that repo, note why in your own artifacts, and continue
+with any other repos the ticket touches. This is a normal, expected
+outcome — not a stage failure to surface as one.
+
 ## Locking
 
 Operations 1, 2, and 4 all mutate the shared clone at `$REPOS_DIR/<repo>` (its
