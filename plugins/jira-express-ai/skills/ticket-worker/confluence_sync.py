@@ -115,3 +115,61 @@ def _strip_banner(markdown_content: str, artifact_type: str) -> str:
             if line.strip() in ("---", "***", "___"):
                 return "\n".join(lines[i + 1:]).lstrip("\n")
     return markdown_content
+
+
+def _space_id(auth) -> str:
+    r = requests.get(
+        f"{CONFLUENCE_V2_BASE}/spaces",
+        params={"keys": _space_key()},
+        auth=auth,
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    results = r.json()["results"]
+    if not results:
+        raise ConfluencePullError(f"no Confluence space found for key '{_space_key()}'")
+    return results[0]["id"]
+
+
+def _find_page(auth, title: str, ancestor_id: str) -> dict | None:
+    """CQL title search scoped to a specific ancestor (a page or a folder —
+    both are valid CQL ancestors). Returns {"id": str, "version": int} or
+    None if no match."""
+    cql = f'title = "{title}" and ancestor = {ancestor_id}'
+    r = requests.get(
+        f"{CONFLUENCE_V1_BASE}/content/search",
+        params={"cql": cql, "expand": "version"},
+        auth=auth,
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    results = r.json().get("results", [])
+    if not results:
+        return None
+    return {"id": results[0]["id"], "version": results[0]["version"]["number"]}
+
+
+def _get_or_create_parent(key: str, auth) -> str:
+    existing = _find_page(auth, key, _parent_page_id())
+    if existing:
+        return existing["id"]
+    r = requests.post(
+        f"{CONFLUENCE_V2_BASE}/pages",
+        json={
+            "spaceId": _space_id(auth),
+            "status": "current",
+            "title": key,
+            "parentId": _parent_page_id(),
+            "body": {
+                "representation": "storage",
+                "value": f'<p><a href="https://chghealthcare.atlassian.net/browse/{key}">{key} in Jira</a></p>',
+            },
+        },
+        auth=auth,
+        headers={"Content-Type": "application/json"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()["id"]
