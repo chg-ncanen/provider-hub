@@ -248,3 +248,35 @@ def pull(key: str, artifact_type: str, auth) -> str | None:
 
     markdown_content = _markdownify_lib.markdownify(html)
     return _strip_banner(markdown_content, artifact_type)
+
+
+def clear_all(key: str, auth) -> None:
+    """Best-effort. Called once, at the moment worker.py detects a genuine
+    fresh 'To Do' restart. Blanks each existing child page's content with a
+    placeholder rather than deleting it, so Confluence's own page version
+    history keeps the previous attempt's content. A missing child page
+    (that stage was never reached) is skipped, not created."""
+    try:
+        parent = _find_page(auth, key, _parent_page_id())
+        if not parent:
+            return
+        placeholder = CLEARED_PLACEHOLDER.format(date=date.today().isoformat())
+        for info in ARTIFACT_TYPES.values():
+            existing = _find_page(auth, info["title"], parent["id"])
+            if not existing:
+                continue
+            requests.put(
+                f"{CONFLUENCE_V2_BASE}/pages/{existing['id']}",
+                json={
+                    "id": existing["id"],
+                    "status": "current",
+                    "title": info["title"],
+                    "body": {"representation": "storage", "value": f"<p>{placeholder}</p>"},
+                    "version": {"number": existing["version"] + 1},
+                },
+                auth=auth,
+                headers={"Content-Type": "application/json"},
+                timeout=20,
+            )
+    except Exception:
+        pass

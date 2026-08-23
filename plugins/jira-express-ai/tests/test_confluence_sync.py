@@ -281,5 +281,36 @@ class TestPull(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestClearAll(unittest.TestCase):
+    @patch("confluence_sync._find_page")
+    def test_noop_when_no_parent_page(self, mock_find) -> None:
+        mock_find.return_value = None
+        confluence_sync.clear_all("PDE-1234", ("e", "t"))  # must not raise
+
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    def test_clears_only_existing_children(self, mock_find, mock_put) -> None:
+        # Parent found; only "Discovery" child exists, the other three don't.
+        def find_side_effect(auth, title, ancestor_id):
+            if title == "PDE-1234":
+                return {"id": "100", "version": 1}
+            if title == "Discovery":
+                return {"id": "300", "version": 4}
+            return None
+        mock_find.side_effect = find_side_effect
+        mock_put.return_value = _mock_response({"id": "300"})
+        confluence_sync.clear_all("PDE-1234", ("e", "t"))
+        self.assertEqual(mock_put.call_count, 1)
+        _, kwargs = mock_put.call_args
+        self.assertEqual(kwargs["json"]["version"]["number"], 5)
+        self.assertIn("Cleared", kwargs["json"]["body"]["value"])
+
+    @patch("confluence_sync.requests.put")
+    @patch("confluence_sync._find_page")
+    def test_swallows_errors(self, mock_find, mock_put) -> None:
+        mock_find.side_effect = RuntimeError("network down")
+        confluence_sync.clear_all("PDE-1234", ("e", "t"))  # must not raise
+
+
 if __name__ == "__main__":
     unittest.main()
