@@ -152,6 +152,10 @@ the worker's territory alone.
 - Python 3 with the `requests`, `markdown`, and `markdownify` packages installed on the machine
   running `orchestrator.py` and `worker.py` (not yet automated via a bootstrap hook the way
   `pde-mcp`'s venv is — install them yourself for now: `pip install requests markdown markdownify`).
+  `requests` is hard-required; `markdown`/`markdownify` are needed only for the Confluence sync,
+  and without them the worker still runs every ticket normally — Confluence pushes become logged
+  no-ops (comments fall back to "see the .md file" wording), and a Confluence *pull* reports a
+  retryable failure rather than risk silently discarding a human's page edit.
 - `git` and `gh` (GitHub CLI, authenticated with push + PR access to the target repos) on `PATH`.
 - `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` — prompted for on install via this plugin's
   `userConfig`; propagated to `orchestrator.py` and every sub-agent it spawns as
