@@ -34,6 +34,8 @@ import sys
 import time
 from pathlib import Path
 
+import confluence_sync
+
 try:
     import requests
 except ImportError:
@@ -279,13 +281,14 @@ def extract_section(content: str, heading: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def build_qa_review_comment(key: str, artifact: Path) -> str:
+def build_qa_review_comment(key: str, artifact: Path, confluence_url: str | None) -> str:
     """QA Review handoff comment, shared by the end of the discovery path
     and by a resumed re-entry into the QA Review gate — so both stay in
     sync automatically. Leads with the action needed (a reviewer who reads
     only the first line still knows what to do), then a short summary
-    pulled straight from discovery.md, then a pointer to the full file.
-    Action line varies: discovery can recommend closing outright
+    pulled straight from discovery.md, then a pointer to the full content —
+    a Confluence link when the sync succeeded, the local filename
+    otherwise. Action line varies: discovery can recommend closing outright
     (NO_CHANGES_NEEDED) instead of the default hand-off to implementation."""
     content = artifact.read_text()
     status = _extract_status_text(content)
@@ -304,7 +307,8 @@ def build_qa_review_comment(key: str, artifact: Path) -> str:
             f"• Reject: move back to In Discovery with a comment explaining what to revisit"
         )
 
-    return f"{action}\n\nSummary: {summary}\n\nSee discovery.md for full findings."
+    pointer = f"Full details: {confluence_url}" if confluence_url else "See discovery.md for full findings."
+    return f"{action}\n\nSummary: {summary}\n\n{pointer}"
 
 
 def build_in_review_comment(key: str, notes: Path, review_context: Path) -> str:
@@ -478,8 +482,9 @@ def run_discovery(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
         apply_blocked_routing(key, artifact, "ticket-discovery", auth)
         return
 
+    confluence_url = confluence_sync.push(key, "discovery", artifact.read_text(), auth)
     jira_transition(key, "QA Review", auth)
-    jira_comment(key, build_qa_review_comment(key, artifact), auth)
+    jira_comment(key, build_qa_review_comment(key, artifact, confluence_url), auth)
     log.info(f"{key}: waiting for QA review")
 
 
@@ -625,11 +630,13 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
 
 def run_qa_review_gate(key: str, ticket_dir: Path, auth) -> None:
     """Human gate, resumed directly into QA Review — re-post the same
-    handoff comment as the end of the discovery path. discovery.md is
-    guaranteed to exist here: reaching this status already passed
-    sanity_check_and_rewind()'s stage-completion check."""
+    handoff comment as the end of the discovery path, re-syncing to
+    Confluence too since nothing else does at this resume point.
+    discovery.md is guaranteed to exist here: reaching this status already
+    passed sanity_check_and_rewind()'s stage-completion check."""
     artifact = ticket_dir / "discovery.md"
-    jira_comment(key, build_qa_review_comment(key, artifact), auth)
+    confluence_url = confluence_sync.push(key, "discovery", artifact.read_text(), auth)
+    jira_comment(key, build_qa_review_comment(key, artifact, confluence_url), auth)
     log.info(f"{key}: re-posted QA Review comment, waiting")
 
 

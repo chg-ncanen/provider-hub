@@ -503,6 +503,23 @@ class TestNormalizeAgentChildLogDir(unittest.TestCase):
                 os.environ.pop("HOME", None)
 
 
+class TestBuildQaReviewComment(TempDirTestCase):
+    def test_includes_confluence_link_when_push_succeeded(self) -> None:
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** READY\n\n## Summary\n\nFound the bug.\n")
+        comment = worker.build_qa_review_comment(
+            "PDE-1234", artifact, "https://chghealthcare.atlassian.net/wiki/spaces/PDE/pages/300"
+        )
+        self.assertIn("Full details: https://chghealthcare.atlassian.net/wiki/spaces/PDE/pages/300", comment)
+        self.assertNotIn("See discovery.md", comment)
+
+    def test_falls_back_to_local_filename_when_no_confluence_url(self) -> None:
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** READY\n\n## Summary\n\nFound the bug.\n")
+        comment = worker.build_qa_review_comment("PDE-1234", artifact, None)
+        self.assertIn("See discovery.md for full findings.", comment)
+
+
 class TestRunDiscovery(TempDirTestCase):
     def test_launches_when_sentinel_missing_and_transitions_on_success(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
@@ -517,7 +534,8 @@ class TestRunDiscovery(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment") as mock_comment:
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_launch.assert_called_once()
@@ -542,7 +560,8 @@ class TestRunDiscovery(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch) as mock_launch, \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition") as mock_transition, \
-             patch.object(worker, "jira_comment"):
+             patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         mock_launch.assert_called_once()
@@ -568,10 +587,31 @@ class TestRunDiscovery(TempDirTestCase):
         with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
              patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
              patch.object(worker, "jira_transition"), \
-             patch.object(worker, "jira_comment"):
+             patch.object(worker, "jira_comment"), \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1", self.ticket_dir, self.repos_dir, self.auth)
 
         self.assertEqual(seen_before_launch["content"], "**Status:** OK\n(prior version)\n")
+
+    def test_pushes_to_confluence_and_links_it_in_the_qa_review_comment(self) -> None:
+        artifact = self.ticket_dir / "discovery.md"
+
+        def fake_launch(skill, ticket_dir, repos_dir, auth):
+            artifact.write_text("**Status:** READY\n\n## Summary\n\nFound it.\n")
+
+        def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
+            sentinel_path.touch()
+            return True
+
+        with patch.object(worker, "launch_specialist", side_effect=fake_launch), \
+             patch.object(worker, "wait_for_sentinel", side_effect=fake_wait), \
+             patch.object(worker, "jira_transition"), \
+             patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/x") as mock_push:
+            worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
+
+        mock_push.assert_called_once_with("PDE-1234", "discovery", artifact.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/x", mock_comment.call_args.args[1])
 
     def test_blocked_artifact_applies_blocked_routing(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
@@ -874,9 +914,19 @@ class TestHumanGates(TempDirTestCase):
         (self.ticket_dir / "discovery.md").write_text(
             "**Status:** OK\n\n## Summary\n\nDiscovery complete, ready for review.\n"
         )
-        with patch.object(worker, "jira_comment") as mock_comment:
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_qa_review_gate("PDE-1", self.ticket_dir, self.auth)
         self.assertIn("Discovery complete", mock_comment.call_args.args[1])
+
+    def test_qa_review_gate_resyncs_to_confluence_and_links_it(self) -> None:
+        artifact = self.ticket_dir / "discovery.md"
+        artifact.write_text("**Status:** OK\n\n## Summary\n\nDiscovery complete, ready for review.\n")
+        with patch.object(worker, "jira_comment") as mock_comment, \
+             patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/y") as mock_push:
+            worker.run_qa_review_gate("PDE-1", self.ticket_dir, self.auth)
+        mock_push.assert_called_once_with("PDE-1", "discovery", artifact.read_text(), self.auth)
+        self.assertIn("https://example.atlassian.net/wiki/y", mock_comment.call_args.args[1])
 
     def test_in_review_gate_includes_pr_url_when_available(self) -> None:
         (self.ticket_dir / "implementation-notes.md").write_text("**Status:** READY\n")
