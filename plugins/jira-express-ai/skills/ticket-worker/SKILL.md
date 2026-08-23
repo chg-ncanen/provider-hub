@@ -27,25 +27,29 @@ your job is:
    proceeding without the pending Confluence edit (e.g. "go ahead", "never
    mind, just continue", "that edit doesn't matter, keep going") as opposed
    to an unrelated comment that happens to appear after the failure. If it
-   does, when running step 3's command, prefix it with `SKIP_CONFLUENCE_PULL=1`
-   — e.g. `SKIP_CONFLUENCE_PULL=1 python3 ...` — set inline as part of the
-   same Bash tool call. (Shell environment variables set in one Bash tool call
-   do not persist into a later, separate Bash tool call in this harness — the
-   assignment must be inline on the exact command that invokes `worker.py`.)
-   If you're not sure, don't set it — the default (retry the pull) is always
-   safe; skipping it is not.
-3. Run `worker.py` with that path as its one argument, and see it through to
-   actual completion before doing anything else.
+   does, run step 3's command including the literal `--skip-confluence-pull`
+   argument. If you're not sure, leave that argument out — the default (retry
+   the pull) is always safe; skipping it is not.
+3. Run `worker.py` with the repos directory as its positional argument (one of
+   the two literal commands below, per step 2's conclusion), and see it
+   through to actual completion before doing anything else.
 4. Report its output (stdout/stderr, already redirected by the orchestrator
    to `<KEY>.log` — in `AGENT_CHILD_LOG_DIR` if that env var is set, in this
    ticket's own directory otherwise).
 
-If step 2 concluded "yes, skip the Confluence pull", prefix the command below
-with `SKIP_CONFLUENCE_PULL=1 `:
+Run exactly one of these two commands — whichever matches step 2's
+conclusion. Don't try to make one command cover both cases with a shell
+variable; type out the one you need.
 
 ```bash
-python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" \
-  ${SKIP_CONFLUENCE_PULL:+--skip-confluence-pull} "$REPOS_DIR"
+# If step 2 concluded "yes, skip the Confluence pull":
+python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" --skip-confluence-pull "$REPOS_DIR"
+```
+
+```bash
+# Otherwise (the normal case — step 2 found no pull failure, or you weren't
+# sure the human authorized proceeding without their edit):
+python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-worker/worker.py" "$REPOS_DIR"
 ```
 
 `worker.py` derives the ticket key and ticket directory from `$(pwd)` itself
@@ -61,7 +65,7 @@ before `worker.py` returns. Before running it, read
 `$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md` — it governs how
 you must wait for that (and any other long-running command) to actually
 finish in this headless session. Only once it reports the process has
-genuinely exited should you move on to step 3.
+genuinely exited should you move on to step 4.
 
 ### Why this stays a skill, not a direct script launch
 
