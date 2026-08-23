@@ -290,6 +290,22 @@ def extract_section(content: str, heading: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def _confluence_pointer(confluence_url: str | None, fallback: str, separator: str = "") -> str:
+    """The trailing "where to read the whole thing" line every
+    artifact-derived Jira comment ends with: the Confluence page when the
+    push succeeded, today's "see the .md file" wording otherwise (the .md
+    file is still there and still authoritative either way).
+
+    `fallback` differs per call site, and `separator` carries that call
+    site's existing spacing (`""`, `" "`, or `"\\n"`) so it stays part of the
+    pointer rather than being conditionally re-assembled at each of the six
+    callers. An empty `fallback` means "say nothing at all when there's no
+    URL" — used where the surrounding comment already names its artifact."""
+    if confluence_url:
+        return f"{separator}Full details: {confluence_url}"
+    return f"{separator}{fallback}" if fallback else ""
+
+
 def build_qa_review_comment(key: str, artifact: Path, confluence_url: str | None) -> str:
     """QA Review handoff comment, shared by the end of the discovery path
     and by a resumed re-entry into the QA Review gate — so both stay in
@@ -316,7 +332,7 @@ def build_qa_review_comment(key: str, artifact: Path, confluence_url: str | None
             f"• Reject: move back to In Discovery with a comment explaining what to revisit"
         )
 
-    pointer = f"Full details: {confluence_url}" if confluence_url else "See discovery.md for full findings."
+    pointer = _confluence_pointer(confluence_url, "See discovery.md for full findings.")
     return f"{action}\n\nSummary: {summary}\n\n{pointer}"
 
 
@@ -331,7 +347,7 @@ def build_in_review_comment(key: str, notes: Path, review_context: Path, conflue
 
     if status == "NO_CHANGES_NEEDED":
         summary = extract_section(content, "PR Readiness") or "(no summary found in implementation-notes.md)"
-        pointer = f"Full details: {confluence_url}" if confluence_url else "See implementation-notes.md for full findings."
+        pointer = _confluence_pointer(confluence_url, "See implementation-notes.md for full findings.")
         return (
             f"🤖 {key}: implementation found no code changes are needed — recommends closing this ticket.\n"
             f"• Approve: move to Done\n"
@@ -341,7 +357,7 @@ def build_in_review_comment(key: str, notes: Path, review_context: Path, conflue
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
     suffix = f": {pr_url}" if pr_url else ""
-    pointer = f" Full details: {confluence_url}" if confluence_url else ""
+    pointer = _confluence_pointer(confluence_url, "", separator=" ")
     return (
         f"🤖 {key} is ready for review{suffix}. When approved, move to UAT Review "
         f"to trigger merge. If you have comments to address, move back to In Progress.{pointer}"
@@ -455,7 +471,7 @@ def apply_blocked_routing(key: str, artifact_path: Path, stage: str, auth) -> No
     next_step = extract_section(content, "Suggested Next Step")
 
     confluence_url = confluence_sync.push(key, STAGE_TO_ARTIFACT_TYPE[stage], content, auth)
-    pointer = f"\nFull details: {confluence_url}" if confluence_url else ""
+    pointer = _confluence_pointer(confluence_url, "", separator="\n")
 
     jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(blocker))
     message = f"🤖 {stage} is blocked on {key}: {blocker}"
@@ -633,7 +649,7 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
     confluence_url = confluence_sync.push(key, "review", notes.read_text(), auth)
-    pointer = f" Full details: {confluence_url}" if confluence_url else ""
+    pointer = _confluence_pointer(confluence_url, "", separator=" ")
     jira_transition(key, "In Review", auth)
     jira_comment(
         key,
@@ -666,7 +682,7 @@ def run_merge(key: str, ticket_dir: Path, repos_dir: Path, auth) -> None:
     # page should reflect whatever's actually on disk (spec: "Sync fires
     # whenever an artifact file is read").
     confluence_url = confluence_sync.push(key, "merge", content, auth)
-    pointer = f" Full details: {confluence_url}" if confluence_url else ""
+    pointer = _confluence_pointer(confluence_url, "", separator=" ")
 
     if status == "SUCCESS":
         jira_transition(key, "Done", auth)

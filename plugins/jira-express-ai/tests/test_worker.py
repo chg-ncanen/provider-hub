@@ -517,6 +517,33 @@ class TestNormalizeAgentChildLogDir(unittest.TestCase):
                 os.environ.pop("HOME", None)
 
 
+class TestConfluencePointer(unittest.TestCase):
+    """The one conditional shared by all six artifact-derived comment sites."""
+
+    def test_uses_the_confluence_url_when_the_push_succeeded(self) -> None:
+        self.assertEqual(
+            worker._confluence_pointer("https://example/x", "See discovery.md for full findings."),
+            "Full details: https://example/x",
+        )
+
+    def test_falls_back_to_the_local_filename_wording(self) -> None:
+        self.assertEqual(
+            worker._confluence_pointer(None, "See discovery.md for full findings."),
+            "See discovery.md for full findings.",
+        )
+
+    def test_empty_fallback_means_say_nothing(self) -> None:
+        self.assertEqual(worker._confluence_pointer(None, ""), "")
+
+    def test_separator_is_carried_only_when_there_is_something_to_say(self) -> None:
+        self.assertEqual(worker._confluence_pointer("https://example/x", "", separator=" "),
+                         " Full details: https://example/x")
+        self.assertEqual(worker._confluence_pointer("https://example/x", "", separator="\n"),
+                         "\nFull details: https://example/x")
+        self.assertEqual(worker._confluence_pointer(None, "", separator=" "), "")
+        self.assertEqual(worker._confluence_pointer(None, "", separator="\n"), "")
+
+
 class TestBuildQaReviewComment(TempDirTestCase):
     def test_includes_confluence_link_when_push_succeeded(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
