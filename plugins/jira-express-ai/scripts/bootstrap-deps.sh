@@ -95,13 +95,20 @@ if [ ! -d "$VENV_DIR" ]; then
   # non-zero — under `set -e` that would otherwise kill the script right
   # here, before it ever reaches the get-pip.py self-heal below.
   "$system_python" -m venv --copies "$VENV_DIR" || true
-fi
 
-# On Python 3.14 + a UTF-8 filesystem, this venv's bin/ will also contain a
-# 4th interpreter copy named 𝜋thon (mathematical italic pi, not "p") — a real
-# CPython stdlib easter egg (venv/__init__.py's setup_python(), not anything
-# this script adds), byte-identical to python/python3/python3.14. Expected
-# and harmless; not a sign of tampering.
+  # On Python 3.14 + a UTF-8 filesystem, venv's own setup_python() (Lib/
+  # venv/__init__.py, verified directly against CPython's source) also
+  # creates a 4th interpreter copy named 𝜋thon (mathematical italic pi, not
+  # "p") — byte-identical to python/python3/python3.14, an unexplained
+  # CPython stdlib easter egg, not anything this script adds. Nothing
+  # anywhere ever invokes the interpreter by that literal name — only
+  # bin/python is referenced (see both SKILL.md files) — so instead of
+  # leaving it for a future reader (human or agent) to independently
+  # rediscover and re-verify this exact fact every time, remove it right
+  # after creation. `|| true`: harmless if venv creation above didn't
+  # actually get this far (e.g. the ensurepip-wheel-missing case below).
+  rm -f "$VENV_DIR/bin/𝜋thon" || true
+fi
 
 # Normalize to a `bin/` layout regardless of what the venv module produced.
 if [ ! -x "$VENV_DIR/bin/python" ] && [ -x "$VENV_DIR/Scripts/python.exe" ]; then
