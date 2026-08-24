@@ -79,7 +79,7 @@ STAGE_REQUIREMENTS = {
 }
 REWIND_STATUS_FOR_COUNT = {0: "In Discovery", 1: "In Progress"}
 
-SENTINEL_TIMEOUT = 900  # 15 minutes
+SENTINEL_TIMEOUT = 7200  # 2 hours
 SENTINEL_POLL_INTERVAL = 30
 
 # ── Logging ───────────────────────────────────────────────────────────────────

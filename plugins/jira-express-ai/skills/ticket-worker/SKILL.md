@@ -65,7 +65,7 @@ see "Design reference" below for what it actually does.
 
 **This call routinely outlives the default Bash tool timeout — that's
 expected, not an error.** `worker.py` polls each specialist's sentinel file
-for up to 15 minutes per stage (see "Sub-agent launch and validation" below),
+for up to 2 hours per stage (see "Sub-agent launch and validation" below),
 so the Bash call running it will often get auto-moved to a background task
 before `worker.py` returns. Before running it, read
 `$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md` — it governs how
@@ -210,7 +210,7 @@ their first step (`ticket-discovery` reads all Jira comments,
 Each path launches its specialist as a one-shot `claude -p "/<skill> Repos
 directory: <path>"` session (never resumed — `--name` is a cosmetic label
 only), then polls for that specialist's sentinel file every 30s up to a
-15-minute timeout. After it appears, the worker reads the specialist's
+2-hour timeout. After it appears, the worker reads the specialist's
 artifact `**Status:**` field before transitioning anything:
 
 - **`BLOCKED`** — the specialist deliberately says it can't proceed. Always
