@@ -944,6 +944,55 @@ class TestMainDispatch(TempDirTestCase):
         dispatched_keys = [c.args[0] for c in mock_process.call_args_list]
         self.assertEqual(dispatched_keys, ["PDE-1", "PDE-2"])
 
+    def test_dispatches_later_stage_tickets_before_earlier_ones(self) -> None:
+        # Jira rank order (as returned by search_tickets) puts a brand-new
+        # To Do ticket ahead of two tickets already in flight. The cap of 2
+        # must still favor the in-flight ones — finish existing work before
+        # starting new tickets — regardless of rank.
+        issues = [
+            self._issue(key="PDE-1", status="To Do", assignee_id="user-1"),
+            self._issue(key="PDE-2", status="In Discovery", assignee_id="user-1"),
+            self._issue(key="PDE-3", status="UAT Review", assignee_id="user-1"),
+            self._issue(key="PDE-4", status="In Progress", assignee_id="user-1"),
+        ]
+
+        def fake_process(key, status, cwd, repos_dir):
+            return cwd / "tickets" / key
+
+        with patch.object(orchestrator, "MAX_DISPATCHES_PER_RUN", 2), \
+             patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+             patch.object(orchestrator, "_auth", return_value=("e", "t")), \
+             patch.object(orchestrator, "search_tickets", return_value=issues), \
+             patch.object(orchestrator, "cleanup_pass"), \
+             patch.object(orchestrator, "get_current_user", return_value={"accountId": "user-1"}), \
+             patch.object(orchestrator, "process_ticket", side_effect=fake_process) as mock_process:
+            orchestrator.main()
+
+        dispatched_keys = [c.args[0] for c in mock_process.call_args_list]
+        self.assertEqual(dispatched_keys, ["PDE-3", "PDE-4"])  # UAT Review, then In Progress
+
+    def test_stage_priority_ties_break_by_original_rank_order(self) -> None:
+        # Two tickets in the same stage — rank order (list order) must decide
+        # between them, not be shuffled by the stage sort.
+        issues = [
+            self._issue(key="PDE-2", status="UAT Review", assignee_id="user-1"),
+            self._issue(key="PDE-1", status="UAT Review", assignee_id="user-1"),
+        ]
+
+        def fake_process(key, status, cwd, repos_dir):
+            return cwd / "tickets" / key
+
+        with patch.object(orchestrator.Path, "cwd", return_value=self.cwd), \
+             patch.object(orchestrator, "_auth", return_value=("e", "t")), \
+             patch.object(orchestrator, "search_tickets", return_value=issues), \
+             patch.object(orchestrator, "cleanup_pass"), \
+             patch.object(orchestrator, "get_current_user", return_value={"accountId": "user-1"}), \
+             patch.object(orchestrator, "process_ticket", side_effect=fake_process) as mock_process:
+            orchestrator.main()
+
+        dispatched_keys = [c.args[0] for c in mock_process.call_args_list]
+        self.assertEqual(dispatched_keys, ["PDE-2", "PDE-1"])
+
     def test_skipped_tickets_do_not_count_against_dispatch_cap(self) -> None:
         # PDE-1 is assigned to someone else — skipped for free. With a cap of
         # 1, PDE-2 (assigned to the current user) must still get dispatched;

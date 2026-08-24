@@ -74,6 +74,13 @@ JQL = (
 )
 
 ACTIONABLE_STATUSES = {"To Do", "In Discovery", "In Progress", "UAT Review"}
+
+# Dispatch priority: finish tickets already in flight before starting new
+# ones, so WIP doesn't grow unbounded while later-stage tickets stall. Higher
+# number = later in the workflow = dispatched first. Ticket rank (JQL's
+# `ORDER BY Rank ASC`) only breaks ties within the same stage.
+STAGE_PRIORITY = {"UAT Review": 3, "In Progress": 2, "In Discovery": 1, "To Do": 0}
+
 ARCHIVE_MAX_DAYS = 7
 
 # A query-size cap, not a dispatch cap — see MAX_DISPATCHES_PER_RUN below for
@@ -840,9 +847,13 @@ def main() -> None:
         log.error("Jira /myself returned no accountId — refusing to dispatch this run (assignee filter cannot be enforced)")
         return
 
-    # Dispatch each ticket, in Jira rank order, up to MAX_DISPATCHES_PER_RUN
-    # actual launches. Fire-and-forget — no waiting to confirm a launch
-    # actually took; see process_ticket()'s docstring for why that's fine.
+    # Dispatch each ticket up to MAX_DISPATCHES_PER_RUN actual launches,
+    # ordered by STAGE_PRIORITY (later-stage tickets first, Jira rank as the
+    # tiebreaker within a stage — sorted() is stable and valid_issues already
+    # arrives in Rank ASC order). This is deliberate: we'd rather push
+    # existing in-flight tickets to completion than start new ones and let
+    # WIP balloon. Fire-and-forget — no waiting to confirm a launch actually
+    # took; see process_ticket()'s docstring for why that's fine.
     #
     # The cap only counts tickets that actually got a session launched
     # (process_ticket() returns the ticket_dir) — skipping a ticket because
@@ -851,8 +862,13 @@ def main() -> None:
     # among up to MAX_TICKETS_PER_RUN candidates, an unknown number belong
     # to other engineers, so the cap has to apply to real dispatches, not to
     # how far the loop scans to find them.
+    dispatch_order = sorted(
+        valid_issues,
+        key=lambda issue: STAGE_PRIORITY.get(issue["fields"]["status"]["name"], -1),
+        reverse=True,
+    )
     dispatched = 0
-    for issue in valid_issues:
+    for issue in dispatch_order:
         if dispatched >= MAX_DISPATCHES_PER_RUN:
             log.info(
                 f"Reached MAX_DISPATCHES_PER_RUN cap of {MAX_DISPATCHES_PER_RUN} — "

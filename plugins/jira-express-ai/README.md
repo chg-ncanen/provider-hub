@@ -30,8 +30,11 @@ one behavioral difference that conversion introduced.
   decides per ticket whether to start a new session or resume an existing one based on Jira status
   + whether the ticket's `.worker.lock` is currently held, archives tickets no longer active in
   Jira, and launches a `ticket-worker` session per ticket — but only up to `MAX_DISPATCHES_PER_RUN`
-  (5) *actual* dispatches per run; skipping a ticket (wrong assignee, already running) costs
-  nothing against that cap, so a lower-ranked candidate can still fill the slot. Makes no Jira
+  (5) *actual* dispatches per run, dispatched in `STAGE_PRIORITY` order (later-workflow-stage
+  tickets — `UAT Review`, then `In Progress`, then `In Discovery` — before fresh `To Do` ones,
+  rank breaking ties within a stage) so in-flight work finishes before new tickets start; skipping
+  a ticket (wrong assignee, already running) costs nothing against that cap, so a lower-priority
+  candidate can still fill the slot. Makes no Jira
   writes at all, and owns nothing else inside a ticket's directory — no context file, no copied
   skill files, no state file, just the lock. Sanity-checking Jira's status against what's actually been done (rewind)
   is the worker's job, not the orchestrator's — see that skill's entry below. Run this on a
