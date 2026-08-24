@@ -547,7 +547,7 @@ class TestConfluencePointer(unittest.TestCase):
 class TestBuildQaReviewComment(TempDirTestCase):
     def test_includes_confluence_link_when_push_succeeded(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
-        artifact.write_text("**Status:** READY\n\n## Summary\n\nFound the bug.\n")
+        artifact.write_text("**Status:** READY\n\n## TL;DR\n\nFound the bug.\n")
         comment = worker.build_qa_review_comment(
             "PDE-1234", artifact, "https://chghealthcare.atlassian.net/wiki/spaces/PDE/pages/300"
         )
@@ -556,7 +556,7 @@ class TestBuildQaReviewComment(TempDirTestCase):
 
     def test_falls_back_to_local_filename_when_no_confluence_url(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
-        artifact.write_text("**Status:** READY\n\n## Summary\n\nFound the bug.\n")
+        artifact.write_text("**Status:** READY\n\n## TL;DR\n\nFound the bug.\n")
         comment = worker.build_qa_review_comment("PDE-1234", artifact, None)
         self.assertIn("See discovery.md for full findings.", comment)
 
@@ -674,7 +674,7 @@ class TestRunDiscovery(TempDirTestCase):
         artifact = self.ticket_dir / "discovery.md"
 
         def fake_launch(skill, ticket_dir, repos_dir, auth):
-            artifact.write_text("**Status:** READY\n\n## Summary\n\nFound it.\n")
+            artifact.write_text("**Status:** READY\n\n## TL;DR\n\nFound it.\n")
 
         def fake_wait(skill, sentinel_path, timeout=worker.SENTINEL_TIMEOUT):
             sentinel_path.touch()
@@ -737,7 +737,7 @@ class TestRunDiscovery(TempDirTestCase):
         # the specialist reads it, whether this is the ticket's first-ever
         # run (pull() returns None, a no-op) or a revision.
         artifact = self.ticket_dir / "discovery.md"
-        artifact.write_text("**Status:** READY\n\n## Summary\n\nOriginal AI findings.\n")
+        artifact.write_text("**Status:** READY\n\n## TL;DR\n\nOriginal AI findings.\n")
 
         launched_with_content = {}
 
@@ -748,7 +748,7 @@ class TestRunDiscovery(TempDirTestCase):
              patch.object(worker, "wait_for_sentinel", return_value=True), \
              patch.object(worker, "jira_transition"), \
              patch.object(worker, "jira_comment"), \
-             patch.object(worker.confluence_sync, "pull", return_value="## Summary\n\nHuman-edited findings.\n**Status:** READY\n") as mock_pull, \
+             patch.object(worker.confluence_sync, "pull", return_value="## TL;DR\n\nHuman-edited findings.\n**Status:** READY\n") as mock_pull, \
              patch.object(worker.confluence_sync, "push", return_value=None):
             worker.run_discovery("PDE-1234", self.ticket_dir, self.repos_dir, self.auth)
 
@@ -1285,7 +1285,7 @@ class TestRunMerge(TempDirTestCase):
 class TestHumanGates(TempDirTestCase):
     def test_qa_review_gate_reposts_handoff_comment(self) -> None:
         (self.ticket_dir / "discovery.md").write_text(
-            "**Status:** OK\n\n## Summary\n\nDiscovery complete, ready for review.\n"
+            "**Status:** OK\n\n## TL;DR\n\nDiscovery complete, ready for review.\n"
         )
         with patch.object(worker, "jira_comment") as mock_comment, \
              patch.object(worker.confluence_sync, "push", return_value=None):
@@ -1294,7 +1294,7 @@ class TestHumanGates(TempDirTestCase):
 
     def test_qa_review_gate_resyncs_to_confluence_and_links_it(self) -> None:
         artifact = self.ticket_dir / "discovery.md"
-        artifact.write_text("**Status:** OK\n\n## Summary\n\nDiscovery complete, ready for review.\n")
+        artifact.write_text("**Status:** OK\n\n## TL;DR\n\nDiscovery complete, ready for review.\n")
         with patch.object(worker, "jira_comment") as mock_comment, \
              patch.object(worker.confluence_sync, "push", return_value="https://example.atlassian.net/wiki/y") as mock_push:
             worker.run_qa_review_gate("PDE-1", self.ticket_dir, self.auth)

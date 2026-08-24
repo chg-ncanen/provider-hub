@@ -317,7 +317,7 @@ def build_qa_review_comment(key: str, artifact: Path, confluence_url: str | None
     (NO_CHANGES_NEEDED) instead of the default hand-off to implementation."""
     content = artifact.read_text()
     status = _extract_status_text(content)
-    summary = extract_section(content, "Summary") or "(no summary found in discovery.md)"
+    summary = extract_section(content, "TL;DR") or "(no summary found in discovery.md)"
 
     if status == "NO_CHANGES_NEEDED":
         action = (

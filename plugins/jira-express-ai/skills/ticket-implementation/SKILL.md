@@ -188,6 +188,13 @@ Log results:
 **Status:** READY
 **Date:** <ISO date>
 
+## TL;DR
+
+<1-2 plain-English sentences on what changed and why — written for someone
+with no prior context on this ticket or the codebase. No jargon, no internal
+file/component names, no Jira-speak. This becomes the lead of the PR body
+(see Step 5), so it's the first thing a reviewer sees.>
+
 ## Changes Made
 
 | File | Change |
@@ -216,8 +223,10 @@ the code discovery only reasoned about secondhand. When this happens, skip
 Step 2 (implement), Step 3 (tests), and Step 5 (push/PR) entirely — there is
 nothing to commit and no PR to open. `Changes Made` should say "None" and
 `PR Readiness` should say plainly that no implementation step applies,
-mirroring `ticket-discovery`'s own `NO_CHANGES_NEEDED` convention. Do not
-write `review-context.md` in this case — there is no PR for it to describe.
+mirroring `ticket-discovery`'s own `NO_CHANGES_NEEDED` convention. Update the
+TL;DR to say so too, in the same plain-English style — it should never
+contradict `PR Readiness`. Do not write `review-context.md` in this case —
+there is no PR for it to describe.
 
 If `implementation-notes.md` already exists — a human rejected a prior
 `NO_CHANGES_NEEDED` result and sent the ticket back for another look — read
@@ -233,11 +242,12 @@ the feature branch created in "Repo setup" above — never on `main`, and never
 a newly-invented branch here; push and open the PR from that exact branch.
 For each repo you modified:
 
-`implementation-notes.md` is written for the worker/review/merge agents, not
-for a human reading the PR — its `**Status:**`/`**Date:**` lines are pipeline
-bookkeeping with no meaning to a reviewer. Build the PR body separately: a
-`🤖` banner marking it as AI-authored, followed by `implementation-notes.md`
-with that bookkeeping stripped.
+`implementation-notes.md` is mostly written for the worker/review/merge
+agents, not for a human reading the PR — its `**Status:**`/`**Date:**` lines
+are pipeline bookkeeping with no meaning to a reviewer (the `TL;DR` section
+is the exception — it's written for exactly this reader). Build the PR body
+separately: a `🤖` banner marking it as AI-authored, followed by
+`implementation-notes.md` with that bookkeeping stripped.
 
 ```bash
 cd $WORKTREE   # $TICKET_DIR/<repo-name>, from "Repo setup" above

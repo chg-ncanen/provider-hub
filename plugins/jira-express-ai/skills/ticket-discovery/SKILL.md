@@ -142,9 +142,11 @@ any prior version from Step 0 in full — not appending to it:
 **Date:** <ISO date>
 **Status:** READY
 
-## Summary
+## TL;DR
 
-<1-2 sentence plain-English description of what this ticket requires>
+<1-2 plain-English sentences on what this ticket needs and the proposed
+approach — written for someone with no prior context on this ticket or the
+codebase. No jargon, no internal file/component names, no Jira-speak.>
 
 ## Simulated Findings
 
@@ -174,8 +176,10 @@ is already correct. The worker reads this field to change what it tells the
 reviewer at the QA Review gate (approve straight to Done instead of handing
 off to implementation), since implementation cannot manufacture a meaningful
 PR from a no-op. Keep the rest of the template the same either way — the
-Summary and Proposed Approach are what justify the recommendation, and
+TL;DR and Proposed Approach are what justify the recommendation, and
 `Proposed Approach` should say plainly that no implementation step applies.
+Update the TL;DR to say so too, in the same plain-English style — it should
+never contradict `Proposed Approach`.
 
 ### Step 4 — Signal completion
 
