@@ -106,17 +106,18 @@ For each comment, determine:
 
 ### Step 3 — Reply to all comments
 
-Reply to every comment regardless of classification:
+Reply to every comment regardless of classification. Every reply body must
+start with `🤖 ` so it's clearly identifiable as AI-authored:
 
 ```bash
 # Reply to an inline comment
 gh api repos/chghealthcare/$REPO/pulls/$PR_NUMBER/comments/<COMMENT_ID>/replies \
-  -X POST -f body="<your response>"
+  -X POST -f body="🤖 <your response>"
 ```
 
 For CLARIFICATION comments: explain/acknowledge directly in the reply.  
 For CHANGE_REQUIRED comments: reply describing the change you will make, e.g.:
-`"Understood — will fix in next commit."`  
+`"🤖 Understood — will fix in next commit."`  
 For OUT_OF_SANDBOX comments: reply explaining that it's outside what this
 agent will act on from a PR comment, and that a human should handle it directly.
 
