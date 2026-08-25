@@ -137,19 +137,23 @@ Added to `playbooks/INDEX.md`:
 > user-reported symptoms — as opposed to a proactively-found
 > code-quality/security-audit finding or a new feature ask. The ticket being
 > assigned to the ASA team (however that's represented in Jira — a team
-> field, an assignee group, or similar) is a strong additional signal for
-> this category; use it alongside the content match, not instead of it, the
-> same way every other playbook in this index is matched primarily by
-> content. Applies even when the ticket is filed as a `PDE-UI:` ticket or
-> reports a frontend symptom, as long as the fixable root cause is backend — see
+> field, an assignee group, or similar) is a mild hint worth factoring in —
+> ASA also picks up dependency-bump and other maintenance tickets, so it
+> does not by itself distinguish this category from any other. Content is
+> still what actually decides the match, the same way every other playbook
+> in this index works; ASA assignment just nudges you to look harder at
+> whether the content matches, not a substitute for checking. Applies even
+> when the ticket is filed as a `PDE-UI:` ticket or reports a frontend
+> symptom, as long as the fixable root cause is backend — see
 > `live-site-bug-backend.md`'s "Mixed tickets" section for how to handle that
 > case. A separate, not-yet-written playbook will cover tickets whose fix is
 > genuinely frontend-framework code (`pde-ui`, another UI repo, or the native
 > app).
 
-Matched primarily by content, same as every other entry in the index, with
-ASA-team assignment as the one additional signal specific to this category
-(see above) — not a label, not a project, not the ticket's summary prefix.
+Matched by content, same as every other entry in the index — not a label,
+not a project, not ASA assignment on its own (see above; ASA is too broad a
+signal by itself, since it also covers dependency-bump and other
+maintenance work).
 
 ## Discovery guidance (`## Discovery guidance` in `live-site-bug-backend.md`)
 
