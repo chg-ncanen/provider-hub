@@ -175,6 +175,10 @@ the worker's territory alone.
   Defaults to `PDE` if unset.
 - `CONFLUENCE_PARENT_PAGE_ID` (optional) — ID of the Confluence folder or page under which each
   ticket's parent page is created. Defaults to `5148311567` if unset.
+- `DRAFT_PR_ENABLED` (optional) — `ticket-implementation` opens each PR as a draft by default, so
+  the assignee gets first look before anyone else is notified or requested to review; set to
+  `false` (this plugin's `userConfig`) to open ready-for-review PRs immediately instead.
+  `ticket-merge` treats a still-draft PR as pending rather than blocked.
 - A target project directory containing (or able to clone) the repos being worked on, plus a
   writable `tickets/` subdirectory — this is where the orchestrator is run *from* (see
   `ticket-orchestrator/SKILL.md`'s "Working directory" section).

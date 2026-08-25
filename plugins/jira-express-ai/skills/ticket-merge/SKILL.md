@@ -76,6 +76,10 @@ which repo it's talking about — this agent never edits file content at all.
 ### Step 1 — Check pre-merge gates
 
 ```bash
+# Draft status — check this first, before spending a CI/approval round-trip
+# on a PR nobody's meant to act on yet
+gh pr view $PR_NUMBER --json isDraft --jq '.isDraft'
+
 # CI status
 gh pr checks $PR_NUMBER
 
@@ -83,6 +87,16 @@ gh pr checks $PR_NUMBER
 gh pr view $PR_NUMBER --json reviewDecision,reviews,mergeable \
   --jq '{decision: .reviewDecision, mergeable: .mergeable}'
 ```
+
+**If `isDraft` is `true`:**
+- Write `merge-notes.md` with `Status: PENDING` and reason: PR is still a
+  draft, waiting for the assignee to mark it ready for review. This is
+  `ticket-implementation`'s `DRAFT_PR_ENABLED` default at work, not a
+  problem — the ticket reaching `UAT Review` doesn't by itself mean the PR
+  is ready; only un-drafting it does.
+- Signal completion and stop. **Do not transition Jira** — same as the
+  CI-pending and approval-pending cases below, this resolves itself (via a
+  human action, not a timer) and the next orchestrator run re-checks it.
 
 **If any required CI check is failing:**
 - Write `merge-notes.md` with `Status: BLOCKED` and reason

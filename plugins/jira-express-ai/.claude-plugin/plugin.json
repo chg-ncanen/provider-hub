@@ -43,6 +43,12 @@
       "title": "Enable Confluence sync",
       "description": "Default: true (enabled). Sync ticket artifacts (discovery.md, implementation-notes.md, review-notes.md, merge-notes.md) to Confluence. Set to false to disable entirely — no self-install attempt, no warnings, and a Confluence pull failure never blocks a ticket's progress. Leave blank to use the default.",
       "required": false
+    },
+    "DRAFT_PR_ENABLED": {
+      "type": "boolean",
+      "title": "Open PRs as draft",
+      "description": "Default: true (enabled). ticket-implementation opens each PR as a draft, so the ticket's assignee gets a first look before others are notified or requested to review. A human marks it ready for review in GitHub when they're satisfied; ticket-merge treats a still-draft PR as pending, not blocked. Set to false to open PRs ready for review immediately. Leave blank to use the default.",
+      "required": false
     }
   }
 }
