@@ -32,8 +32,8 @@ explicitly out of scope here and deferred to a **separate, future
 live-site-bug design for frontend-framework code**, which will need its own
 considerations this one doesn't cover (component/UI testing approach,
 browser/device variability, LogRocket session-replay UX signals). See
-"Mixed tickets" below for how this plays out on the four tickets in this
-review that are filed as PDE-UI but have a backend root cause.
+"Mixed tickets" below for how this plays out when a ticket is filed under a
+frontend prefix but has a backend root cause.
 
 ## Problem
 
@@ -50,32 +50,28 @@ failure modes neither dependency-bump ever faces: trusting an incident
 narrative that's wrong, and shipping a fix for a cause that was never actually
 confirmed.
 
-A review of the 18 candidate tickets (production-incident-flavored PDE bugs,
-as opposed to the separate cluster of security-audit-style findings also
-sitting in the PDE bug backlog) found a wide quality spread, and — once
-scoped to backend-owned fixes only — a much smaller eligible set than the
-full 18:
+A review of a sample of production-incident-flavored PDE bugs (as opposed to
+the separate cluster of security-audit-style findings also sitting in the
+PDE bug backlog) found a wide quality spread, and — once scoped to
+backend-owned fixes only — a much smaller eligible set than the full sample:
 
-| Cluster | Count | In scope here? | Example | Characteristic |
-|---|---|---|---|---|
-| Backend, root-caused | 3 | Yes | PDE-18126, 18130, 18181 | Names the file/line or the exact fix, in a backend repo — reads like a near-finished `discovery.md` |
-| Backend, investigation-only | 2 | Yes | PDE-17833, 16601 | No hypothesis yet, but the *symptom* points at a backend service, not the UI |
-| Mixed: PDE-UI-filed, backend root cause | 4 | Backend slice only | PDE-18112, 18113, 18114, 18115 | Ticket asks for a frontend mitigation *and* names a backend root cause — this playbook may pursue the backend half only; see "Mixed tickets" below |
-| Frontend-framework | 8 | No — future frontend design | PDE-17101, 17102, 18224, 17953, 18116, 17813, 15392, 14951 | The fix (or the only confirmable fix) is React/Vue/native-app framework code, not a backend service |
-| Too vague to classify | 1 | No | PDE-17692 | Could be backend, could be a Salesforce Communities config issue outside any git repo entirely |
+| Cluster | Roughly how much of the sample | In scope here? | Characteristic |
+|---|---|---|---|
+| Backend, root-caused | ~1/6 | Yes | Names the file/line or the exact fix, in a backend repo — reads like a near-finished `discovery.md` |
+| Backend, investigation-only | ~1/9 | Yes | No hypothesis yet, but the *symptom* points at a backend service, not a frontend one |
+| Mixed: frontend-filed, backend root cause | ~2/9 | Backend slice only | Ticket asks for a frontend mitigation *and* names a backend root cause — this playbook may pursue the backend half only; see "Mixed tickets" below |
+| Frontend-framework | ~4/9 | No — future frontend design | The fix (or the only confirmable fix) is React/Vue/native-app framework code, not a backend service |
+| Too vague to classify | small | No | Could be backend, could be a config/business-rule issue outside any git repo entirely |
 
-The full per-ticket table, including the frontend-owned ones excluded here,
-is in the Appendix — kept for reference since the future frontend design
-will start from the same review rather than re-doing it.
-
-The most important individual finding: **PDE-18130's own ticket body contains
-a self-correction** — an earlier claim in that same ticket (that a specific
-allocation pattern caused a recurring prod OOM) was later refuted by direct
-benchmarking, and the ticket says so explicitly. This is proof, in this
-plugin's own backlog, that a confident-sounding incident narrative — even one
-already validated once — is not necessarily correct. Anything built for this
-category has to treat that as the normal case to design for, not an edge
-case.
+One finding from that sample is worth naming as the reason this design leans
+so hard on empirical verification rather than trusting the narrative:
+**one ticket's own body contained a self-correction** — an earlier claim
+made *in that same ticket* (about what was causing a recurring production
+issue) was later refuted by direct benchmarking, and the ticket said so
+explicitly. That's proof, from this project's own backlog, that a
+confident-sounding incident narrative — even one already validated once —
+is not necessarily correct. Anything built for this category has to treat
+that as the normal case to design for, not an edge case.
 
 ## Goals
 
@@ -349,13 +345,13 @@ mechanism verifying an AI-diagnosed live-site fix is actually correct.)
 
 ## Out of scope / follow-ups
 
-- **A separate `live-site-bug` design for frontend-owned tickets**
-  (PDE-17101, 17102, 18224, 17953, 18116, 17813, 15392, 14951 in this
-  review, plus the frontend slice of the four Mixed tickets). That design
-  needs its own considerations this one doesn't cover: component/UI test
-  approach for the reproduce-before-fix step, browser/device variability,
-  and how to use LogRocket session-replay data specifically (as opposed to
-  Grafana metrics, which are backend-flavored).
+- **A separate `live-site-bug` design for frontend-framework tickets**,
+  covering both the tickets that are entirely frontend-owned and the
+  frontend-mitigation slice of Mixed tickets. That design needs its own
+  considerations this one doesn't cover: component/UI test approach for the
+  reproduce-before-fix step, browser/device variability, and how to use
+  LogRocket session-replay data specifically (as opposed to Grafana metrics,
+  which are backend-flavored).
 - Provisioning actual Grafana/LogRocket API tokens and building REST clients
   for headless, non-interactive access (mirroring how `ATLASSIAN_EMAIL`/
   `ATLASSIAN_API_TOKEN` work today) — if the assumed MCP tools turn out not
@@ -365,30 +361,3 @@ mechanism verifying an AI-diagnosed live-site fix is actually correct.)
   outcomes — this design reuses the existing `BLOCKED` path rather than
   introducing one.
 - Any change to the security-audit-style bug cluster.
-
-## Appendix: ticket quality ratings (18 tickets reviewed)
-
-Rating scale: 5 = ready to hand an AI almost as-is, 1 = not enough to start.
-"Scope" cross-references the Problem section's cluster table above: which of
-these are actually in scope for `live-site-bug-backend.md`.
-
-| Key | Rating | Quality category | Scope | Why |
-|---|---|---|---|---|
-| PDE-17101 | 5 | Directly fixable | Frontend-framework | Exact file/line, before/after code diff, LogRocket session links, impact numbers |
-| PDE-17102 | 5 | Directly fixable | Frontend-framework | Same caliber — exact file/line, code snippet, explicit regression-risk checklist |
-| PDE-18224 | 5 | Directly fixable | Frontend-framework | Full root cause with file/lines, repro steps, human-confirmed fix in prod via comments |
-| PDE-18126 | 5 | Directly fixable | **Backend, root-caused** | File, root cause, Grafana-confirmed incident dates already cited, one-line fix |
-| PDE-18181 | 5 | Directly fixable | **Backend, root-caused** | CI flake; timestamped evidence, ranked fix options, explicit confirm-fix steps |
-| PDE-18130 | 4 | Directly fixable (mostly done) | **Backend, root-caused** | Contains a self-correction refuting an earlier claim in the same ticket — the anchor example for this whole design |
-| PDE-18112 | 4 | Partial / cross-team | **Mixed (backend slice only)** | Ticket's own analysis argues this isn't even a PDE-UI bug; client mitigation is fixable, root cause isn't |
-| PDE-18113 | 4 | Partial / cross-team | **Mixed (backend slice only)** | `err.response?.status` guard is fully specified and testable; 503 upstream cause is backend |
-| PDE-14951 | 3 | Needs code search | Frontend-framework | Clean acceptance criteria, no file pointer; links to real Salesforce provider records (PII flag) |
-| PDE-17813 | 3 | Investigation-only | Frontend-framework | LogRocket exception-group ID given, root cause unknown, needs live session data |
-| PDE-18114 | 3 | Partial / cross-team | **Mixed (backend slice only)** | Root cause is gateway/infra-level (444s), outside any owned repo |
-| PDE-18115 | 3 | Partial / cross-team | **Mixed (backend slice only)** | UI retry fix concrete; backend-latency investigation needs Grafana access |
-| PDE-17953 | 2 | Thin | Frontend-framework | No file, no root cause, one screenshot; already "In Review" with no comments |
-| PDE-17833 | 2 | Investigation-only | **Backend, investigation-only** | Fix may span multiple repos with no idea which; needs live tracing to locate the slow service |
-| PDE-18116 | 2 | Investigation-only | Frontend-framework | "N sessions fired this event, go investigate" — no hypothesis at all |
-| PDE-15392 | 1 | Too vague | Frontend-framework | One sentence + a bare LogRocket link |
-| PDE-16601 | 1 | Too vague | **Backend, investigation-only** | Title + a bare LogRocket link, nothing else |
-| PDE-17692 | 1 | Too vague | Uncertain (not git-repo-confirmed) | "Precise conditions unknown," pasted user quotes, no file, no link, no environment |
