@@ -93,7 +93,7 @@ to suggest distrusting everything equally everywhere:
 |---|---|
 | `ticket-discovery` | Jira ticket description + all comments |
 | `ticket-implementation` | Jira comments, `discovery.md`, file/code content in the repo(s) it touches |
-| `ticket-review` | PR review comments |
+| `ticket-review` | PR review comments, Jira comments |
 | `ticket-merge` | PR/CI metadata (check names, review state) — mostly structured, not free text, but see below |
 | `ticket-worker` | Jira comments (when re-posting a handoff or gate comment), every specialist's own artifact |
 

@@ -21,8 +21,8 @@ kept alive across many turns), where a background task can raise a
 notification minutes or hours later and something is still there to receive
 it.
 
-Two mechanisms your tools might offer look like they solve "wait for a
-long-running command," but both assume that later turn exists:
+Several mechanisms your tools might offer look like they solve "wait for a
+long-running command," but all assume that later turn exists:
 
 - **Bash auto-backgrounding.** If a command outlives the tool's default
   timeout (commonly ~120s), it gets moved to a background task with a
@@ -31,18 +31,24 @@ long-running command," but both assume that later turn exists:
   the time it would arrive.
 - **`Monitor`.** Same problem: it streams events to future turns. There are
   no future turns here.
+- **A `Skill` invocation that forks to a background task** (e.g. `code-review`
+  when it runs as a forked execution rather than inline) — identical problem:
+  it returns a task handle and reports back via the same kind of later-turn
+  notification, which never arrives in a `-p` session.
 
-Treat both as unavailable to you for actually waiting on completion. If a
-Bash call you made gets auto-backgrounded, that's not a failure and not a
-signal to wrap up and wait — it just means the command is still running as a
-task you now have to watch yourself, in-line, before you do anything else.
+Treat all of these as unavailable to you for actually waiting on completion.
+If a Bash call — or a Skill invocation — you made gets auto-backgrounded,
+that's not a failure and not a signal to wrap up and wait — it just means the
+task is still running as something you now have to watch yourself, in-line,
+before you do anything else.
 
 ## What to do instead
 
 Poll the task explicitly, in a loop, with `TaskOutput(task_id, block=true,
 timeout=<up to 600000>)`:
 
-1. Take the `task_id` the auto-backgrounded Bash call handed you.
+1. Take the `task_id` the auto-backgrounded Bash call — or forked Skill
+   invocation — handed you.
 2. Call `TaskOutput` with `block=true` and as large a `timeout` as the tool
    allows (up to 600000ms / 10 minutes).
 3. If it comes back still running, call it again immediately on the same

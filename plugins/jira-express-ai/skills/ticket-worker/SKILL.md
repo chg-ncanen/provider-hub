@@ -211,7 +211,7 @@ worker's. It launches the same way regardless of whether this is a first run
 or a resume. Most specialists already check their own relevant channel as
 their first step (`ticket-discovery` reads all Jira comments,
 `ticket-implementation` re-reads `discovery.md` fresh plus new Jira comments,
-`ticket-review` reads PR comments directly).
+`ticket-review` reads both PR comments and Jira comments directly).
 
 ### Sub-agent launch and validation
 

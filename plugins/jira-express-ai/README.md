@@ -56,8 +56,8 @@ one behavioral difference that conversion introduced.
   git worktree, pushes the branch and opens the PR itself (it's the only one with direct
   knowledge of which repo/branch it actually touched), writes `implementation-notes.md` and
   `review-context.md`.
-- **`skills/ticket-review/`** — sub-agent: replies to open PR review comments, pushes fixes if
-  needed, writes `review-notes.md`.
+- **`skills/ticket-review/`** — sub-agent: reads open PR review comments and Jira comments,
+  replies to PR comments, pushes fixes if needed, writes `review-notes.md`.
 - **`skills/ticket-merge/`** — sub-agent: checks CI/approval gates, merges the PR, monitors
   post-merge CI, writes `merge-notes.md`.
 
