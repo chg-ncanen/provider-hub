@@ -139,6 +139,15 @@ Read `discovery.md`. This is your specification. Understand:
 Also fetch any new Jira comments since discovery was completed — humans may have
 left additional guidance.
 
+### Step 1.5 — Check for a matching playbook
+
+If `discovery.md`'s header sets `**Playbook:**` to a category (not `None`),
+read that category's file under `$CLAUDE_PLUGIN_ROOT/playbooks/` — its
+`## Implementation guidance` section applies to the steps below. Don't
+re-derive the category yourself; discovery already matched it against
+`playbooks/INDEX.md`, and re-deriving it here risks landing on a different
+answer than discovery did.
+
 ### Step 2 — Implement the changes
 
 Follow the proposed approach in `discovery.md`. Work inside `$WORKTREE` (not the main clone):

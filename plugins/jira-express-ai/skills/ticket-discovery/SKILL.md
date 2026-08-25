@@ -100,6 +100,20 @@ Log any guidance found:
 [discovery] Human guidance: <summary of relevant comments>
 ```
 
+### Step 1.5 — Check for a matching playbook
+
+Read `$CLAUDE_PLUGIN_ROOT/playbooks/INDEX.md`. It lists categories of
+recurring ticket work (e.g. dependency-version bumps) with standing
+guidance — things worth getting right every time without a human repeating
+themselves in a comment. Match this ticket's summary/description against
+the index's triggers, not its Jira labels or project — none of these
+categories have a dedicated label.
+
+If one or more categories clearly match, read each matching file's
+`## Discovery guidance` section and fold it into your research and
+Proposed Approach below. If none match, proceed normally — the index only
+ever adds guidance, it never gates or blocks the ticket.
+
 ### Step 2 — Explore the codebase
 
 Before touching `$REPOS_DIR` in any way, read
@@ -141,6 +155,7 @@ any prior version from Step 0 in full — not appending to it:
 **Ticket:** <summary>
 **Date:** <ISO date>
 **Status:** READY
+**Playbook:** <category from playbooks/INDEX.md that matched, or None>
 
 ## TL;DR
 
