@@ -32,8 +32,8 @@ explicitly out of scope here and deferred to a **separate, future
 live-site-bug design for frontend-framework code**, which will need its own
 considerations this one doesn't cover (component/UI testing approach,
 browser/device variability, LogRocket session-replay UX signals). See
-"Mixed tickets" below for how this plays out when a ticket is filed under a
-frontend prefix but has a backend root cause.
+the Discovery guidance section below for how this plays out when a ticket is
+filed under a frontend prefix but has a backend root cause.
 
 ## Problem
 
@@ -59,7 +59,7 @@ backend-owned fixes only — a much smaller eligible set than the full sample:
 |---|---|---|---|
 | Backend, root-caused | ~1/6 | Yes | Names the file/line or the exact fix, in a backend repo — reads like a near-finished `discovery.md` |
 | Backend, investigation-only | ~1/9 | Yes | No hypothesis yet, but the *symptom* points at a backend service, not a frontend one |
-| Mixed: frontend-filed, backend root cause | ~2/9 | Backend slice only | Ticket asks for a frontend mitigation *and* names a backend root cause — this playbook may pursue the backend half only; see "Mixed tickets" below |
+| Mixed: frontend-filed, backend root cause | ~2/9 | Backend slice only | Ticket asks for a frontend mitigation *and* names a backend root cause — this playbook may pursue the backend half only; see Discovery guidance below |
 | Frontend-framework | ~4/9 | No — future frontend design | The fix (or the only confirmable fix) is React/Vue/native-app framework code, not a backend service |
 | Too vague to classify | small | No | Could be backend, could be a config/business-rule issue outside any git repo entirely |
 
@@ -117,203 +117,130 @@ that as the normal case to design for, not an edge case.
   code exercised by `test_worker.py`.
 - No change to the single-PR-per-ticket architecture itself (`ticket-review`/
   `ticket-merge` still only handle one PR). This design works within that
-  constraint rather than lifting it — see "Single-repo-PR constraint" below.
+  constraint rather than lifting it — see the multi-repo bullets in
+  Discovery/Implementation guidance below.
 - No fix, mitigation, or PR touching React/Vue/native-app frontend-framework
   code under this playbook, full stop — see "Scope: backend only" above and
-  "Mixed tickets" below.
+  the Mixed-ticket bullet in Discovery guidance below.
 
 ## Playbook trigger
 
-Added to `playbooks/INDEX.md`:
+Added as a new row to `playbooks/INDEX.md`'s table, matching the table's
+existing format and length (`dependency-bump`'s own trigger cell is one
+sentence):
 
-> The ticket describes a production defect, in a **backend** service PDE
-> owns, surfaced by real user or system impact — an error, crash, timeout, or
-> broken flow observed live, often citing LogRocket session/issue-group
-> links, Grafana panels or incident dates, specific HTTP statuses, or
-> user-reported symptoms — as opposed to a proactively-found
-> code-quality/security-audit finding or a new feature ask. The ticket being
-> assigned to the ASA team (however that's represented in Jira — a team
-> field, an assignee group, or similar) is a mild hint worth factoring in —
-> ASA also picks up dependency-bump and other maintenance tickets, so it
-> does not by itself distinguish this category from any other. Content is
-> still what actually decides the match, the same way every other playbook
-> in this index works; ASA assignment just nudges you to look harder at
-> whether the content matches, not a substitute for checking. Applies even
-> when the ticket is filed as a `PDE-UI:` ticket or reports a frontend
-> symptom, as long as the fixable root cause is backend — see
-> `live-site-bug-backend.md`'s "Mixed tickets" section for how to handle that
-> case. A separate, not-yet-written playbook will cover tickets whose fix is
-> genuinely frontend-framework code (`pde-ui`, another UI repo, or the native
-> app).
+| Category | Trigger | File |
+|---|---|---|
+| live-site-bug-backend | The ticket describes a production defect in a backend service PDE owns — an error, crash, timeout, or broken flow observed live — not a proactively-found security-audit finding or a new feature ask. Applies even when the ticket is filed under a frontend prefix, as long as the fixable root cause is backend (see the file's own scope note). ASA-team assignment is a mild additional hint, not a determinant — it also covers dependency-bump and other maintenance work. | `live-site-bug-backend.md` |
 
-Matched by content, same as every other entry in the index — not a label,
-not a project, not ASA assignment on its own (see above; ASA is too broad a
-signal by itself, since it also covers dependency-bump and other
-maintenance work).
+The rest of this category's real nuance (the four-way triage, the Mixed-
+ticket handling, the frontend carve-out) lives inside `live-site-bug-backend.md`
+itself, the same way `dependency-bump.md` keeps its own nuance in-file rather
+than in the index row.
 
 ## Discovery guidance (`## Discovery guidance` in `live-site-bug-backend.md`)
 
-### Step: triage into one of four buckets
+Flat bulleted list, matching `dependency-bump.md`'s own format (bold lead-in
+per bullet, nested bullets for branches, no subheadings):
 
-Before researching further, classify the ticket:
-
-1. **Backend, root-caused** — the ticket already names a file/line and a fix,
-   in a backend repo.
-2. **Backend, investigation-only** — no hypothesis yet, but the symptom
-   points at a backend service; discovery's job is to try to form one.
-3. **Mixed** — the ticket (however it's filed, including `PDE-UI:` tickets)
-   describes or implies a frontend mitigation *and* a backend root cause. See
-   "Mixed tickets" below — only the backend slice is ever in scope here.
-4. **Frontend-framework** — the only fixable/confirmable cause is
-   React/Vue/native-app framework code, with no backend slice at all. Out of
-   scope for this playbook entirely (see below).
-
-This isn't a formality — it determines what "Proposed Approach" is even
-allowed to claim (see below).
-
-### Mixed tickets: pursue the backend slice, never touch frontend-framework code
-
-Some tickets are filed under a frontend prefix (e.g. `PDE-UI:`) and ask for a
-frontend mitigation (a retry, a scoped error boundary, a null guard)
-alongside naming a backend root cause. For these:
-
-- Investigate the full call chain freely, including into a frontend repo if
-  needed to understand the symptom — reading frontend code to understand a
-  symptom is not the same as fixing it there.
-- If a backend root cause is found and can be confirmed (per the reproduce-
-  before-fix discipline below), pursue and fix **only that** — in the
-  backend repo, as its own single-repo PR. Do not also implement the
-  frontend mitigation the ticket describes, even though it's part of the
-  same ticket and even though skipping it means the ticket isn't "fully"
-  resolved by this PR.
-- Explicitly document, in `discovery.md`'s Notes and the eventual PR
-  description, that the ticket also calls for a frontend mitigation that is
-  out of scope for this pipeline today and needs separate frontend work.
-  Don't silently drop it — say where it went, the same way `dependency-bump.md`
-  carries forward an out-of-range major bump as a named note rather than
-  dropping it.
-- If investigation concludes the *only* real, confirmable fix is
-  frontend-framework code (no backend change actually addresses the reported
-  symptom), that is a **`BLOCKED`** outcome for this playbook — not
-  `NO_CHANGES_NEEDED` (a change genuinely is needed, just not one this
-  pipeline can make). `Suggested Next Step` should say plainly that this
-  needs a frontend-framework fix (`pde-ui`, another UI repo, or the native
-  app), to be picked up once the frontend playbook exists (or by a human
-  directly in the meantime).
-
-### Hypothesis discipline
-
-Whatever discovery concludes — from the ticket text, the code, comments, or
-(if available) the ASA common-alerts Confluence page — gets written into
-`discovery.md`'s `Current Behavior`/`Proposed Approach` sections explicitly
-labeled as a hypothesis (e.g. "Hypothesis (unconfirmed): ..."), never as a
-settled fact. This applies uniformly across all four buckets and explicitly
-includes the Confluence runbook: if a ticket's symptom matches one of that
-page's sections, that page is another input to the hypothesis, not
-corroboration that makes it true — the runbook itself can be stale, written
-from an earlier incident that may have had a different real cause.
-`ticket-discovery` cannot verify anything by running code (it stays
-read-only) — verification is `ticket-implementation`'s job, below.
-
-### Investigation may cross repo boundaries freely — including into frontend repos
-
-Tracing a call chain across services (e.g. confirming PES proxies
-`/providers/*` to PSN, so a PDE-UI-reported 500 actually originates there) is
-normal and expected for this category, using the same clone/read access
-`ticket-discovery` already has across `$REPOS_DIR` — this includes reading
-frontend repos (`pde-ui`, other UI repos, the native app) to understand a
-symptom, per "Mixed tickets" above. Reading a repo to understand a symptom is
-never the same thing as fixing it there, and is not the same thing as the
-eventual fix needing multiple PRs — see "Single-repo-PR constraint" below,
-which is about the *fix*, not the *investigation*.
-
-### Grafana/LogRocket: best effort, not a dependency
-
-If Grafana or LogRocket tools are available in this session, use them to
-sanity-check time-sensitive claims in the ticket (is this still happening?
-what's the current frequency? has it already been mitigated by an unrelated
-change?) the same skeptical way as any other input. If they are not
-available, say so plainly in `discovery.md` (e.g. "Grafana/LogRocket tooling
-was not available in this session — the ticket's session/incident data below
-is taken at face value from the ticket text and could not be independently
-checked.") and continue — this must never block or degrade the rest of
-discovery.
-
-### PII handling
-
-Tickets in this category sometimes link directly to real production records
-(a Salesforce provider/assignment record, a specific Okta account). Don't
-copy real names, Okta IDs, emails, or Salesforce record IDs into
-`discovery.md`, the PR body, or the Confluence mirror — refer to "the
-affected provider" and link back to the Jira ticket instead, which already
-has appropriate access controls for that data.
-
-### Single-repo-PR constraint
-
-If, after investigation, the actual **fix** (not the investigation) would
-require opening a PR in more than one repo, that's a `BLOCKED` outcome: the
-existing pipeline architecture (`ticket-review`/`ticket-merge`) only handles
-a single PR per ticket. `Suggested Next Step` should tell the developer to
-split the ticket into one per repo — this org already has a working
-precedent for exactly that, in how a multi-repo dependency-bump ticket gets
-split into per-repo clones; point the developer at that same convention
-rather than inventing a new one. Investigating across repos to find this out
-is expected and is not itself a reason to block (see above) — only the
-fix's repo-count is.
-
-### Set `**Playbook:** live-site-bug-backend`
-
-Same convention as `dependency-bump.md`, so implementation knows to load this
-file's Implementation guidance without re-deriving the category.
+- **Triage the ticket into one of four shapes before researching further** —
+  this determines what "Proposed Approach" is even allowed to claim:
+  - *Backend, root-caused* — the ticket already names a file/line and a fix,
+    in a backend repo.
+  - *Backend, investigation-only* — no hypothesis yet, but the symptom
+    points at a backend service; try to form one.
+  - *Mixed* — the ticket (however it's filed, including under a frontend
+    prefix) describes or implies a frontend mitigation *and* a backend root
+    cause — see the bullet below; only the backend slice is ever in scope.
+  - *Frontend-framework* — the only fixable/confirmable cause is
+    React/Vue/native-app framework code, with no backend slice at all. Out
+    of scope for this playbook entirely.
+- **Treat every claim — the ticket, its comments, and the ASA common-alerts
+  Confluence runbook — as a hypothesis, never a fact.** Write it into
+  `discovery.md`'s `Current Behavior`/`Proposed Approach` explicitly labeled
+  (e.g. "Hypothesis (unconfirmed): ..."), regardless of how confident or
+  detailed it reads, or whether it was already validated once before. This
+  includes the Confluence runbook: a matching symptom is another input to
+  the hypothesis, not corroboration that makes it true — the runbook itself
+  can be stale. `ticket-discovery` cannot verify anything by running code
+  (it stays read-only) — verification is `ticket-implementation`'s job.
+- **Investigate freely across repo boundaries, including into frontend
+  repos, to trace a symptom back to its real cause** (e.g. confirming a
+  gateway/experience-service layer proxies a request to the backend service
+  actually producing the error). Reading a repo to understand a symptom is
+  never the same thing as fixing it there.
+- **For a Mixed ticket, pursue the backend slice only — never touch
+  frontend-framework code to "also" fix it.**
+  - If a backend root cause is found and confirmed (per implementation's
+    reproduce-before-fix discipline below), recommend fixing **only that**,
+    in the backend repo, as its own single-repo PR.
+  - Explicitly note, in `discovery.md`, that the ticket also calls for a
+    frontend mitigation out of scope for this pipeline and needing separate
+    frontend work — don't silently drop it, the same way an out-of-range
+    major dependency bump gets carried forward as a named note rather than
+    dropped.
+  - If the *only* real, confirmable fix is frontend-framework code, that's a
+    `BLOCKED` outcome — not `NO_CHANGES_NEEDED` (a change genuinely is
+    needed, just not one this pipeline can make). Say plainly in
+    `Suggested Next Step` that this needs a frontend-framework fix.
+- **Use Grafana/LogRocket tools if available in this session** to
+  sanity-check time-sensitive claims (is this still happening? current
+  frequency? already mitigated?) with the same skepticism as any other
+  input. If they aren't available, say so plainly in `discovery.md` and
+  continue — never block or degrade the rest of discovery over this.
+- **Don't copy real PII into any artifact.** Some tickets link directly to
+  real production records (a Salesforce provider record, a specific Okta
+  account). Refer to "the affected provider" and link back to the Jira
+  ticket instead of copying names, Okta IDs, emails, or record IDs into
+  `discovery.md`, the PR body, or the Confluence mirror.
+- **If the actual fix (not the investigation) would need a PR in more than
+  one repo, that's a `BLOCKED` outcome** — the pipeline only handles one PR
+  per ticket. Tell the developer to split the ticket into one per repo, the
+  same way a multi-repo dependency-bump ticket already gets split into
+  per-repo clones. Investigating across repos to find this out is expected
+  and not itself a reason to block.
+- Set `**Playbook:** live-site-bug-backend` in `discovery.md`'s header when
+  this playbook applied, so implementation knows to load this file's
+  Implementation guidance without re-deriving the category.
 
 ## Implementation guidance (`## Implementation guidance` in `live-site-bug-backend.md`)
 
-### Reproduce before you fix
+Same flat-bulleted-list format as Discovery guidance above:
 
-Before writing any fix code, write a test that should fail, for the
-hypothesized reason, against current code — mocking the failing dependency
-where the cause is external (e.g. force a wrapped client call to reject
-repeatedly to exercise a give-up branch, rather than needing a real outage).
-This is the `superpowers:test-driven-development` red/green cycle; apply it
-rather than restating it here. Then branch on the outcome:
-
-- **Reproduces as hypothesized** → proceed with the normal TDD red→green
-  cycle. The passing test doubles as regression coverage. State in
-  `implementation-notes.md` that the hypothesis was empirically confirmed,
-  not just plausible.
-- **A test genuinely isn't feasible** (a pure infra/config value with no code
-  representation in the owned repo) → say so explicitly in
-  `implementation-notes.md`, and only still proceed if there is other clear,
-  well-supported certainty — state exactly what that evidence is (e.g. a
-  Grafana-confirmed incident timeline plus an unambiguous one-line config
-  change). Otherwise, `BLOCKED`.
-- **A test is feasible but doesn't reproduce the hypothesized failure** →
-  implementation has tools discovery didn't (it can run code) — take one
-  further investigation pass. If that finds and confirms a *different* real
-  cause, proceed with it and document the correction explicitly — a
-  live-site ticket's stated cause turning out wrong on closer inspection is
-  a normal outcome for this category, not a failure to be smoothed over. If
-  it still can't reach a reproducing test or other clear certainty,
-  `BLOCKED` — state what was tried and what a developer needs to do next
-  (e.g. pull more LogRocket sessions, needs infra access this pipeline
-  doesn't have).
-
-The bias is: no reproduction and no other stated certainty means stop, not
-guess. This is a stricter bar than `dependency-bump.md`'s "verify a major
-bump with the full test suite" — there, the ticket's core claim (a CVE
-exists) is independently mechanically true; here, the ticket's core claim
-(this is why it's broken) is exactly what's in question.
-
-### Single-repo-PR constraint (implementation side)
-
-Same rule as discovery: if mid-implementation it becomes clear the fix
-needs a second repo (e.g. a shared contract change), stop and go `BLOCKED`
-with the same split-into-per-repo-tickets guidance — do not open a second PR.
-This explicitly overrides `ticket-implementation/SKILL.md` Step 5's default
-multi-repo handling ("write `review-context.md` for the primary repo, list
-the others in Notes"), which is fine for an incidental cross-repo edit on an
-ordinary ticket but wrong for this category, where crossing repos is common
-and expected.
+- **Reproduce before you fix.** Before writing any fix code, write a test
+  that should fail, for the hypothesized reason, against current code —
+  mocking the failing dependency where the cause is external. This is the
+  `superpowers:test-driven-development` red/green cycle; apply it rather
+  than restating it here.
+  - *Reproduces as hypothesized:* proceed with the normal TDD red→green
+    cycle. The passing test doubles as regression coverage. State in
+    `implementation-notes.md` that the hypothesis was empirically confirmed,
+    not just plausible.
+  - *A test genuinely isn't feasible* (a pure infra/config value with no
+    code representation in the owned repo): say so explicitly, and only
+    proceed if there's other clear, well-supported certainty — state
+    exactly what that evidence is. Otherwise, `BLOCKED`.
+  - *A test is feasible but doesn't reproduce the hypothesized failure:*
+    take one further investigation pass (implementation can run code,
+    discovery couldn't). If that finds and confirms a different real cause,
+    proceed with it and document the correction explicitly — a live-site
+    ticket's stated cause turning out wrong on closer inspection is a
+    normal outcome for this category, not a failure to smooth over. If it
+    still can't reach a reproducing test or other clear certainty,
+    `BLOCKED` — state what was tried and what a developer needs to do next.
+  - The bias is: no reproduction and no other stated certainty means stop,
+    not guess. This is a stricter bar than `dependency-bump.md`'s "verify a
+    major bump with the full test suite" — there, the ticket's core claim
+    (a CVE exists) is independently mechanically true; here, the ticket's
+    core claim (this is why it's broken) is exactly what's in question.
+- **If mid-implementation it becomes clear the fix needs a second repo**
+  (e.g. a shared contract change), stop and go `BLOCKED` with the same
+  split-into-per-repo-tickets guidance — do not open a second PR. This
+  explicitly overrides `ticket-implementation/SKILL.md` Step 5's default
+  multi-repo handling ("write `review-context.md` for the primary repo,
+  list the others in Notes"), which is fine for an incidental cross-repo
+  edit on an ordinary ticket but wrong here, where crossing repos is common
+  and expected.
 
 ## Capability ceiling — a documentation update, not new infrastructure
 
