@@ -233,6 +233,13 @@ Same flat-bulleted-list format as Discovery guidance above:
     major bump with the full test suite" — there, the ticket's core claim
     (a CVE exists) is independently mechanically true; here, the ticket's
     core claim (this is why it's broken) is exactly what's in question.
+- **Keep the fix surgical.** Once a cause is confirmed, change only what
+  the fix actually requires — don't refactor surrounding code, rename
+  things, reorganize files, or fix unrelated issues you notice along the
+  way, even if they look like quick wins. A live-site fix is judged on how
+  small and reviewable its diff is, not how much of the neighborhood it
+  improves. Note anything else worth fixing as a follow-up in
+  `implementation-notes.md` rather than folding it into this PR.
 - **If mid-implementation it becomes clear the fix needs a second repo**
   (e.g. a shared contract change), stop and go `BLOCKED` with the same
   split-into-per-repo-tickets guidance — do not open a second PR. This
