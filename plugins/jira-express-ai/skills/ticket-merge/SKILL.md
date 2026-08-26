@@ -75,6 +75,26 @@ which repo it's talking about — this agent never edits file content at all.
 
 ### Step 1 — Check pre-merge gates
 
+First, check whether this PR was already merged by a prior run. A previous
+attempt may have merged the PR successfully in Step 2 but then timed out
+waiting on post-merge CI in Step 3, writing `PENDING` — which leaves the
+ticket at `UAT Review` for the next orchestrator run to retry. Without this
+check, that retry would fall through to Step 2 and attempt `gh pr merge` on
+a PR that's already merged, fail, and misreport `BLOCKED` for what was
+actually a successful merge:
+
+```bash
+gh pr view $PR_NUMBER --json state,mergeCommit --jq '{state: .state, mergeCommit: .mergeCommit.oid}'
+```
+
+**If `state` is `MERGED`:** skip the rest of Step 1 and all of Step 2 —
+do not re-run the draft/CI/approval gates and do not attempt `gh pr merge`
+again. Use this `mergeCommit.oid` as `MERGE_SHA` and go straight to Step 3
+to (re)confirm post-merge CI.
+
+**Otherwise**, this is a genuinely fresh merge attempt — continue with the
+pre-merge gates:
+
 ```bash
 # Draft status — check this first, before spending a CI/approval round-trip
 # on a PR nobody's meant to act on yet
@@ -121,7 +141,8 @@ gh pr view $PR_NUMBER --json reviewDecision,reviews,mergeable \
 
 ### Step 2 — Merge
 
-All gates clear. Attempt merge, and **check that it actually succeeded** before
+Only reached when Step 1 confirmed the PR is not already merged and all
+gates are clear. Attempt merge, and **check that it actually succeeded** before
 assuming there's anything to monitor — the PR can go out of date (a new commit
 landing) between the gate check above and this attempt:
 
@@ -254,6 +275,11 @@ echo "[merge-agent] Complete — merge-notes.md written with status: <STATUS>"
 
 ## Rules
 
+- Always check `state == MERGED` before anything else in Step 1. A retry
+  after a prior `PENDING` (post-merge CI never confirmed complete in time)
+  means the PR is already merged — go straight to Step 3 with the existing
+  merge commit rather than re-attempting `gh pr merge`, which would fail
+  and misreport a successful merge as `BLOCKED`.
 - Three outcomes: `SUCCESS`, `BLOCKED`, or `PENDING`.
   - `PENDING` means nothing is wrong, just not ready yet (CI still running,
     approval still pending, or post-merge completion couldn't be confirmed) —
