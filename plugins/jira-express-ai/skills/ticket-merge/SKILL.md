@@ -159,7 +159,7 @@ echo "[merge] Merge submitted for PR #$PR_NUMBER"
 
 ### Step 3 — Monitor post-merge CI
 
-After a **confirmed** merge, check that the main branch CI passes. Poll up to 10 minutes:
+After a **confirmed** merge, check that the main branch CI passes. Poll up to 25 minutes, once a minute — deploys routinely take close to 10 minutes even on the fastest tickets, so a 10-minute cap left almost no margin:
 
 ```bash
 # Get the merge commit SHA — retry briefly rather than silently proceeding
@@ -182,8 +182,8 @@ fi
 # nothing required." Only treat "no pending checks" as real completion once
 # at least one check-run has actually been observed at some point in the poll.
 SEEN_ANY_CHECK=false
-for i in $(seq 1 20); do
-  sleep 30
+for i in $(seq 1 25); do
+  sleep 60
   RUNS=$(gh api repos/chghealthcare/$REPO/commits/$MERGE_SHA/check-runs --jq '.check_runs')
   COUNT=$(echo "$RUNS" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
   [ "$COUNT" -gt 0 ] && SEEN_ANY_CHECK=true
@@ -242,7 +242,7 @@ or post-merge checks never confirmed complete within the poll window):
 ## Reason
 
 <What's not ready yet — e.g. "2 CI checks still running", "awaiting reviewer
-approval", "no post-merge check-runs registered within 10 minutes".>
+approval", "no post-merge check-runs registered within 25 minutes".>
 ```
 
 **On any real failure** (gate failure, merge conflicts, unconfirmed merge, or a
