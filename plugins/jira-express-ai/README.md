@@ -179,6 +179,11 @@ the worker's territory alone.
   the assignee gets first look before anyone else is notified or requested to review; set to
   `false` (this plugin's `userConfig`) to open ready-for-review PRs immediately instead.
   `ticket-merge` treats a still-draft PR as pending rather than blocked.
+- `COPILOT_REVIEW_ENABLED` (optional) — `ticket-implementation` requests a GitHub Copilot code
+  review on each PR right after opening it, enabled by default. This works even while the PR is
+  still a draft, and lands as ordinary PR review comments that `ticket-review` already reads. Set
+  to `false` (this plugin's `userConfig`) to skip it. Requires Copilot code review to be enabled
+  for the target repo/org; a failed or redundant request never blocks the ticket.
 - A target project directory containing (or able to clone) the repos being worked on, plus a
   writable `tickets/` subdirectory — this is where the orchestrator is run *from* (see
   `ticket-orchestrator/SKILL.md`'s "Working directory" section).

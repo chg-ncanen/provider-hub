@@ -133,10 +133,13 @@ for c in data.get('fields', {}).get('comment', {}).get('comments', []):
 ```
 
 Ignore any comment already authored by this pipeline itself (bot handoff
-comments prefixed `🤖`) — those are progress notifications, not human
-guidance. Everything else from a human is a candidate for Step 2, even if it
-looks like it might already have been addressed in an earlier pass —
-re-classifying an already-resolved comment is harmless.
+comments prefixed `🤖`) — those are progress notifications, not guidance to
+act on. Everything else is a candidate for Step 2, even if it looks like it
+might already have been addressed in an earlier pass — re-classifying an
+already-resolved comment is harmless. This includes automated review
+comments from `copilot-pull-request-reviewer[bot]` (requested automatically
+by `ticket-implementation` when `COPILOT_REVIEW_ENABLED` is on) — treat its
+suggestions as real feedback to address, the same as a human reviewer's.
 
 ### Step 2 — Classify each comment
 

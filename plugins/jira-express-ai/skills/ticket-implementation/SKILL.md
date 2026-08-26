@@ -408,6 +408,31 @@ fi
 echo "[implementation] PR ready: #$PR_NUMBER ($PR_URL)${DRAFT_FLAG:+ [draft]}"
 ```
 
+Request a GitHub Copilot code review right after — this works even while the
+PR is still a draft (Copilot doesn't wait for "ready for review" when
+explicitly requested this way), and lands as ordinary PR review comments that
+`ticket-review` already reads. Controlled by `COPILOT_REVIEW_ENABLED` (default
+**on**), mirrored into `.env` the same way as `DRAFT_PR_ENABLED` above. A repo
+that already auto-requests Copilot on every PR just gets a harmless no-op —
+never treat a failure here (Copilot code review not enabled for this repo/org,
+already requested, etc.) as a blocker:
+
+```bash
+COPILOT_REVIEW_SETTING="${COPILOT_REVIEW_ENABLED:-${CLAUDE_PLUGIN_OPTION_COPILOT_REVIEW_ENABLED:-}}"
+if [ -z "$COPILOT_REVIEW_SETTING" ] && [ -f "$CLAUDE_PLUGIN_ROOT/.env" ]; then
+  COPILOT_REVIEW_SETTING=$(grep -m1 '^COPILOT_REVIEW_ENABLED=' "$CLAUDE_PLUGIN_ROOT/.env" | cut -d= -f2-)
+fi
+case "$(echo "${COPILOT_REVIEW_SETTING:-true}" | tr '[:upper:]' '[:lower:]')" in
+  false|0|no) ;;
+  *)
+    gh api "repos/chghealthcare/$REPO/pulls/$PR_NUMBER/requested_reviewers" \
+      -f 'reviewers[]=copilot-pull-request-reviewer[bot]' >/dev/null 2>&1 \
+      && echo "[implementation] Copilot review requested" \
+      || echo "[implementation] Copilot review request skipped (not enabled for this repo, or already requested)"
+    ;;
+esac
+```
+
 Then write `review-context.md` — the structured record the worker (and
 `ticket-review`/`ticket-merge` after it) actually reads, rather than parsing
 it out of `implementation-notes.md`'s prose:
