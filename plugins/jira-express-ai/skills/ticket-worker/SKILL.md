@@ -200,7 +200,7 @@ for anything a human needs to reconstruct after the fact.
 | To Do | Discovery (transition to In Discovery already done in startup) |
 | In Discovery | Discovery |
 | QA Review | Human gate — re-post the discovery handoff comment, exit waiting |
-| In Progress | Implementation, or Review if `implementation-notes.md` already exists (human moved back to address PR comments) |
+| In Progress | Implementation, or Review if `review-context.md` already exists (a PR is open and a human moved the ticket back to address comments on it) |
 | In Review | Human gate — re-post the "ready for review" comment, exit waiting |
 | UAT Review | Merge |
 | Done / Backlog / Cancelled / Released | Nothing — terminal/ignored |
@@ -274,10 +274,12 @@ state.
 A human rejecting a `NO_CHANGES_NEEDED` result sends the ticket back to the
 stage's own "redo" status (`In Discovery` for discovery, `In Progress` for
 implementation). For implementation specifically, `run_implementation()`'s
-dispatch treats "notes exist but say `NO_CHANGES_NEEDED`" the same as "notes
-don't exist yet" — a fresh implementation redo — rather than routing to the
-PR-review pass, which would launch `ticket-review` against a PR that was
-never opened.
+dispatch keys off whether `review-context.md` exists, not the notes' status
+string — so both "notes exist but say `NO_CHANGES_NEEDED`" and "notes exist
+but say `BLOCKED`" (implementation stopped before ever opening a PR) are
+treated the same as "notes don't exist yet" — a fresh implementation redo —
+rather than routing to the PR-review pass, which would launch `ticket-review`
+against a PR that was never opened.
 
 ### Transition IDs
 

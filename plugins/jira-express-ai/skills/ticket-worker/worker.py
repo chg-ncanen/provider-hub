@@ -547,12 +547,16 @@ def run_implementation(key: str, ticket_dir: Path, repos_dir: Path, auth, skip_c
     notes = ticket_dir / "implementation-notes.md"
     review_context = ticket_dir / "review-context.md"
 
-    # A prior NO_CHANGES_NEEDED pass has notes.exists() == True but no PR —
-    # a human rejecting it back to In Progress means "redo implementation,"
-    # not "address PR review comments" (_run_review_pass launches the PR
-    # review agent, which has nothing to review here). Route it through the
-    # same fresh-implementation path as a first attempt.
-    if not notes.exists() or extract_status(notes) == "NO_CHANGES_NEEDED":
+    # review-context.md is the real signal for "is there a PR to review" —
+    # the implementation agent is the only thing that writes it, and only on
+    # a genuine non-blocked, non-no-op completion (see _run_first_implementation_pass).
+    # A prior NO_CHANGES_NEEDED or BLOCKED pass has notes.exists() == True but
+    # never reached that write, so a human moving the ticket back to In
+    # Progress means "redo implementation," not "address PR review comments"
+    # (_run_review_pass launches the PR review agent, which has nothing to
+    # review here). Route it through the same fresh-implementation path as a
+    # first attempt.
+    if not notes.exists() or not review_context.exists():
         _run_first_implementation_pass(key, ticket_dir, repos_dir, notes, review_context, auth, skip_confluence_pull)
     else:
         _run_review_pass(key, ticket_dir, repos_dir, review_context, auth)
@@ -562,9 +566,9 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
     # Unconditional, not resume-specific — same reasoning as run_discovery's
     # pull: a genuine first attempt has no Confluence page yet, so pull()
     # returns None and this is a no-op. Applied only when notes already
-    # exists, for the same reason as there — and here that existence is
-    # exactly what run_implementation() dispatched on, so the only way to
-    # reach this function with notes present is a NO_CHANGES_NEEDED redo,
+    # exists, for the same reason as there — and here that existence means
+    # this is a redo (NO_CHANGES_NEEDED or BLOCKED-before-PR — the two ways
+    # run_implementation() dispatches here with notes already present),
     # which is precisely the case the pull-back is for.
     if not skip_confluence_pull:
         try:
@@ -581,9 +585,10 @@ def _run_first_implementation_pass(key: str, ticket_dir: Path, repos_dir: Path, 
     # expected in normal operation) must not skip a retry and just repeat
     # the same failure forever — see run_discovery()'s identical fix for
     # the full reasoning. notes.md itself is deliberately NOT unlinked here
-    # — like discovery.md, a redo after a rejected NO_CHANGES_NEEDED reads
-    # its own prior version for context (see run_implementation()'s dispatch,
-    # which is the only way this function runs with notes already existing).
+    # — like discovery.md, a redo after a rejected NO_CHANGES_NEEDED or an
+    # unresolved BLOCKED-before-PR reads its own prior version for context
+    # (see run_implementation()'s dispatch, the only way this function runs
+    # with notes already existing).
     sentinel = ticket_dir / ".implementation-agent-done"
     sentinel.unlink(missing_ok=True)
     launch_specialist("ticket-implementation", ticket_dir, repos_dir, auth)
