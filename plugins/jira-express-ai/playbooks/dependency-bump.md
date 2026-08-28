@@ -42,12 +42,22 @@ still apply, the literal commands don't.
       one — and note what verification implementation needs to run to trust
       it (usually: the full test/lint/build suite, plus a look for any
       config/CLI-flag changes the new major version might have made).
-- **A direct-dependency bump can cascade into transitive packages the
-  ticket never named** (nested/duplicate copies, sibling packages moving
-  version, new indirect deps). Say so in the Proposed Approach, and note
-  that the exact cascade is a function of registry state at install time —
-  implementation must re-diff for itself rather than trust discovery's
-  numbers, since new releases may land upstream before implementation runs.
+- **A direct-dependency bump naturally cascades into transitive packages
+  the ticket never named** (nested/duplicate copies, sibling packages
+  moving version, new indirect deps) — this is expected and not itself a
+  concern, even when a transitive package's version moves outside where it
+  previously resolved. Document the cascade in the Proposed Approach, and
+  note that the exact cascade is a function of registry state at install
+  time — implementation must re-diff for itself rather than trust
+  discovery's numbers, since new releases may land upstream before
+  implementation runs. The only thing that needs the same escalation as an
+  out-of-range direct bump (above) is if fixing this ticket requires
+  *forcing* any package — direct or transitive — to a version outside what
+  normal resolution would produce (an `overrides`/`resolutions` entry, a
+  manual pin) rather than letting the dependency graph settle there
+  naturally. That's a deliberate override of someone else's declared
+  compatibility contract, not a side effect of updating — treat it with the
+  same production-vs-devDependency care as an out-of-range direct bump.
 - Set `**Playbook:** dependency-bump` in `discovery.md`'s header (next to
   `**Status:**`) when this playbook applied, so implementation knows to
   load this same file's Implementation guidance without re-deriving the
