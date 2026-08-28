@@ -20,28 +20,56 @@ still apply, the literal commands don't.
     manifest edit) — never `npm install <pkg>@<version>`, which
     unconditionally rewrites the manifest's declared specifier even when
     the old range already covered the target.
-  - **Doesn't fit the range:** whether that's a blocker depends on what the
-    package actually touches. The underlying rule is "don't cross a version
-    boundary you can't verify is safe" — respecting the range is how you
-    honor that when you *can't* verify directly. When you can, the range
-    stops being the only signal.
-    - **Production/runtime dependency** (listed under `dependencies` in
-      `package.json`, or otherwise shipped): this isn't a routine in-range
-      bump anymore — it's a major-version upgrade with real breaking-change
-      risk that nothing in this pipeline can verify (tests don't see
-      production traffic, other services' assumptions, or business-logic
-      edge cases the package might change behavior on). Say so explicitly in
-      `discovery.md`'s Risks section and let a human decide whether to take
-      the major bump. Do not widen the range yourself and do not silently
-      drop the package from Tier 1.
-    - **devDependency** (test runner, linter, build tool — never shipped,
-      listed under `devDependencies`): a major bump is fine to recommend
-      without escalating to a human, *provided implementation actually
-      verifies it* (see Implementation guidance below) rather than trusting
-      semver. Say so in the Proposed Approach as a major bump — name it as
-      one — and note what verification implementation needs to run to trust
-      it (usually: the full test/lint/build suite, plus a look for any
-      config/CLI-flag changes the new major version might have made).
+  - **Doesn't fit the range:** whether that's a blocker depends on two
+    separate questions — reachability and bump size — not on dependency
+    type alone. The underlying rule is "don't cross a version boundary you
+    can't verify is safe"; respecting the range is only one way to honor
+    that. When you can verify directly, the range stops being the only
+    signal.
+    1. **Is the vulnerable/changed code actually reachable in this
+       service?** Use the same reachability analysis you'd apply to any
+       alert (disabled exporters, unused routes, unused config, dead code
+       paths, etc.). If it's confirmed unreachable, there's no live exploit
+       to fix urgently — this holds regardless of whether the package is a
+       production dependency or a devDependency. Say so in Risks, recommend
+       tracking the range-widening as separate planned maintenance rather
+       than urgent security work, and don't force an automatic bump just
+       because it's technically possible. Don't silently drop it from the
+       ticket, either.
+    2. **If it is reachable, does the fix cross a real major-version
+       boundary?** A "real" major means the package's own versioning
+       signals an intentional breaking change (e.g. `4.x` → `5.x`, `1.x` →
+       `2.x`), or its changelog/release notes say so explicitly. A 0.x
+       package moving between minor lines (`0.62.x` → `0.65.x`) is
+       **not** a real major for this purpose — it's out of range only
+       because npm's caret semantics pin `0.x` to the same minor, not
+       because the author signaled a breaking change.
+       - **Real major, reachable, production/runtime dependency** (listed
+         under `dependencies` in `package.json`, or otherwise shipped):
+         this is genuine breaking-change risk that nothing in this
+         pipeline can verify (tests don't see production traffic, other
+         services' assumptions, or business-logic edge cases the package
+         might change behavior on). Say so explicitly in `discovery.md`'s
+         Risks section and let a human decide whether to take it. Do not
+         widen the range yourself and do not silently drop the package
+         from Tier 1.
+       - **Not a real major (0.x same-major-line move, or a
+         changelog-confirmed non-breaking release), reachable,
+         production/runtime dependency:** treat like the devDependency case
+         below — recommend widening the range and taking the bump,
+         *provided implementation actually verifies it* (see Implementation
+         guidance). Name it as a range-widening exception in the Proposed
+         Approach and state what verification implementation needs to run
+         to trust it.
+       - **devDependency** (test runner, linter, build tool — never
+         shipped, listed under `devDependencies`): a real major bump is
+         fine to recommend without escalating to a human, *provided
+         implementation actually verifies it* (see Implementation guidance
+         below) rather than trusting semver. Say so in the Proposed
+         Approach as a major bump — name it as one — and note what
+         verification implementation needs to run to trust it (usually:
+         the full test/lint/build suite, plus a look for any
+         config/CLI-flag changes the new major version might have made).
 - **A direct-dependency bump naturally cascades into transitive packages
   the ticket never named** (nested/duplicate copies, sibling packages
   moving version, new indirect deps) — this is expected and not itself a
@@ -80,21 +108,25 @@ still apply, the literal commands don't.
   alert the ticket named is actually gone. If one isn't, that's a genuine
   blocker — use the Blocked path rather than opening a PR that doesn't fix
   what it claims to.
-- If discovery flagged a **production/runtime** package as needing an
-  out-of-range (major) bump, do not implement that part yourself — it needs
-  a human decision on whether to take the breaking change. Implement only
-  the in-range packages and carry the out-of-range one forward as a note
+- If discovery flagged a **production/runtime** package as needing a *real
+  major-version* bump (a genuine breaking-change signal — not just a 0.x
+  package's same-major-line move), do not implement that part yourself — it
+  needs a human decision on whether to take the breaking change. Implement
+  only the in-range packages and carry the flagged one forward as a note
   for the human, the same way discovery flagged it.
-- If discovery flagged a **devDependency** as needing an out-of-range
-  (major) bump, you may implement it yourself — but a clean install with no
-  further check is not verification. Run the full test/lint/build suite and
-  confirm it's actually green. If the major bump changed any CLI flag,
-  config default, or script behavior (new tools often do), find every one
-  of those differences and explicitly handle each — fix the script, add
-  config to restore the old behavior, whatever's needed — rather than
-  letting an unexamined difference ride into the PR. State plainly in
-  `implementation-notes.md` and the PR body that this is a major bump, plus
-  a one-line reason it's safe (e.g. "full suite green; only behavior change
-  was X, handled by Y"). If you can't get a clean, understood verification,
-  that's a genuine blocker — don't ship an unverified major bump just
-  because it's "only" a devDependency.
+- If discovery flagged a **production/runtime** package as needing a
+  *range-widening, non-major* bump (a 0.x package's same-major-line move,
+  or a changelog-confirmed non-breaking release), or a **devDependency** as
+  needing any out-of-range bump, you may implement it yourself — but a
+  clean install with no further check is not verification. Run the full
+  test/lint/build suite and confirm it's actually green. If the bump
+  changed any CLI flag, config default, or script/runtime behavior (new
+  releases often do), find every one of those differences and explicitly
+  handle each — fix the script, add config to restore the old behavior,
+  whatever's needed — rather than letting an unexamined difference ride
+  into the PR. State plainly in `implementation-notes.md` and the PR body
+  that this is a range-widening bump, plus a one-line reason it's safe
+  (e.g. "full suite green; only behavior change was X, handled by Y"). If
+  you can't get a clean, understood verification, that's a genuine
+  blocker — don't ship an unverified out-of-range bump just because it
+  isn't a "real" major.
