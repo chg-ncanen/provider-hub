@@ -236,44 +236,54 @@ Log:
 [implementation] Coverage: <NN.N>% -> <NN.N>% (baseline -> new)
 ```
 
-### Step 3.5 — Self-review before opening the PR
+### Step 3.5 — Self-review loop before opening the PR
 
 No PR exists yet at this point — this is a self-review of your own diff, not
 a response to human feedback (that's `ticket-review`'s job, and only ever
 happens after a PR is already open). Skip this step entirely if Step 4 is
 about to conclude `NO_CHANGES_NEEDED` — there is no diff to review.
 
-Invoke the `code-review` skill against the diff between `$WORKTREE`'s branch
-and `main` (not a PR number — none exists yet). This forks to a background
-task exactly like a long-running Bash call does; per
-`$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md`, poll it with
-`TaskOutput(block=true)` until it actually finishes rather than treating the
-launch as fire-and-forget.
+This is a loop: invoke `code-review`, act on what it returns, and if you
+fixed anything, invoke it again against the updated diff. Keep going until a
+round comes back clean or a finding forces a block — do not stop after a
+fixed round just because you've already gone once.
 
-Run this pass exactly once — do not loop back into another review round
-after fixing findings. That keeps the cost bounded per ticket; a residual
-risk from your own fix is an accepted tradeoff, not something to chase with a
-second review pass.
+Each round:
 
-For each finding `code-review` returns, classify it:
+1. Invoke the `code-review` skill against the diff between `$WORKTREE`'s
+   branch and `main` (not a PR number — none exists yet). This forks to a
+   background task exactly like a long-running Bash call does; per
+   `$CLAUDE_PLUGIN_ROOT/JIRA_EXPRESS_AI_EXECUTION_CONTRACT.md`, poll it with
+   `TaskOutput(block=true)` until it actually finishes rather than treating
+   the launch as fire-and-forget.
+2. If it returns no findings, the loop is done — proceed to Step 4.
+3. Otherwise, classify each finding:
+   - **Confidently fixable** (a mechanical or clear-cut correctness bug, a
+     stale doc snippet, a missed test case, etc.) — fix it directly in
+     `$WORKTREE`, re-run the relevant tests from Step 3, and commit. Log it:
+     ```
+     [implementation] Self-review round <N>: <file> — <what was wrong, what changed>
+     ```
+   - **Needs human judgment** (an architectural tradeoff, a risk you can't
+     resolve with certainty, anything where "fixing" it means making a
+     decision discovery/a human should weigh in on) — do not guess. Commit
+     whatever fixes you already made this round, then follow the **Blocked
+     path** below instead of continuing the loop or advancing to Step 4/5:
+     cite the finding itself as the blocker, and do not open a PR while it
+     stands. A human addresses it via a Jira comment; when the ticket
+     resumes, re-running Step 3.5 from round 1 is not required — proceed to
+     Step 4/5 once you've incorporated their guidance.
+4. Before starting another round, check for circling: if this round's
+   findings repeat something you already fixed in an earlier round (same
+   file/line/description), or a fix looks like it reintroduced an issue an
+   earlier round already fixed, the review and your fixes are oscillating
+   rather than converging. Don't keep looping in that case — follow the
+   Blocked path instead, citing the repeated finding and noting that
+   self-review isn't converging. This is a judgment call, not a fixed round
+   count.
+5. Otherwise, go back to step 1 with the newly-committed diff.
 
-- **Confidently fixable** (a mechanical or clear-cut correctness bug, a stale
-  doc snippet, a missed test case, etc.) — fix it directly in `$WORKTREE`,
-  re-run the relevant tests from Step 3, and commit. Log it:
-  ```
-  [implementation] Self-review fix: <file> — <what was wrong, what changed>
-  ```
-- **Needs human judgment** (an architectural tradeoff, a risk you can't
-  resolve with certainty, anything where "fixing" it means making a decision
-  discovery/a human should weigh in on) — do not guess. Commit whatever
-  fixes you already made in this pass, then follow the **Blocked path**
-  below instead of continuing to Step 4/5: cite the finding itself as the
-  blocker, and do not open a PR while it stands. A human addresses it via a
-  Jira comment; when the ticket resumes, re-run Step 3.5 is not required —
-  proceed to Step 4/5 once you've incorporated their guidance.
-
-Only once every finding is either fixed or ruled out (or `code-review`
-returned none) does Step 4 proceed.
+Only a clean round (step 2) lets Step 4 proceed.
 
 ### Step 4 — Write implementation-notes.md
 
@@ -308,12 +318,12 @@ some uncovered code proved untestable.>
 
 ## Self-Review
 
-<One row per finding from Step 3.5's `code-review` pass, or "No findings" /
-"Skipped — NO_CHANGES_NEEDED":>
+<One row per finding across all rounds of Step 3.5's self-review loop, or
+"No findings" / "Skipped — NO_CHANGES_NEEDED":>
 
-| Finding | Resolution |
-|---------|------------|
-| <summary> | Fixed — <what changed> |
+| Round | Finding | Resolution |
+|-------|---------|------------|
+| <N> | <summary> | Fixed — <what changed> |
 
 ## PR Readiness
 
@@ -515,5 +525,5 @@ echo "[implementation-agent] BLOCKED — implementation-notes.md written with bl
 - Only use the BLOCKED path when you genuinely cannot proceed without human input.
 - Only use `**Status:** NO_CHANGES_NEEDED` when you have concrete evidence no code change is required — not merely that the work looks hard or the ticket looks low-value.
 - Never open the PR before Step 3.5's self-review pass has run (unless `NO_CHANGES_NEEDED`) and every finding is either fixed or has sent the ticket to BLOCKED — a PR opened ahead of that isn't a valid outcome of this skill.
-- Run Step 3.5's `code-review` pass exactly once per implementation attempt — do not loop review→fix→review to chase a fully clean result.
+- Loop Step 3.5's `code-review` pass — review, fix, re-review — until a round comes back clean or a finding forces a block. Stop looping and block if a round's findings repeat an earlier round's (review and fixes oscillating instead of converging), rather than looping indefinitely.
 - Open new PRs as draft unless `DRAFT_PR_ENABLED` is explicitly set to false — never override this per-ticket by opening ready-for-review directly. Never un-draft an existing PR yourself; that's the assignee's call.
