@@ -20,6 +20,22 @@ still apply, the literal commands don't.
     manifest edit) — never `npm install <pkg>@<version>`, which
     unconditionally rewrites the manifest's declared specifier even when
     the old range already covered the target.
+  - **Also raise the declared floor to match, once the resolved version is
+    known.** After the `npm update` above resolves to a specific patched
+    version, also recommend raising `package.json`'s declared minimum to
+    that version (e.g. `axios: ^1.12.2` → `^1.19.0`) — *provided this stays
+    inside the same already-permitted boundary* (same major, same 0.x
+    minor line) rather than widening what the range allows. This is a
+    floor raise, not a ceiling widen: nothing that could previously install
+    under the old range is excluded by the new one, so it carries none of
+    the risk the "doesn't fit the range" cases below escalate for. Do it
+    anyway, as a routine part of every in-range fix, for two reasons: (1) a
+    stale floor is a real regression risk — a future clean install or
+    lockfile regeneration (not just `npm update`) can re-resolve all the
+    way down to the still-vulnerable floor, silently undoing the fix; (2) a
+    human reviewer reading the diff has no way to tell a real fix from a
+    no-op if `package.json` is untouched — leaving it as-is reads as "did
+    nothing" even when the lockfile is fully patched.
   - **Doesn't fit the range:** whether that's a blocker depends on two
     separate questions — reachability and bump size — not on dependency
     type alone. The underlying rule is "don't cross a version boundary you
@@ -53,6 +69,21 @@ still apply, the literal commands don't.
          Risks section and let a human decide whether to take it. Do not
          widen the range yourself and do not silently drop the package
          from Tier 1.
+
+         **If this package is one of the alerts the ticket is actually
+         scoped/named to fix** (not an incidental find outside the
+         ticket's stated targets), reaching this case means the ticket's
+         real requirement cannot be met without that human decision — set
+         `discovery.md`'s **Status: BLOCKED**, not READY or
+         NO_CHANGES_NEEDED, with a Blocker section naming exactly which
+         alert(s) are unresolved and what decision is needed. Do not
+         recommend closing the ticket and tracking the major bump
+         separately on your own initiative — whether to defer it to a
+         follow-up ticket or take it now is the human's call to make when
+         unblocking, not a conclusion discovery reaches for them. (An
+         escalation on a package the ticket did *not* name — a bystander
+         found during the scan — still just goes in Risks per above; it
+         isn't blocking this ticket's own scope.)
        - **Not a real major (0.x same-major-line move, or a
          changelog-confirmed non-breaking release), reachable,
          production/runtime dependency:** treat like the devDependency case
