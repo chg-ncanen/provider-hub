@@ -72,12 +72,30 @@ jira_get() {
 ### Step 0 — Check for a prior discovery.md
 
 The worker deliberately does not delete `discovery.md` before launching you —
-if it already exists in this directory, that means a human reviewed it,
-rejected it from QA Review, and moved the ticket back to In Discovery. Read
-it now. This is a revision, not a first pass: reconcile your prior findings
-with the rejection feedback you find in Step 1's comments (which is *why* it
-was rejected) rather than re-researching from scratch. If `discovery.md`
-doesn't exist yet, this is the first pass — proceed normally.
+if it already exists in this directory, that means a human rejected it (from
+QA Review, or from further along — In Progress, In Review, or UAT Review, if
+the ticket got all the way to a PR before being sent back) and moved the
+ticket back to In Discovery. Read it now. This is a revision, not a first
+pass: reconcile your prior findings with the rejection feedback you find in
+Step 1's comments (which is *why* it was rejected) rather than
+re-researching from scratch. If `discovery.md` doesn't exist yet, this is
+the first pass — proceed normally.
+
+**If `implementation-notes.md`, `review-notes.md`, or `review-context.md`
+also exist**, the ticket got past discovery before bouncing back — there may
+be an open PR, passing CI, even an approval already on it. Being sent back
+to discovery at all means something about that work needs to change; the
+fact that a PR exists and its checks pass is not evidence the redesign
+request is wrong or unnecessary, only that a prior *implementation* of a
+prior *approach* succeeded on its own terms. Do not let those files' good
+news override or dilute the rejection feedback in Step 1's Jira comments —
+treat that feedback as the authoritative reason you're running at all, and
+the existence of a working PR under the old approach as background, not a
+counter-argument. If your conclusion after weighing the feedback is genuinely
+"the existing approach is still correct, only additional/adjacent scope was
+asked for" — that's a legitimate outcome, but it must be reached by actually
+addressing what the feedback asked for, not by citing the old PR's test
+results as if they answered it.
 
 ### Step 1 — Fetch ticket details from Jira
 
