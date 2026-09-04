@@ -1,6 +1,6 @@
 ---
 name: ticket-orchestrator
-description: Governs how the orchestrator decides whether and how to act on AI-Work Jira tickets in the PDE project. Use this before starting, resuming, or skipping any PDE ticket session.
+description: Governs how the orchestrator decides whether and how to act on AI-Work Jira tickets in the PDE project (and PDE-squad-labeled APPSEC tickets). Use this before starting, resuming, or skipping any PDE ticket session.
 user-invocable: true
 ---
 
@@ -65,21 +65,25 @@ overridden via `REPOS_DIR` (env var or this plugin's userConfig equivalent,
 Each orchestrator run begins with a fresh Jira query — never a cached list.
 
 1. Query Jira for up to `MAX_TICKETS_PER_RUN` (100) tickets matching, ordered
-   by rank so higher-priority tickets are considered first:
+   by project then rank so higher-priority tickets are considered first:
    ```
-   project = PDE
+   (project = PDE OR (project = APPSEC AND "GithubSquad[Labels]" = pde))
      AND labels = "AI-Work"
      AND statusCategory != Done
      AND status != Cancelled
      AND status != Released
      AND status != Backlog
-   ORDER BY Rank ASC
+   ORDER BY Project ASC, Rank ASC
    ```
-   100 is a query-size cap, not how many actually get dispatched — see step 4's
+   APPSEC is a shared cross-team security project, so it's scoped down to just
+   tickets tagged for the PDE squad — an unscoped `project = APPSEC` would
+   otherwise pick up every other team's security tickets too. 100 is a
+   query-size cap, not how many actually get dispatched — see step 4's
    `MAX_DISPATCHES_PER_RUN` note below for that.
-2. For each ticket returned, verify the key starts with `PDE-`. If it does not,
-   write a log entry "<KEY>: key does not start with PDE- — skipping" and skip it.
-   This is a hard safety check; do not process non-PDE tickets under any circumstances.
+2. For each ticket returned, verify the key starts with `PDE-` or `APPSEC-`. If
+   it does not, write a log entry "<KEY>: key does not start with an allowed
+   project prefix — skipping" and skip it. This is a hard safety check; do not
+   process tickets from any other project under any circumstances.
 3. **Cleanup pass:**
    - **Archive:** scan all `tickets/*/` directories. For any ticket folder whose
      key is **not** in the Jira results — done, cancelled, released, backlog-ed,
@@ -105,7 +109,7 @@ Each orchestrator run begins with a fresh Jira query — never a cached list.
        rm -rf "$dir"
      done
      ```
-4. Before dispatching, re-sort the returned tickets (PDE keys only) by workflow
+4. Before dispatching, re-sort the returned tickets (allowed-project keys only) by workflow
    stage — `UAT Review` first, then `In Progress`, then `In Discovery`, then
    `To Do` last — using rank only to break ties within the same stage. Then, in
    that order, execute the full **"Before acting on any ticket"** workflow below

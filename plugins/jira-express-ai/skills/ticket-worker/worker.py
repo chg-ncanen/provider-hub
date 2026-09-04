@@ -47,20 +47,6 @@ except ImportError:
 CLOUD_ID = "e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2"
 JIRA_BASE = f"https://api.atlassian.com/ex/jira/{CLOUD_ID}/rest/api/3"
 
-# This is the only copy of this table — orchestrator.py makes no Jira writes
-# at all, so there's nothing else to keep in sync with it.
-TRANSITION_IDS = {
-    "Blocked": "21",
-    "To Do": "251",
-    "In Discovery": "421",
-    "QA Review": "301",
-    "In Progress": "331",
-    "In Review": "291",
-    "UAT Review": "311",
-    "Done": "231",
-    "Backlog": "271",
-}
-
 # A stage only counts as done if the one before it also does — see
 # completed_stage_count(). Statuses not listed here (To Do, Done, Backlog,
 # Cancelled, Released) aren't gated: To Do is handled before this check ever
@@ -170,7 +156,28 @@ def read_status(key: str, auth) -> str:
 
 
 def jira_transition(key: str, status_name: str, auth, fields: dict | None = None) -> None:
-    transition_id = TRANSITION_IDS[status_name]
+    # Transition IDs are per-project workflow scheme, not global — the same
+    # status name (e.g. "In Discovery") can be a different numeric ID in a
+    # different project (verified directly: PDE's "In Discovery" is 421,
+    # APPSEC's is 171). Looking it up fresh here, matched on the target
+    # status's name rather than hardcoding a table, means this works for any
+    # project's workflow without needing a project-keyed table kept in sync.
+    r = requests.get(
+        f"{JIRA_BASE}/issue/{key}/transitions",
+        auth=auth,
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    transitions = r.json().get("transitions", [])
+    transition_id = next(
+        (t["id"] for t in transitions if t["to"]["name"] == status_name), None
+    )
+    if transition_id is None:
+        raise KeyError(
+            f"{key}: no transition to status {status_name!r} is available "
+            f"from its current status"
+        )
     payload = {"transition": {"id": transition_id}}
     if fields:
         payload["fields"] = fields

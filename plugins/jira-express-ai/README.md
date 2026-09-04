@@ -25,8 +25,9 @@ one behavioral difference that conversion introduced.
   specialist's `SKILL.md` points here, tailored to the untrusted surface it
   actually reads (Jira comments, PR comments, repo content, or PR/CI metadata).
 - **`skills/ticket-orchestrator/`** — stateless, cron-safe dispatcher (`orchestrator.py`). Queries
-  Jira fresh every run for `project = PDE AND labels = "AI-Work" AND statusCategory != Done`,
-  ranked by `ORDER BY Rank ASC` and capped at `MAX_TICKETS_PER_RUN` (100) candidates,
+  Jira fresh every run for PDE tickets plus PDE-squad-labeled APPSEC tickets (see "Scope note"
+  below) with `labels = "AI-Work" AND statusCategory != Done`, ranked by
+  `ORDER BY Project ASC, Rank ASC` and capped at `MAX_TICKETS_PER_RUN` (100) candidates,
   decides per ticket whether to start a new session or resume an existing one based on Jira status
   + whether the ticket's `.worker.lock` is currently held, archives tickets no longer active in
   Jira, and launches a `ticket-worker` session per ticket — but only up to `MAX_DISPATCHES_PER_RUN`
@@ -86,13 +87,16 @@ If a human manually moves a ticket ahead of its actual completed stages (e.g. st
 incomplete stage rather than skipping work — see `ticket-worker/SKILL.md`'s Startup section.
 See `ticket-orchestrator/SKILL.md` for the worker-lock mechanism this plugin dispatches on instead.
 
-## Scope note: PDE-specific by design
+## Scope note: PDE (and PDE-squad APPSEC) by design
 
-The Atlassian cloud ID, the `project = PDE` JQL filter, and the Jira transition-ID table are all
-hardcoded to the PDE project (not read from `userConfig`). This is intentional for now — it's
-PDE's own ticket-automation tooling, just packaged as an installable plugin for distribution.
-Generalizing it to other Jira projects would mean turning those into configuration, which hasn't
-been done.
+The Atlassian cloud ID is hardcoded (not read from `userConfig`) — this is PDE's own
+ticket-automation tooling, just packaged as an installable plugin for distribution. The JQL filter
+covers `project = PDE` plus `project = APPSEC` tickets tagged `GithubSquad[Labels] = pde` (APPSEC is
+a shared cross-team security project, so it's scoped down to just PDE's own tickets there) — see
+`ALLOWED_KEY_PREFIXES`/`JQL` in `orchestrator.py`. Jira transition IDs are looked up dynamically per
+issue (`GET .../transitions`, matched by target status name) rather than a hardcoded table, since
+transition IDs are workflow-scheme-specific and differ between projects even for the same status
+name — see `jira_transition()` in `ticket-worker/worker.py`.
 
 ## Usage
 

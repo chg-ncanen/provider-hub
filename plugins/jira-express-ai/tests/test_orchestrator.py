@@ -887,7 +887,7 @@ class TestMainDispatch(TempDirTestCase):
         )
         mock_process.assert_not_called()
 
-    def test_skips_non_pde_key_as_a_hard_safety_check(self) -> None:
+    def test_skips_key_from_disallowed_project_as_a_hard_safety_check(self) -> None:
         mock_cleanup, mock_process = self._run_main(
             [self._issue(key="OTHER-1", status="In Progress", assignee_id="user-1")],
             current_user_id="user-1",
@@ -896,6 +896,13 @@ class TestMainDispatch(TempDirTestCase):
         # Also must never make it into cleanup's active_keys set.
         active_keys_arg = mock_cleanup.call_args.args[2]
         self.assertNotIn("OTHER-1", active_keys_arg)
+
+    def test_processes_appsec_ticket_same_as_pde(self) -> None:
+        _, mock_process = self._run_main(
+            [self._issue(key="APPSEC-1", status="In Progress", assignee_id="user-1")],
+            current_user_id="user-1",
+        )
+        mock_process.assert_called_once_with("APPSEC-1", "In Progress", self.cwd, self.cwd)
 
     def test_no_issues_still_runs_cleanup_with_empty_active_keys(self) -> None:
         mock_cleanup, mock_process = self._run_main([])
@@ -1050,8 +1057,14 @@ class TestSearchTickets(unittest.TestCase):
         sent_json = mock_post.call_args.kwargs["json"]
         self.assertEqual(sent_json["jql"], orchestrator.JQL)
 
-    def test_jql_orders_by_rank_ascending(self) -> None:
-        self.assertIn("ORDER BY Rank ASC", orchestrator.JQL)
+    def test_jql_orders_by_project_then_rank_ascending(self) -> None:
+        self.assertIn("ORDER BY Project ASC, Rank ASC", orchestrator.JQL)
+
+    def test_jql_covers_pde_and_squad_scoped_appsec(self) -> None:
+        self.assertIn(
+            '(project = PDE OR (project = APPSEC AND "GithubSquad[Labels]" = pde))',
+            orchestrator.JQL,
+        )
 
     def test_warns_when_hitting_the_per_run_cap(self) -> None:
         many_issues = [{"key": f"PDE-{i}"} for i in range(orchestrator.MAX_TICKETS_PER_RUN)]

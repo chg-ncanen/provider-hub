@@ -106,7 +106,7 @@ class TestJiraHttpCalls(unittest.TestCase):
     """These mock at the `requests` layer, not the wrapper functions
     themselves — everywhere else in this suite, jira_transition/jira_comment/
     read_status/get_recent_comments_text are mocked away entirely, so their
-    actual request-building bodies (the TRANSITION_IDS lookup, the ADF JSON
+    actual request-building bodies (the transitions lookup, the ADF JSON
     shape, the orderBy param) are otherwise never executed by any test."""
 
     def setUp(self) -> None:
@@ -130,26 +130,50 @@ class TestJiraHttpCalls(unittest.TestCase):
             with self.assertRaises(worker.requests.HTTPError):
                 worker.read_status("PDE-1", self.auth)
 
-    def test_jira_transition_sends_looked_up_transition_id(self) -> None:
+    def _transitions_response(self, mapping: dict) -> MagicMock:
         response = MagicMock()
-        with patch.object(worker.requests, "post", return_value=response) as mock_post:
+        response.json.return_value = {
+            "transitions": [
+                {"id": tid, "to": {"name": name}} for name, tid in mapping.items()
+            ]
+        }
+        return response
+
+    def test_jira_transition_sends_looked_up_transition_id(self) -> None:
+        get_response = self._transitions_response({"In Discovery": "171", "To Do": "151"})
+        post_response = MagicMock()
+        with patch.object(worker.requests, "get", return_value=get_response), \
+             patch.object(worker.requests, "post", return_value=post_response) as mock_post:
             worker.jira_transition("PDE-1", "In Discovery", self.auth)
         url = mock_post.call_args.args[0]
         self.assertIn("/issue/PDE-1/transitions", url)
         self.assertEqual(
             mock_post.call_args.kwargs["json"],
-            {"transition": {"id": worker.TRANSITION_IDS["In Discovery"]}},
+            {"transition": {"id": "171"}},
         )
-        response.raise_for_status.assert_called_once()
+        post_response.raise_for_status.assert_called_once()
+
+    def test_jira_transition_looks_up_by_project_workflow_not_a_fixed_table(self) -> None:
+        # Same status name, different project, different transition ID —
+        # the lookup must use whatever this specific issue's own workflow
+        # reports, not a hardcoded/shared table.
+        get_response = self._transitions_response({"In Discovery": "421"})
+        post_response = MagicMock()
+        with patch.object(worker.requests, "get", return_value=get_response), \
+             patch.object(worker.requests, "post", return_value=post_response) as mock_post:
+            worker.jira_transition("APPSEC-1", "In Discovery", self.auth)
+        self.assertEqual(mock_post.call_args.kwargs["json"], {"transition": {"id": "421"}})
 
     def test_jira_transition_includes_fields_when_given(self) -> None:
-        response = MagicMock()
-        with patch.object(worker.requests, "post", return_value=response) as mock_post:
+        get_response = self._transitions_response({"Blocked": "21"})
+        post_response = MagicMock()
+        with patch.object(worker.requests, "get", return_value=get_response), \
+             patch.object(worker.requests, "post", return_value=post_response) as mock_post:
             worker.jira_transition("PDE-1", "Blocked", self.auth, fields={"customfield_16637": "needs scope"})
         self.assertEqual(
             mock_post.call_args.kwargs["json"],
             {
-                "transition": {"id": worker.TRANSITION_IDS["Blocked"]},
+                "transition": {"id": "21"},
                 "fields": {"customfield_16637": "needs scope"},
             },
         )
@@ -179,10 +203,13 @@ class TestJiraHttpCalls(unittest.TestCase):
         self.assertEqual(result, reason)
 
     def test_jira_transition_unknown_status_raises_key_error(self) -> None:
-        # A typo'd status name must fail loudly, not silently transition to
-        # the wrong (or no) state.
-        with self.assertRaises(KeyError):
-            worker.jira_transition("PDE-1", "Not A Real Status", self.auth)
+        # A typo'd status name (or one not reachable from the issue's current
+        # status) must fail loudly, not silently transition to the wrong (or
+        # no) state.
+        get_response = self._transitions_response({"To Do": "251"})
+        with patch.object(worker.requests, "get", return_value=get_response):
+            with self.assertRaises(KeyError):
+                worker.jira_transition("PDE-1", "Not A Real Status", self.auth)
 
     def test_jira_comment_builds_adf_body_with_given_text(self) -> None:
         response = MagicMock()

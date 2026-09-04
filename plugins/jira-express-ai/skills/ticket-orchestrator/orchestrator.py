@@ -63,14 +63,22 @@ except ImportError:
 CLOUD_ID = "e9c4ecbc-1bf8-42f3-8aba-927fa85ccbe2"
 JIRA_BASE = f"https://api.atlassian.com/ex/jira/{CLOUD_ID}/rest/api/3"
 
+# Projects this orchestrator is allowed to dispatch for — the AI-Work label
+# is still required on top of this, same as before. APPSEC is a shared
+# cross-team security project, so it's additionally scoped to tickets tagged
+# for the PDE squad (GithubSquad[Labels] = pde) — an unscoped `project =
+# APPSEC` would otherwise pick up every other team's security tickets too.
+# Matches the JQL used on the PDE Jira board.
+ALLOWED_KEY_PREFIXES = ("PDE-", "APPSEC-")
+
 JQL = (
-    'project = PDE'
+    '(project = PDE OR (project = APPSEC AND "GithubSquad[Labels]" = pde))'
     ' AND labels = "AI-Work"'
     ' AND statusCategory != Done'
     ' AND status != Cancelled'
     ' AND status != Released'
     ' AND status != Backlog'
-    ' ORDER BY Rank ASC'
+    ' ORDER BY Project ASC, Rank ASC'
 )
 
 ACTIONABLE_STATUSES = {"To Do", "In Discovery", "In Progress", "UAT Review"}
@@ -809,13 +817,13 @@ def main() -> None:
 
     log.info(f"Found {len(issues)} ticket(s)")
 
-    # Safety check — only PDE- keys
+    # Safety check — only keys from an allowed project
     active_keys: set[str] = set()
     valid_issues: list[dict] = []
     for issue in issues:
         key = issue["key"]
-        if not key.startswith("PDE-"):
-            log.warning(f"{key}: does not start with PDE- — skipping (hard safety check)")
+        if not key.startswith(ALLOWED_KEY_PREFIXES):
+            log.warning(f"{key}: does not start with {ALLOWED_KEY_PREFIXES} — skipping (hard safety check)")
             continue
         active_keys.add(key)
         valid_issues.append(issue)
