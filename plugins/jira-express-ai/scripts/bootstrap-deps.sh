@@ -96,6 +96,19 @@ if [ ! -d "$VENV_DIR" ]; then
   # here, before it ever reaches the get-pip.py self-heal below.
   "$system_python" -m venv --copies "$VENV_DIR" || true
 
+  # Some python builds (e.g. macOS's /usr/bin/python3, an Apple framework
+  # build) refuse --copies outright — "Error: This build of python cannot
+  # create venvs without using symlinks" — and create nothing at all, not
+  # even a partial directory. That's a different failure than the
+  # ensurepip-wheel-missing case above (which still produces a bin/python),
+  # so retry with the platform default (symlinks) here: the sandboxes that
+  # actually need --copies are the exception, not every python build, and a
+  # symlink venv is strictly better than no venv at all.
+  if [ ! -x "$VENV_DIR/bin/python" ] && [ ! -x "$VENV_DIR/Scripts/python.exe" ]; then
+    rm -rf "$VENV_DIR"
+    "$system_python" -m venv "$VENV_DIR" || true
+  fi
+
   # On Python 3.14 + a UTF-8 filesystem, venv's own setup_python() (Lib/
   # venv/__init__.py, verified directly against CPython's source) also
   # creates a 4th interpreter copy named 𝜋thon (mathematical italic pi, not
