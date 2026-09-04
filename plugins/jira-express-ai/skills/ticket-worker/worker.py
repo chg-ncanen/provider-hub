@@ -290,6 +290,32 @@ def extract_section(content: str, heading: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+def extract_out_of_sandbox_rows(content: str) -> list[str]:
+    """Pull every OUT_OF_SANDBOX row out of review-notes.md's `Comments
+    Addressed` table, formatted for direct inclusion in a Jira comment.
+    ticket-review only ever replies to an OUT_OF_SANDBOX PR comment on the
+    PR itself and logs it in this table — the substance otherwise only
+    reaches Confluence (the whole page, not called out) or nowhere at all,
+    which leaves a ticket that later gets sent back to In Discovery with
+    nothing to act on, since discovery only reads Jira comments by design.
+    Surfacing these rows in the post-review Jira comment (see
+    _run_review_pass) closes that gap without discovery needing to read PR
+    comments itself. Bold markers around the Type cell (`**OUT_OF_SANDBOX**`)
+    are stripped before comparing, since ticket-review's own output has used
+    both plain and bolded forms."""
+    rows = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip().strip("*").strip() for c in line.strip("|").split("|")]
+        if len(cells) < 4 or cells[2].upper() != "OUT_OF_SANDBOX":
+            continue
+        source, comment_id, _, resolution = cells[0], cells[1], cells[2], cells[3]
+        rows.append(f"- {source} comment {comment_id}: {resolution}")
+    return rows
+
+
 def _confluence_pointer(confluence_url: str | None, fallback: str, separator: str = "") -> str:
     """The trailing "where to read the whole thing" line every
     artifact-derived Jira comment ends with: the Confluence page when the
@@ -653,14 +679,29 @@ def _run_review_pass(key: str, ticket_dir: Path, repos_dir: Path, review_context
         return
 
     pr_url = extract_bold_field(review_context.read_text(), "PR URL") if review_context.exists() else ""
-    confluence_url = confluence_sync.push(key, "review", notes.read_text(), auth)
+    notes_content = notes.read_text()
+    confluence_url = confluence_sync.push(key, "review", notes_content, auth)
     pointer = _confluence_pointer(confluence_url, "", separator=" ")
+
+    out_of_sandbox = extract_out_of_sandbox_rows(notes_content)
+    redesign_note = ""
+    if out_of_sandbox:
+        redesign_note = (
+            "\n\nSome comments asked for something beyond this PR's diff — out of "
+            "this review pass's sandbox, so only replied to on the PR itself, not "
+            "acted on:\n" + "\n".join(out_of_sandbox) +
+            "\nIf you want any of this done, move back to In Discovery with that "
+            "in mind — that's the only stage authorized to change the approach, "
+            "and it only reads Jira comments, not PR comments, so this needs to "
+            "be visible here for it to actually act on."
+        )
+
     jira_transition(key, "In Review", auth)
     jira_comment(
         key,
         f"🤖 PR review pass complete for {key}. PR: {pr_url}\n"
         f"Comments addressed. Ready for approval — move to UAT Review when approved.\n"
-        f"If you have more comments, move back to In Progress.{pointer}",
+        f"If you have more comments, move back to In Progress.{pointer}{redesign_note}",
         auth,
     )
     log.info(f"{key}: waiting for PR approval")

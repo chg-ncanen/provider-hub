@@ -251,6 +251,21 @@ approval still needed) — nothing wrong, just not ready yet. No transition, no
 comment; the ticket stays at `UAT Review` and the next orchestrator run
 resumes this same check.
 
+**`ticket-review`'s `OUT_OF_SANDBOX` comments get echoed into the handoff
+comment, not just the PR.** A PR comment asking for something beyond that
+review pass's sandbox (see `ticket-review/SKILL.md`'s Sandbox section) only
+ever gets a reply on the PR itself, plus a row in `review-notes.md`'s table —
+neither of which `ticket-discovery` would ever see, since discovery only
+reads Jira comments by design (deliberately kept simple rather than teaching
+it to also read PR comments). Without more, a ticket sent back to `In
+Discovery` after one of these would arrive with nothing to act on — see the
+PDE-18245 incident this was found from, where discovery just re-confirmed
+the existing plan instead of reconsidering it, because the actual redesign
+ask had only ever been said on the PR. `_run_review_pass()` now pulls any
+`OUT_OF_SANDBOX` rows out of `review-notes.md` and appends them to the Jira
+handoff comment directly, so the substance is already sitting in Jira by the
+time a human decides whether to send the ticket back for a redesign.
+
 ### No-op outcomes (`NO_CHANGES_NEEDED`)
 
 Two specialists can also conclude there's nothing to actually change, and
