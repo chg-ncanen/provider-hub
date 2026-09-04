@@ -142,19 +142,46 @@ gh pr view $PR_NUMBER --json reviewDecision,reviews,mergeable \
 ### Step 2 — Merge
 
 Only reached when Step 1 confirmed the PR is not already merged and all
-gates are clear. Attempt merge, and **check that it actually succeeded** before
-assuming there's anything to monitor — the PR can go out of date (a new commit
+gates are clear.
+
+First, determine which merge strategy this repo actually allows — not every
+repo permits squash merges, and hard-coding `--squash` used to dead-end every
+such repo at `BLOCKED`, requiring a human to merge manually every single time
+even though nothing was actually wrong with the PR:
+
+```bash
+MERGE_FLAG=$(gh repo view $REPO --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed --jq '
+  if .squashMergeAllowed then "--squash"
+  elif .mergeCommitAllowed then "--merge"
+  elif .rebaseMergeAllowed then "--rebase"
+  else "" end
+')
+
+if [ -z "$MERGE_FLAG" ]; then
+  echo "[merge] Repo reports no merge strategy gh recognizes as allowed"
+  # Write merge-notes.md: Status: BLOCKED, reason: gh repo view reported none
+  # of squash/merge-commit/rebase as allowed for this repo (unexpected —
+  # needs a human to check repo settings). Signal completion and stop.
+fi
+```
+
+Preference order is squash, then merge-commit, then rebase — squash stays
+the default where it's allowed (cleanest history, matches this agent's prior
+behavior), falling back only for repos that have disabled it.
+
+Attempt merge, and **check that it actually succeeded** before assuming
+there's anything to monitor — the PR can go out of date (a new commit
 landing) between the gate check above and this attempt:
 
 ```bash
-if ! gh pr merge $PR_NUMBER --squash --delete-branch; then
+if ! gh pr merge $PR_NUMBER $MERGE_FLAG --delete-branch; then
   echo "[merge] Merge attempt failed"
   # Write merge-notes.md: Status: BLOCKED, reason: merge command failed
   # (likely the PR went out of date since the gate check). Signal completion
   # and stop — do NOT proceed to Step 3 on an unconfirmed merge.
 fi
 
-echo "[merge] Merge submitted for PR #$PR_NUMBER"
+echo "[merge] Merge submitted for PR #$PR_NUMBER using $MERGE_FLAG"
 ```
 
 ### Step 3 — Monitor post-merge CI
@@ -290,6 +317,12 @@ echo "[merge-agent] Complete — merge-notes.md written with status: <STATUS>"
 - Never write `SUCCESS` without having actually confirmed both the merge and
   post-merge CI completion — an empty or missing API response is not evidence
   of success, treat it as `PENDING` or `BLOCKED` instead.
+- Merge strategy is detected per-repo in Step 2 (squash preferred, falling
+  back to merge-commit, then rebase, per what `gh repo view` reports the repo
+  actually allows) — never hard-code a single strategy. Not every repo
+  permits squash merges, and a repo's merge-strategy settings are not
+  something this agent is authorized to change; work within whatever the repo
+  already allows rather than blocking on it.
 - Always write `merge-notes.md` and `.merge-agent-done` regardless of outcome.
 - Do not transition any Jira ticket yourself — `ticket-worker` does that based
   on the status you write.
