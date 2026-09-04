@@ -14,14 +14,21 @@ this skill is invoked, your only job is to run the script and report results.
 ## How to run
 
 ```bash
-cd /path/to/pde-ops-agent   # target project root — tickets/ lives here
 "$CLAUDE_PLUGIN_ROOT/.venv/bin/python" "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 ```
 
+Run this from whatever directory you're already in when this skill is invoked
+— that directory *is* the orchestrator's project root, and `tickets/` lives
+directly inside it (see "Working directory" below). Do not `cd` anywhere
+first, and never create a new subdirectory (e.g. one named after this
+project/skill) to hold `tickets/` instead — that just produces a second,
+empty, disconnected `tickets/` one level down from the one Jira/cron actually
+expects. The only reason to `cd` at all is if a human explicitly names a
+different target directory in their own instructions.
+
 `CLAUDE_PLUGIN_ROOT` (set by Claude Code and Copilot CLI to this plugin's install
 location) points the script at its own sibling skill files regardless of which
-project directory it's run from — see "Working directory" below for the
-separate, unrelated cwd requirement. `"$CLAUDE_PLUGIN_ROOT/.venv/bin/python"` — not
+project directory it's run from. `"$CLAUDE_PLUGIN_ROOT/.venv/bin/python"` — not
 bare `python3` — is this plugin's own self-contained virtualenv, provisioned
 automatically by the `bootstrap-deps.sh` `SessionStart` hook (see
 `requirements.txt` at this plugin's root); it guarantees `requests` is present

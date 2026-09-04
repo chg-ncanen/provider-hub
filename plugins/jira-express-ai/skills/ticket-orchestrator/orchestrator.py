@@ -7,11 +7,13 @@ resume worker sessions, exit.
 Safe to run on a schedule (cron every 5-15 minutes).
 
 Usage:
-    cd /path/to/pde-ops-agent   # target project root — tickets/ lives here
     python3 "$CLAUDE_PLUGIN_ROOT/skills/ticket-orchestrator/orchestrator.py"
 
-tickets/ and tickets/archive/ are created automatically if they don't exist
-yet (see main()) — there's no separate setup step before the first run.
+Run this from whatever directory should hold tickets/ — that directory IS the
+project root; tickets/ and tickets/archive/ are created directly inside it
+automatically if they don't exist yet (see main()), no separate setup step
+needed. Do not create a subdirectory for this first — cwd already is the
+project root.
 
 Required env vars — each may instead come from this plugin's userConfig:
     ATLASSIAN_EMAIL       Atlassian account email
