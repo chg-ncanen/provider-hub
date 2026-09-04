@@ -175,8 +175,17 @@ exits non-zero if neither ends up set.
    | In Review | discovery + implementation done |
    | UAT Review | discovery + implementation done |
 
-   If unmet, transition to the earliest missing stage (`In Discovery` or
-   `In Progress`) and route on the corrected status instead. `review-notes.md`
+   If unmet by exactly one stage (e.g. `QA Review`/`In Progress` with no
+   `discovery.md` yet), transition to the earliest missing stage (`In
+   Discovery` or `In Progress`) and route on the corrected status instead —
+   this is the normal case of a human moving a brand-new ticket straight to
+   a later status. If unmet by **two** stages (`In Review`/`UAT Review` with
+   *nothing* on disk, not even `discovery.md`), don't auto-rewind — escalate
+   to `Blocked` instead. No human plausibly drags a totally untouched ticket
+   that far ahead; a gap that large almost always means this session's
+   `ticket_dir` doesn't actually point at the ticket's real directory (a cwd
+   bug at launch), and silently "self-correcting" would redo real, completed
+   work rather than recover from an actual mistake. `review-notes.md`
    is deliberately not a gated stage — it's an optional second-pass artifact,
    never produced when a ticket sails through to `UAT Review` on the first
    try; requiring it would make a legitimately complete ticket self-correct

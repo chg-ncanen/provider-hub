@@ -758,7 +758,21 @@ def sanity_check_and_rewind(key: str, status: str, ticket_dir: Path, auth) -> st
     actually missing rather than skipping work, and return the corrected
     status for routing. Returns `status` unchanged for any status not in
     STAGE_REQUIREMENTS (To Do is handled before this runs; terminal statuses
-    aren't gated at all)."""
+    aren't gated at all).
+
+    A gap of exactly one stage (e.g. QA Review with no discovery.md yet) is
+    the normal, expected case: a human moved a brand-new ticket straight to
+    a later status, skipping one stage. A gap of two — In Review or UAT
+    Review with *nothing* on disk, not even discovery.md — is a different
+    situation: no human plausibly drags a totally untouched ticket that far
+    ahead. Seeing that gap almost always means this session's `ticket_dir`
+    doesn't actually point at the ticket's real directory (a cwd bug at
+    launch — see the Aug 2026 incident notes in this ticket's own Jira
+    history), not that the work was genuinely never done. Silently rewinding
+    in that case redoes 15+ minutes of already-complete work and confuses
+    anyone watching the ticket jump backward for no visible reason. Escalate
+    to Blocked instead of auto-correcting when the gap is that large, so a
+    human confirms what's actually going on before anything gets redone."""
     required = STAGE_REQUIREMENTS.get(status)
     if required is None:
         return status
@@ -766,6 +780,28 @@ def sanity_check_and_rewind(key: str, status: str, ticket_dir: Path, auth) -> st
     have = completed_stage_count(ticket_dir)
     if have >= required:
         return status
+
+    gap = required - have
+    if gap >= 2:
+        reason = (
+            f"Jira says '{status}' (requires {required} completed stage(s)) but this "
+            f"session found {have} in {ticket_dir}. A gap this large usually means "
+            f"the session's working directory doesn't actually point at this ticket's "
+            f"real directory, not that the work was never done — stopping rather than "
+            f"silently rewinding to In Discovery and redoing everything."
+        )
+        log.error(f"{key}: {reason}")
+        jira_transition(key, "Blocked", auth, fields=_blocked_reason_field(reason))
+        jira_comment(
+            key,
+            f"🤖 {key}: {reason}\n"
+            f"Please verify {ticket_dir} actually contains this ticket's prior "
+            f"discovery.md/implementation-notes.md before deciding how to proceed — "
+            f"move back to '{status}' once confirmed, or to 'In Discovery' if the work "
+            f"genuinely needs to be redone from scratch.",
+            auth,
+        )
+        sys.exit(1)
 
     corrected = REWIND_STATUS_FOR_COUNT[have]
     log.warning(f"{key}: Jira says '{status}' but only {have}/{required} prerequisite stage(s) are done — rewinding to '{corrected}'")
