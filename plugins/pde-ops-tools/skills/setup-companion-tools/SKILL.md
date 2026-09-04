@@ -70,7 +70,7 @@ picks (see below), that's a different thing from "picking" it.
 | # | Service | Deps | Installed | Configured | Connected | Description |
 |---|---|---|---|---|---|---|
 | — | pde-mcp | — | ✅ | ✅ | — | JSM alert management, email tools, skill discovery — bundled with the PDE Ops Tools plugin, not installed via this wizard |
-| 1 | Atlassian MCP | — | ✅ | — | ✅ (org connector) | Jira/Confluence search, issue creation, sprint management |
+| 1 | Atlassian MCP | — | ✅ | — | ❌ not authenticated yet (org connector already connects separately) | Jira/Confluence search, issue creation, sprint management |
 | 2 | Figma MCP | — | ❌ | — | — | Design files, styles, components, layout for design-to-code |
 | 3 | Grafana (gcx CLI plugin) | ❌ gcx CLI not found | ❌ | ❌ | — | Dashboards, alerts, SLOs, incident analysis |
 | 4 | LaunchDarkly MCP | — | ✅ | — | ❌ not authenticated yet | Feature flag management |
@@ -134,10 +134,13 @@ sentence:
     connected/disconnected. Don't render this as `"❌"` (that would imply something's actually
     wrong) or invent a status word — once `Installed` is `"✅"` for a service with no dependency and
     no OAuth session match, it just works.
-  - **Atlassian specifically, when `org_connector.connected` is `true`**: `"✅ (org connector)"`,
-    regardless of the plugin's own `ready` — a connected org-wide connector already covers the
-    bundled skills, so the plugin's separate OAuth session not being done yet doesn't make this "not
-    connected" from the user's point of view.
+  - **Atlassian specifically**: always show the plugin's own real `ready` state here (per the rules
+    above), never masked by `org_connector` — the plugin is the preferred path now, so a `"❌"` on
+    its own OAuth session is a real gap to close, not something an org connector papers over. If
+    `org_connector.connected` is also `true`, append `" (org connector already connects separately)"`
+    after the plugin's own cell so the user knows there's no functional gap today even while this
+    plugin's entry isn't done yet — e.g. `"❌ not authenticated yet (org connector already connects
+    separately)"`.
 
 For the `pde_mcp` row, `Deps` and `Connected` are always `"—"` (it isn't something this wizard
 installs, and isn't a service you connect to a login/OAuth session — it's the plugin's own bundled
@@ -369,13 +372,15 @@ already needs to do both.
   authenticate, ever. Its `post_install` covers the one real first-use gap (browser binaries not
   yet downloaded) — relay that if a browser tool call actually fails with a missing-browser error,
   don't treat it as a readiness gap to check for proactively the way OAuth services get one.
-- **Atlassian specifically**: check `org_connector` from `status` first. If it's present and
-  `connected: true`, say so plainly before pushing OAuth on the plugin's own entry — a connected
-  `claude.ai`-configured connector already provides the same Jira/Confluence tools, so
-  authenticating the plugin's separate `plugin:atlassian:...` entry is only worth doing if the
-  user wants this plugin's bundled skills (`capture-tasks-from-meeting-notes`,
-  `generate-status-report`, `jira-sprint-dashboard-canvas`, `search-company-knowledge`,
-  `spec-to-backlog`, `triage-issue`) — ask which they want rather than assuming.
+- **Atlassian specifically**: always install and authenticate the plugin's own
+  `plugin:atlassian:...` entry — it's the official Claude plugin (`anthropics/claude-plugins-official`),
+  preferred over an ad-hoc `claude.ai`-configured connector even when one already covers the same
+  Jira/Confluence tools. Still surface `org_connector` from `status` if present (mention it's
+  connected so the user knows there's overlap), but that's informational only — it is never a
+  reason to skip installing or authenticating this plugin's entry, and it also comes with this
+  plugin's bundled skills (`capture-tasks-from-meeting-notes`, `generate-status-report`,
+  `jira-sprint-dashboard-canvas`, `search-company-knowledge`, `spec-to-backlog`, `triage-issue`)
+  that the org connector alone doesn't provide.
 
 Never bundle one of these action-needed moments into a paragraph of other text — always give it
 the `MANUAL STEP NEEDED` rule-line treatment above so it can't be missed.
@@ -439,11 +444,12 @@ yourself:
 
 - **Atlassian** — Jira/Confluence search, issue creation, sprint management.
   - Claude Code: the full official plugin (6 skills), via the pre-registered
-    `claude-plugins-official` marketplace. `status` also checks (Claude Code only) for a
-    pre-existing `claude.ai`-configured Atlassian connector — often provisioned org-wide,
-    entirely separate from this plugin — and surfaces it as `org_connector`; if it's already
-    connected, the bundled skills work against it too, so authenticating this plugin's own entry
-    is only needed if that connector isn't there or the user wants a clean separation.
+    `claude-plugins-official` marketplace — this is the preferred path, always install and
+    authenticate it. `status` also checks (Claude Code only) for a pre-existing `claude.ai`-configured
+    Atlassian connector — often provisioned org-wide, entirely separate from this plugin — and
+    surfaces it as `org_connector`; that's informational only (it means there's no functional gap
+    even before the plugin's own OAuth finishes), not a reason to skip installing or authenticating
+    this plugin's own entry.
   - Copilot CLI: that marketplace file fails to parse there (a real schema incompatibility on the
     `source` field of several entries, not a typo) — `install` falls back to registering the bare
     `chg-atlassian` MCP endpoint instead. Tools only, no bundled skills, until that gets fixed
